@@ -1,0 +1,15 @@
+{
+  "tickers": [
+    "SPY",
+    "QQQ",
+    "IWM",
+    "EEM",
+    "VWO",
+    "AGG",
+    "TLT",
+    "GLD",
+    "DBC",
+    "USO"
+  ],
+  "description": "Lista de ETFs para análisis de trading"
+}

@@ -1,0 +1,216 @@
+{
+  "Comment": "Orquestación del TFM Trading System",
+  "StartAt": "lambda_ingestion",
+  "States": {
+    "lambda_ingestion": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "lambda_ingestion",
+        "Payload": {
+          "date.$": "$$.State.EnteredTime"
+        }
+      },
+      "TimeoutSeconds": 300,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "handle_error_ingestion",
+          "ResultPath": "$.error_ingestion"
+        }
+      ],
+      "Next": "parallel_analysis"
+    },
+    "parallel_analysis": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "lambda_sentiment",
+          "States": {
+            "lambda_sentiment": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "lambda_sentiment",
+                "Payload.$": "$"
+              },
+              "TimeoutSeconds": 300,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "States.TaskFailed"
+                  ],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": [
+                    "States.ALL"
+                  ],
+                  "Next": "handle_error_sentiment",
+                  "ResultPath": "$.error_sentiment"
+                }
+              ],
+              "End": true
+            },
+            "handle_error_sentiment": {
+              "Type": "Pass",
+              "Result": "Sentiment analysis failed",
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "lambda_indicators",
+          "States": {
+            "lambda_indicators": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "lambda_indicators",
+                "Payload.$": "$"
+              },
+              "TimeoutSeconds": 300,
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "States.TaskFailed"
+                  ],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": [
+                    "States.ALL"
+                  ],
+                  "Next": "handle_error_indicators",
+                  "ResultPath": "$.error_indicators"
+                }
+              ],
+              "End": true
+            },
+            "handle_error_indicators": {
+              "Type": "Pass",
+              "Result": "Technical indicators calculation failed",
+              "End": true
+            }
+          }
+        }
+      ],
+      "Next": "lambda_bayesian",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "handle_error_parallel",
+          "ResultPath": "$.error_parallel"
+        }
+      ]
+    },
+    "lambda_bayesian": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "lambda_bayesian",
+        "Payload.$": "$"
+      },
+      "TimeoutSeconds": 300,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "handle_error_bayesian",
+          "ResultPath": "$.error_bayesian"
+        }
+      ],
+      "Next": "lambda_report"
+    },
+    "lambda_report": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "lambda_report",
+        "Payload.$": "$"
+      },
+      "TimeoutSeconds": 300,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "handle_error_report",
+          "ResultPath": "$.error_report"
+        }
+      ],
+      "Next": "success"
+    },
+    "success": {
+      "Type": "Succeed"
+    },
+    "handle_error_ingestion": {
+      "Type": "Pass",
+      "Result": "Error in lambda_ingestion",
+      "Next": "failure"
+    },
+    "handle_error_parallel": {
+      "Type": "Pass",
+      "Result": "Error in parallel analysis",
+      "Next": "failure"
+    },
+    "handle_error_bayesian": {
+      "Type": "Pass",
+      "Result": "Error in lambda_bayesian",
+      "Next": "failure"
+    },
+    "handle_error_report": {
+      "Type": "Pass",
+      "Result": "Error in lambda_report",
+      "Next": "failure"
+    },
+    "failure": {
+      "Type": "Fail",
+      "Error": "PipelineFailed",
+      "Cause": "One or more lambda functions failed"
+    }
+  }
+}

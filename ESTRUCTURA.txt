@@ -1,0 +1,259 @@
+TFM - SISTEMA DE TRADING CON AWS LAMBDA
+========================================
+
+ESTRUCTURA DEL PROYECTO:
+========================
+
+tfm/
+├── 📄 README.md                    - Documentación completa del sistema
+├── 📄 QUICK_START.md               - Guía rápida de configuración
+├── 📄 ESTRUCTURA.txt               - Este archivo
+│
+├── 🔧 CONFIGURACIÓN
+├── ├── etf_universe.json           - Lista de ETFs a analizar (SPY, QQQ, etc.)
+├── ├── database_schema.sql         - Schema de Aurora PostgreSQL
+├── ├── iam_policy.json            - Política IAM para las lambdas
+├── ├── stepfunctions_definition.json - Orquestación del pipeline
+├── └── deploy.sh                   - Script de deployment automático
+│
+└── 🔗 FUNCIONES LAMBDA (5 lambdas)
+    │
+    ├── lambda_ingestion/           [λ1 - INGESTA]
+    │   ├── lambda_ingestion.py     - Lee config ETFs, descarga datos OHLCV, noticias
+    │   └── requirements.txt        - Dependencies: boto3, yfinance, requests, psycopg2, pandas
+    │
+    ├── lambda_sentiment/           [λ2 - SENTIMIENTO]
+    │   ├── lambda_sentiment.py     - Analiza sentimiento usando Amazon Bedrock
+    │   └── requirements.txt        - Dependencies: boto3, psycopg2
+    │
+    ├── lambda_indicators/          [λ3 - INDICADORES TÉCNICOS]
+    │   ├── lambda_indicators.py    - Calcula RSI, SMA, Bandas de Bollinger
+    │   └── requirements.txt        - Dependencies: boto3, psycopg2, pandas, pandas-ta
+    │
+    ├── lambda_bayesian/            [λ4 - INFERENCIA BAYESIANA]
+    │   ├── lambda_bayesian.py      - Red bayesiana para señales de trading
+    │   └── requirements.txt        - Dependencies: boto3, psycopg2, pgmpy, numpy
+    │
+    └── lambda_report/              [λ5 - REPORTE]
+        ├── lambda_report.py        - Backtesting y generación de reportes
+        └── requirements.txt        - Dependencies: boto3, psycopg2, pandas, numpy
+
+
+FLUJO DEL SISTEMA:
+==================
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     λ1: INGESTA DE DATOS                                │
+│  • Lee lista de ETFs de: s3://tfm-config/etf_universe.json              │
+│  • Descarga 30 días de OHLCV usando yfinance                            │
+│  • Obtiene noticias últimas 24h de Finnhub API                          │
+│  • Guarda OHLCV: s3://tfm-datalake/raw/{DATE}/ohlcv.csv               │
+│  • Guarda noticias: s3://tfm-datalake/raw/{DATE}/news.json             │
+│  • Escribe en Aurora batch_log (status=STARTED)                         │
+└────────┬──────────────────────────────────────────────────────────────┘
+         │
+         ├──────────────────────┬──────────────────────┐
+         │                      │                      │
+    ┌────▼─────────────┐  ┌────▼──────────────┐  ┌────▼─────────────────┐
+    │  λ2: SENTIMIENTO │  │ λ3: INDICADORES   │  │  [Paralelo]          │
+    │                  │  │     TÉCNICOS      │  │                      │
+    │ • Lee noticias   │  │                    │  │ Ejecutan en paralelo │
+    │ • Bedrock API    │  │ • Lee OHLCV        │  │ para mejor           │
+    │ • Análisis CLs   │  │ • pandas-ta        │  │ performance          │
+    │ • Escribe        │  │ • RSI 14           │  │                      │
+    │   sentiment_     │  │ • SMA 20, SMA 50   │  │                      │
+    │   scores         │  │ • Bandas Bollinger │  │                      │
+    │                  │  │ • Escribe          │  │                      │
+    │                  │  │   technical_       │  │                      │
+    │                  │  │   indicators       │  │                      │
+    └────┬─────────────┘  └────┬──────────────┘  └────┬──────────────────┘
+         │                      │                      │
+         └──────────────────────┼──────────────────────┘
+                                │
+                           ┌────▼─────────────────────────┐
+                           │  λ4: INFERENCIA BAYESIANA    │
+                           │                              │
+                           │ • Lee sentimiento de BD      │
+                           │ • Lee indicadores de BD      │
+                           │ • Discretiza valores         │
+                           │ • Red bayesiana con pgmpy    │
+                           │ • Variable Elimination       │
+                           │ • Genera señales:            │
+                           │   - BUY si P(up) > 0.65      │
+                           │   - SELL si P(up) < 0.35     │
+                           │   - HOLD sino                │
+                           │ • Escribe trading_signals    │
+                           └────┬──────────────────────────┘
+                                │
+                           ┌────▼──────────────────────────┐
+                           │  λ5: REPORTE & BACKTESTING   │
+                           │                               │
+                           │ • Lee señales (90 días)       │
+                           │ • Calcula métricas:           │
+                           │   - Cumulative Return         │
+                           │   - Sharpe Ratio Anualizado   │
+                           │   - Maximum Drawdown          │
+                           │ • Guarda JSON:                │
+                           │   s3://tfm-datalake/results/  │
+                           │ • Actualiza batch_log         │
+                           │   (status=COMPLETED)          │
+                           └────────────────────────────────┘
+
+
+ALMACENAMIENTO DE DATOS:
+========================
+
+AWS S3:
+  tfm-config/
+    └── etf_universe.json          [Configuración]
+  
+  tfm-datalake/
+    ├── raw/{YYYY-MM-DD}/
+    │   ├── ohlcv.csv              [Datos OHLCV]
+    │   └── news.json              [Noticias]
+    └── results/{YYYY-MM-DD}/
+        └── report.json            [Reportes]
+
+Aurora PostgreSQL:
+  batch_log                    [Logs de batches]
+  sentiment_scores             [Análisis de sentimiento]
+  technical_indicators         [Indicadores técnicos]
+  trading_signals              [Señales de trading]
+  
+AWS Secrets Manager:
+  aurora/credentials           [Credenciales Aurora]
+  finnhub/api_key             [API Key Finnhub]
+
+
+DEPENDENCIAS EXTERNAS:
+=======================
+
+APIs:
+  • Finnhub API              → Noticias financieras
+  • Amazon Bedrock           → Análisis de sentimiento (Claude 3 Haiku)
+
+Servicios AWS:
+  • Lambda                   → Ejecución de funciones
+  • Aurora PostgreSQL        → Base de datos relacional
+  • S3                       → Almacenamiento de datos
+  • Secrets Manager          → Gestión de credenciales
+  • EventBridge              → Orquestación temporal
+  • Step Functions           → Orquestación de flujos
+  • CloudWatch               → Logs y métricas
+
+Librerías Python:
+  • yfinance                 → Descarga de datos históricos
+  • pandas-ta                → Indicadores técnicos
+  • pgmpy                    → Redes bayesianas
+  • psycopg2                 → Conexión PostgreSQL
+  • boto3                    → SDK de AWS
+
+
+MÉTRICAS CALCULADAS:
+====================
+
+Sentimiento:
+  • Sentimiento: bullish, bearish, neutral
+  • Confidence: 0.0 - 1.0
+  • Justificación: texto
+
+Indicadores Técnicos:
+  • RSI 14:        0 - 100 (oversold < 30, overbought > 70)
+  • SMA 20:        Precio medio 20 períodos
+  • SMA 50:        Precio medio 50 períodos
+  • BB Upper:      Banda superior Bollinger
+  • BB Middle:     Banda media Bollinger
+  • BB Lower:      Banda inferior Bollinger
+
+Señales de Trading:
+  • Signal:        BUY, SELL, HOLD
+  • Prob_up:       P(MarketDirection=up)
+  • Prob_down:     P(MarketDirection=down)
+
+Backtesting:
+  • Cumulative Return:      Retorno acumulado (%)
+  • Sharpe Ratio:           Retorno ajustado por riesgo
+  • Max Drawdown:           Peor caída capital (%)
+
+
+CONFIGURACIÓN RECOMENDADA:
+==========================
+
+Lambda Memory:
+  • lambda_ingestion:    512 MB
+  • lambda_sentiment:    512 MB
+  • lambda_indicators:   512 MB
+  • lambda_bayesian:     1024 MB
+  • lambda_report:       512 MB
+
+Lambda Timeout:
+  • Todos: 300 segundos (5 minutos)
+
+Aurora Instance:
+  • Mínimo: db.t4.small
+  • Recomendado: db.t4.medium o superior
+
+Scheduling:
+  • Daily execution a las 9:00 AM UTC
+  • Via EventBridge cron rule: "0 9 * * ? *"
+
+
+SEGURIDAD:
+===========
+
+✓ Credenciales en AWS Secrets Manager
+✓ Política IAM con permisos mínimos
+✓ Aurora en VPC privada
+✓ Encryption at rest para S3 y RDS
+✓ VPC endpoints para AWS services
+✓ Logs en CloudWatch con encriptación
+
+No hardcodear:
+✗ Credenciales en código
+✗ API keys en variables de ambiente
+✗ Passwords en configuración
+
+
+COSTOS ESTIMADOS:
+==================
+
+Por ejecución diaria:
+  Lambda:        $0.0001-0.001
+  Aurora:        $1-5
+  Bedrock:       $0.25 (estimado, 1000 headlines)
+  S3:            <$0.01
+  ─────────────────────────
+  TOTAL/DÍA:     ~$2-10
+
+Mensual (30 ejecuciones):
+  TOTAL/MES:     ~$60-300
+
+
+PRÓXIMOS PASOS:
+================
+
+1. ✓ Crear infraestructura (Aurora, S3, etc.)
+2. ✓ Desplegar lambdas con deploy.sh
+3. ✓ Configurar secretos en Secrets Manager
+4. ✓ Ejecutar pipeline de prueba
+5. ☐ Monitorear logs y métricas
+6. ☐ Ajustar CPTs de red bayesiana
+7. ☐ Integrar con broker API para ejecución
+8. ☐ Implementar risk management
+9. ☐ Backtesting en datos históricos
+10. ☐ Optimización de parámetros
+
+
+SOPORTE Y DOCUMENTACIÓN:
+=========================
+
+Ver archivos:
+  • README.md        → Documentación completa y referencias
+  • QUICK_START.md   → Guía rápida de configuración
+  • database_schema.sql → Scripts SQL
+  • iam_policy.json  → Permisos IAM
+
+Contacto/Issues:
+  • CloudWatch Logs: /aws/lambda/lambda_*
+  • AWS Console: Lambda, Aurora, S3, Secrets Manager
+
