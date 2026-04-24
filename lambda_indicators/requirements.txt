@@ -1,4 +1,3 @@
-boto3==1.28.85
-pandas==2.1.3
-psycopg2-binary==2.9.9
-pandas-ta==0.3.14b0
+boto3
+psycopg2-binary
+pandas-ta-classic
