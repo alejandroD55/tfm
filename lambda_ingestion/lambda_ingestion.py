@@ -32,25 +32,30 @@ def get_secret(secret_name):
 def read_etf_config():
     """Read ETF configuration from S3"""
     try:
-        response = s3_client.get_object(Bucket='tfm-config', Key='etf_universe.json')
+        response = s3_client.get_object(Bucket='tfm-unir-config', Key='etf_universe.json')
         config = json.loads(response['Body'].read())
         return config.get('tickers', [])
     except Exception as e:
         logger.error(f"Error reading ETF config: {str(e)}")
         raise
-
+    
 
 def download_ohlcv_data(tickers):
-    """Download OHLCV data for the last 30 days using yfinance"""
+    """Download OHLCV data for the last 90 days using yfinance"""
     try:
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=30)
+        start_date = end_date - timedelta(days=90) # <-- 90 DÍAS
 
         all_data = {}
         for ticker in tickers:
             try:
                 data = yf.download(ticker, start=start_date, end=end_date, progress=False)
                 if not data.empty:
+                    # --- EL FIX SALVAVIDAS: Quitar la cabecera doble de yfinance ---
+                    if isinstance(data.columns, pd.MultiIndex):
+                        data.columns = data.columns.droplevel(1)
+                    # ---------------------------------------------------------------
+                    
                     data['Ticker'] = ticker
                     all_data[ticker] = data
                     logger.info(f"Downloaded OHLCV data for {ticker}")
@@ -128,6 +133,10 @@ def insert_batch_log(connection, batch_date, status, tickers_processed):
         query = """
             INSERT INTO batch_log (batch_date, status, tickers_processed)
             VALUES (%s, %s, %s)
+            ON CONFLICT (batch_date) DO UPDATE 
+            SET updated_at = CURRENT_TIMESTAMP, 
+                status = EXCLUDED.status, 
+                tickers_processed = EXCLUDED.tickers_processed
         """
         cursor.execute(query, (batch_date, status, tickers_processed))
         connection.commit()
@@ -167,11 +176,11 @@ def handler(event, context):
         csv_buffer = StringIO()
         combined_ohlcv.to_csv(csv_buffer)
         ohlcv_key = f"raw/{today}/ohlcv.csv"
-        save_to_s3(csv_buffer.getvalue(), 'tfm-datalake', ohlcv_key, is_json=False)
+        save_to_s3(csv_buffer.getvalue(), 'tfm-unir-datalake', ohlcv_key, is_json=False)
 
         # Save news as JSON
         news_key = f"raw/{today}/news.json"
-        save_to_s3(news_data, 'tfm-datalake', news_key, is_json=True)
+        save_to_s3(news_data, 'tfm-unir-datalake', news_key, is_json=True)
 
         # Connect to Aurora and insert batch log
         connection = psycopg2.connect(
