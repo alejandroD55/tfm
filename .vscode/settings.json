@@ -1,0 +1,10 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/lambda_sentiment/.venv/bin/python",
+  "python.venvFolders": [
+    "lambda_sentiment",
+    "lambda_ingestion",
+    "lambda_indicators",
+    "lambda_bayesian",
+    "lambda_report"
+  ]
+}

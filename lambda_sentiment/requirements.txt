@@ -1,2 +1,5 @@
-boto3
-psycopg2-binary
+boto3==1.28.85
+psycopg2-binary==2.9.9
+transformers==4.36.2
+torch==2.1.2
+numpy<2
