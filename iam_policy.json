@@ -11,10 +11,10 @@
         "s3:ListBucket"
       ],
       "Resource": [
-        "arn:aws:s3:::tfm-config",
-        "arn:aws:s3:::tfm-config/*",
-        "arn:aws:s3:::tfm-datalake",
-        "arn:aws:s3:::tfm-datalake/*"
+        "arn:aws:s3:::tfm-unir-config",
+        "arn:aws:s3:::tfm-unir-config/*",
+        "arn:aws:s3:::tfm-unir-datalake",
+        "arn:aws:s3:::tfm-unir-datalake/*"
       ]
     },
     {
@@ -36,15 +36,7 @@
         "rds:DescribeDBInstances",
         "rds:DescribeDBClusters"
       ],
-      "Resource": "arn:aws:rds:*:*:cluster:*"
-    },
-    {
-      "Sid": "BedrockAccess",
-      "Effect": "Allow",
-      "Action": [
-        "bedrock:InvokeModel"
-      ],
-      "Resource": "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-haiku-20240307-v1:0"
+      "Resource": "arn:aws:rds:*:*:db:*"
     },
     {
       "Sid": "CloudWatchLogs",
