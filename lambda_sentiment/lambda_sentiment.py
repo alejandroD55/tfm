@@ -3,7 +3,8 @@ import psycopg2
 from datetime import datetime
 import logging
 import boto3
-import requests
+import time
+from huggingface_hub import InferenceClient
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -11,7 +12,12 @@ logger.setLevel(logging.INFO)
 s3_client = boto3.client('s3')
 secrets_client = boto3.client('secretsmanager')
 
-ANTHROPIC_API_KEY = "PEGAR_AQUI_LA_API_KEY"
+# --- CONFIGURACIÓN DE HUGGING FACE ---
+HUGGINGFACE_API_KEY = "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"
+# Usamos el SDK oficial para que HF gestione el enrutamiento dinámico (evita el 404)
+hf_client = InferenceClient(token=HUGGINGFACE_API_KEY)
+MODEL_ID = "ProsusAI/finbert"
+# -----------------------------------------------
 
 def get_secret(secret_name):
     try:
@@ -36,39 +42,45 @@ def read_news_from_s3():
         raise
 
 def analyze_sentiment(headline):
-    try:
-        system_prompt = "You are a financial analyst. Analyze the sentiment of the given financial news headline. Return ONLY a JSON object with exactly these three fields: 'sentiment' (must be 'bullish', 'bearish', or 'neutral'), 'confidence' (a float between 0.0 and 1.0), and 'justification' (a single sentence explaining the sentiment). Do not include any other text or markdown formatting."
-        user_message = f"Analyze the sentiment of this financial news headline: {headline}"
-
-        url = "https://api.anthropic.com/v1/messages"
-        headers = {
-            "x-api-key": ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json"
-        }
-        data = {
-            "model": "claude-3-haiku-20240307", # Modelo súper rápido y eficiente en costes
-            "max_tokens": 256,
-            "system": system_prompt,
-            "messages": [{"role": "user", "content": user_message}]
-        }
-
-        response = requests.post(url, headers=headers, json=data, timeout=15)
-
-        if response.status_code == 200:
-            response_body = response.json()
-            content = response_body.get('content', [{}])[0].get('text', '{}')
-            return json.loads(content)
-        else:
-            logger.error(f"Anthropic API Error: {response.status_code} - {response.text}")
+    # Hacemos hasta 3 intentos por si el modelo está dormido (Cold Start)
+    for attempt in range(3):
+        try:
+            # El SDK se encarga de la URL y de toda la burocracia de la API
+            result = hf_client.text_classification(headline, model=MODEL_ID)
+            
+            if result:
+                # Dependiendo de la versión del SDK, devuelve objetos o diccionarios
+                if hasattr(result[0], 'score'):
+                    top_prediction = max(result, key=lambda x: x.score)
+                    label = top_prediction.label.lower()
+                    score = top_prediction.score
+                else:
+                    top_prediction = max(result, key=lambda x: x.get('score', 0))
+                    label = top_prediction.get('label', '').lower()
+                    score = top_prediction.get('score', 0.5)
+                
+                # Mapeamos la salida original de FinBERT a nuestra jerga de Trading
+                sentiment_map = {'positive': 'bullish', 'negative': 'bearish', 'neutral': 'neutral'}
+                final_sentiment = sentiment_map.get(label, 'neutral')
+                
+                return {
+                    'sentiment': final_sentiment,
+                    'confidence': round(float(score), 4),
+                    'justification': f"FinBERT classified as {label} with {round(score*100, 1)}% confidence"
+                }
             return None
-
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON parsing error: {str(e)}")
-        return None
-    except Exception as e:
-        logger.error(f"Error analyzing sentiment: {str(e)}")
-        raise
+                
+        except Exception as e:
+            error_msg = str(e).lower()
+            # Si el modelo está arrancando (503), esperamos y reintentamos
+            if "503" in error_msg or "loading" in error_msg:
+                logger.info(f"Model is warming up on Hugging Face. Retrying... (Attempt {attempt+1}/3)")
+                time.sleep(5)
+            else:
+                logger.error(f"Hugging Face Inference Error: {str(e)}")
+                return None
+            
+    return None
 
 def insert_sentiment_scores(connection, batch_date, ticker, headline, sentiment_data):
     try:
@@ -80,7 +92,7 @@ def insert_sentiment_scores(connection, batch_date, ticker, headline, sentiment_
         """
         cursor.execute(query, (
             batch_date, ticker, headline,
-            sentiment_data['sentiment'], float(sentiment_data['confidence']), sentiment_data['justification']
+            sentiment_data['sentiment'], sentiment_data['confidence'], sentiment_data['justification']
         ))
         connection.commit()
         cursor.close()
@@ -90,7 +102,7 @@ def insert_sentiment_scores(connection, batch_date, ticker, headline, sentiment_
 
 def handler(event, context):
     try:
-        logger.info("Lambda sentiment analysis (Direct API) started")
+        logger.info("Lambda sentiment analysis (FinBERT SDK) started")
         aurora_creds = get_secret('aurora/credentials')
         news_data = read_news_from_s3()
         today = datetime.now().strftime('%Y-%m-%d')
@@ -131,7 +143,7 @@ def handler(event, context):
         return {
             'statusCode': 200,
             'body': json.dumps({
-                'message': 'Sentiment analysis completed via Anthropic API',
+                'message': 'Sentiment analysis completed via FinBERT',
                 'total_headlines': total_headlines,
                 'processed_headlines': processed_headlines,
                 'skipped_headlines': skipped_headlines
