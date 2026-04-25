@@ -4,13 +4,11 @@ from unittest.mock import MagicMock
 # --- EL TRUCO FANTASMA (AGUJERO NEGRO) ---
 class MockImporter:
     def find_module(self, fullname, path=None):
-        # Si pgmpy pide CUALQUIER sub-módulo de estas 3, lo interceptamos
         if fullname.startswith(('sklearn', 'statsmodels', 'patsy')):
             return self
         return None
         
     def load_module(self, fullname):
-        # Le devolvemos un fantasma que finge ser una carpeta
         mock = MagicMock()
         mock.__path__ = []
         sys.modules[fullname] = mock
@@ -113,17 +111,18 @@ def create_bayesian_network():
         logger.error(f"Error creating BN: {str(e)}")
         raise
 
-def get_ticker_data(connection, batch_date, ticker):
+def get_ticker_data(connection, target_date, ticker):
     try:
         cursor = connection.cursor()
-        cursor.execute("SELECT sentiment, confidence FROM sentiment_scores WHERE batch_date = %s AND ticker = %s ORDER BY batch_date DESC LIMIT 1", (batch_date, ticker))
+        cursor.execute("SELECT sentiment, confidence FROM sentiment_scores WHERE batch_date = %s AND ticker = %s ORDER BY batch_date DESC LIMIT 1", (target_date, ticker))
         sentiment_result = cursor.fetchone()
         
-        cursor.execute("SELECT rsi_14, sma_20, sma_50, close_price, bb_upper, bb_lower FROM technical_indicators WHERE batch_date = %s AND ticker = %s ORDER BY batch_date DESC LIMIT 1", (batch_date, ticker))
+        cursor.execute("SELECT rsi_14, sma_20, sma_50, close_price, bb_upper, bb_lower FROM technical_indicators WHERE batch_date = %s AND ticker = %s ORDER BY batch_date DESC LIMIT 1", (target_date, ticker))
         indicators_result = cursor.fetchone()
         cursor.close()
         return sentiment_result, indicators_result
     except Exception as e:
+        logger.error(f"Database error fetching data for {ticker}: {e}")
         return None, None
 
 def infer_signal(model, sentiment, rsi, trend, volatility):
@@ -146,25 +145,47 @@ def infer_signal(model, sentiment, rsi, trend, volatility):
         else: signal = 'HOLD'
         return signal, prob_up, prob_down
     except Exception as e:
+        logger.error(f"Inference math error: {e}")
         raise
 
 def handler(event, context):
     try:
+        logger.info("Lambda bayesian network started")
         model = create_bayesian_network()
         aurora_creds = get_secret('aurora/credentials')
-        connection = psycopg2.connect(**aurora_creds)
-        today = datetime.now().strftime('%Y-%m-%d')
+        connection = psycopg2.connect(
+            host=aurora_creds['host'], 
+            port=aurora_creds['port'],
+            user=aurora_creds['username'], 
+            password=aurora_creds['password'],
+            database=aurora_creds['dbname']
+        )
 
         cursor = connection.cursor()
-        cursor.execute("SELECT DISTINCT ticker FROM sentiment_scores WHERE batch_date = %s", (today,))
+        # Obtenemos la última fecha real registrada
+        cursor.execute("SELECT MAX(batch_date) FROM batch_log")
+        latest_date = cursor.fetchone()[0]
+        
+        if not latest_date:
+            logger.warning("No batch logs found. Exiting.")
+            return {'statusCode': 200, 'body': 'No data'}
+            
+        logger.info(f"Synchronized to batch date: {latest_date}")
+
+        cursor.execute("SELECT DISTINCT ticker FROM sentiment_scores WHERE batch_date = %s", (latest_date,))
         tickers = [row[0] for row in cursor.fetchall()]
         cursor.close()
+
+        if not tickers:
+            logger.warning(f"No tickers with sentiment found for date {latest_date}")
 
         signals_processed = 0
         for ticker in tickers:
             try:
-                sentiment_result, indicators_result = get_ticker_data(connection, today, ticker)
-                if not sentiment_result or not indicators_result: continue
+                sentiment_result, indicators_result = get_ticker_data(connection, latest_date, ticker)
+                if not sentiment_result or not indicators_result: 
+                    logger.warning(f"Incomplete data for {ticker}. Skipping.")
+                    continue
 
                 sentiment, confidence = sentiment_result
                 rsi_14, sma_20, sma_50, close_price, bb_upper, bb_lower = indicators_result
@@ -172,15 +193,25 @@ def handler(event, context):
                 signal, prob_up, prob_down = infer_signal(model, sentiment, rsi_14, (sma_20, sma_50), (bb_upper, bb_lower, close_price))
                 
                 cursor = connection.cursor()
-                cursor.execute("INSERT INTO trading_signals (batch_date, ticker, signal, prob_up, prob_down) VALUES (%s, %s, %s, %s, %s) ON CONFLICT (batch_date, ticker) DO NOTHING", 
-                               (today, ticker, signal, float(prob_up), float(prob_down)))
+                cursor.execute("""
+                    INSERT INTO trading_signals (batch_date, ticker, signal, prob_up, prob_down) 
+                    VALUES (%s, %s, %s, %s, %s) 
+                    ON CONFLICT (batch_date, ticker) 
+                    DO UPDATE SET 
+                        signal = EXCLUDED.signal, 
+                        prob_up = EXCLUDED.prob_up, 
+                        prob_down = EXCLUDED.prob_down
+                """, (latest_date, ticker, signal, float(prob_up), float(prob_down)))
                 connection.commit()
                 cursor.close()
                 signals_processed += 1
+                logger.info(f"Success: {ticker} -> {signal} (Up: {prob_up:.2f} | Down: {prob_down:.2f})")
             except Exception as e:
+                logger.error(f"Error generating signal for {ticker}: {str(e)}")
                 continue
 
         connection.close()
         return {'statusCode': 200, 'body': json.dumps({'message': 'Success', 'signals': signals_processed})}
     except Exception as e:
+        logger.error(f"Critical error in handler: {str(e)}")
         return {'statusCode': 500, 'body': json.dumps({'error': str(e)})}
