@@ -100,21 +100,6 @@ SELECT
 FROM trading_signals ts
 ORDER BY ts.batch_date DESC, ts.ticker;
 
--- Tabla de auditoría (opcional)
-CREATE TABLE IF NOT EXISTS audit_log (
-    id SERIAL PRIMARY KEY,
-    event_type VARCHAR(50) NOT NULL,
-    lambda_name VARCHAR(100),
-    batch_date DATE,
-    status VARCHAR(50),
-    message TEXT,
-    error_message TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_audit_date ON audit_log(created_at);
-CREATE INDEX IF NOT EXISTS idx_audit_lambda ON audit_log(lambda_name);
-
 -- Función para actualizar updated_at en batch_log
 CREATE OR REPLACE FUNCTION update_batch_log_timestamp()
 RETURNS TRIGGER AS $$
