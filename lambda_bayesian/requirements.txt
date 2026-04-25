@@ -1,4 +1,9 @@
-boto3
 psycopg2-binary
+numpy<2.0
+pandas
+scipy
+networkx
+joblib
+pyparsing
+tqdm
 pgmpy==0.1.19
-numpy
