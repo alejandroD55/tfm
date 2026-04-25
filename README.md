@@ -1,6 +1,6 @@
 # TFM - Trading Strategy System with AWS Lambda
 
-Sistema de análisis y trading de ETFs usando AWS Lambda, Aurora PostgreSQL, Amazon Bedrock y análisis bayesiano.
+Sistema de análisis y trading de ETFs usando AWS Lambda, Aurora PostgreSQL, Hugging Face y análisis bayesiano.
 
 ## Estructura del Proyecto
 
@@ -31,15 +31,15 @@ tfm/
 **Función**: Ingesta de datos de mercado y noticias
 
 **Responsabilidades**:
-- Lee configuración de tickers desde `s3://tfm-config/etf_universe.json`
+- Lee configuración de tickers desde `s3://tfm-unir-config/etf_universe.json`
 - Descarga 30 días de datos OHLCV usando yfinance
 - Obtiene últimas 24 horas de noticias desde Finnhub API
-- Guarda OHLCV como CSV en `s3://tfm-datalake/raw/YYYY-MM-DD/ohlcv.csv`
-- Guarda noticias como JSON en `s3://tfm-datalake/raw/YYYY-MM-DD/news.json`
+- Guarda OHLCV como CSV en `s3://tfm-unir-datalake/raw/YYYY-MM-DD/ohlcv.csv`
+- Guarda noticias como JSON en `s3://tfm-unir-datalake/raw/YYYY-MM-DD/news.json`
 - Registra evento en tabla Aurora `batch_log` con estado `STARTED`
 
 **Dependencias**:
-- boto3, yfinance, requests, psycopg2, pandas
+- yfinance, requests, psycopg2, pandas
 
 **Secretos requeridos**:
 - `aurora/credentials` (host, port, username, password, dbname)
@@ -49,16 +49,16 @@ tfm/
 
 ### λ2 - lambda_sentiment
 
-**Función**: Análisis de sentimiento usando Amazon Bedrock
+**Función**: Análisis de sentimiento usando Hugging Face
 
 **Responsabilidades**:
-- Lee noticias de `s3://tfm-datalake/raw/YYYY-MM-DD/news.json`
-- Analiza sentimiento de cada titular usando Claude 3 Haiku via Bedrock
+- Lee noticias de `s3://tfm-unir-datalake/raw/YYYY-MM-DD/news.json`
+- Analiza sentimiento de cada titular usando FinBERT via Hugging Face Serverless API
 - Retorna: sentiment (bullish/bearish/neutral), confidence (0-1), justification
 - Inserta resultados en tabla Aurora `sentiment_scores`
 
 **Dependencias**:
-- boto3, psycopg2
+- psycopg2
 
 **Secretos requeridos**:
 - `aurora/credentials` (host, port, username, password, dbname)
@@ -70,7 +70,7 @@ tfm/
 **Función**: Cálculo de indicadores técnicos
 
 **Responsabilidades**:
-- Lee datos OHLCV de `s3://tfm-datalake/raw/YYYY-MM-DD/ohlcv.csv`
+- Lee datos OHLCV de `s3://tfm-unir-datalake/raw/YYYY-MM-DD/ohlcv.csv`
 - Calcula indicadores usando pandas-ta:
   - RSI (14 períodos)
   - SMA (20 y 50 períodos)
@@ -78,7 +78,7 @@ tfm/
 - Inserta resultados en tabla Aurora `technical_indicators`
 
 **Dependencias**:
-- boto3, psycopg2, pandas, pandas-ta
+- psycopg2, pandas, pandas-ta
 
 **Secretos requeridos**:
 - `aurora/credentials` (host, port, username, password, dbname)
@@ -104,7 +104,7 @@ tfm/
 - Inserta señales en tabla Aurora `trading_signals`
 
 **Dependencias**:
-- boto3, psycopg2, pgmpy, numpy
+- psycopg2, pgmpy, numpy
 
 **Secretos requeridos**:
 - `aurora/credentials` (host, port, username, password, dbname)
@@ -122,11 +122,11 @@ tfm/
   - **Sharpe Ratio Anualizado**: usando tasa libre de riesgo del 2%
   - **Maximum Drawdown**: mayor caída peak-to-trough
 - Ensambla reporte en JSON
-- Guarda en `s3://tfm-datalake/results/YYYY-MM-DD/report.json`
+- Guarda en `s3://tfm-unir-datalake/results/YYYY-MM-DD/report.json`
 - Actualiza `batch_log` con estado `COMPLETED`
 
 **Dependencias**:
-- boto3, psycopg2, pandas, numpy
+- psycopg2, pandas, numpy
 
 **Secretos requeridos**:
 - `aurora/credentials` (host, port, username, password, dbname)
@@ -186,8 +186,8 @@ CREATE TABLE trading_signals (
 
 ### Buckets S3
 
-- `tfm-config`: Contiene `etf_universe.json` con lista de tickers
-- `tfm-datalake`: Almacena datos crudos (`raw/YYYY-MM-DD/`) y resultados (`results/YYYY-MM-DD/`)
+- `tfm-unir-config`: Contiene `etf_universe.json` con lista de tickers
+- `tfm-unir-datalake`: Almacena datos crudos (`raw/YYYY-MM-DD/`) y resultados (`results/YYYY-MM-DD/`)
 
 ### Secretos AWS Secrets Manager
 
@@ -271,7 +271,7 @@ Se recomienda usar AWS Step Functions para orquestar la ejecución:
 
 - Los datos de OHLCV se descargan para los últimos 30 días
 - Las noticias se obtienen para las últimas 24 horas
-- Los análisis de sentimiento usan Claude 3 Haiku via Amazon Bedrock
+- Los análisis de sentimiento usan FinBERT via Hugging Face
 - La red bayesiana utiliza Conditional Probability Tables predefinidas
 - El backtesting asume 100% del capital en cada posición
 - Todas las fechas usan formato YYYY-MM-DD
@@ -281,6 +281,6 @@ Se recomienda usar AWS Step Functions para orquestar la ejecución:
 ## Troubleshooting
 
 **Error de conexión a Aurora**: Verificar VPC, subnet groups y security groups
-**Error de Bedrock**: Verificar que el modelo `anthropic.claude-3-haiku-20240307-v1:0` esté disponible en la región
+**Error de Hugging Face**: Verificar que la API Key está activa y el modelo ProsusAI/finbert no está caído.
 **Error de S3**: Verificar nombres de buckets y permisos IAM
 **Error de Secretos**: Verificar que los secretos existan en Secrets Manager en la misma región
