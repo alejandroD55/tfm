@@ -20,23 +20,23 @@ tfm/
     │
     ├── lambda_ingestion/           [λ1 - INGESTA]
     │   ├── lambda_ingestion.py     - Lee config ETFs, descarga datos OHLCV, noticias
-    │   └── requirements.txt        - Dependencies: boto3, yfinance, requests, psycopg2, pandas
+    │   └── requirements.txt        - Dependencies: yfinance, requests, psycopg2-binary, pandas
     │
     ├── lambda_sentiment/           [λ2 - SENTIMIENTO]
-    │   ├── lambda_sentiment.py     - Analiza sentimiento usando Amazon Bedrock
-    │   └── requirements.txt        - Dependencies: boto3, psycopg2
+    │   ├── lambda_sentiment.py     - Analiza sentimiento usando FinBERT vía Hugging Face API
+    │   └── requirements.txt        - Dependencies: psycopg2-binary, huggingface_hub
     │
     ├── lambda_indicators/          [λ3 - INDICADORES TÉCNICOS]
     │   ├── lambda_indicators.py    - Calcula RSI, SMA, Bandas de Bollinger
-    │   └── requirements.txt        - Dependencies: boto3, psycopg2, pandas, pandas-ta
+    │   └── requirements.txt        - Dependencies: psycopg2-binary, pandas, pandas-ta-classic
     │
     ├── lambda_bayesian/            [λ4 - INFERENCIA BAYESIANA]
     │   ├── lambda_bayesian.py      - Red bayesiana para señales de trading
-    │   └── requirements.txt        - Dependencies: boto3, psycopg2, pgmpy, numpy
+    │   └── requirements.txt        - Dependencies: psycopg2-binary, pgmpy, numpy, scipy, pandas, networkx
     │
     └── lambda_report/              [λ5 - REPORTE]
         ├── lambda_report.py        - Backtesting y generación de reportes
-        └── requirements.txt        - Dependencies: boto3, psycopg2, pandas, numpy
+        └── requirements.txt        - Dependencies: psycopg2-binary, pandas, numpy
 
 
 FLUJO DEL SISTEMA:
@@ -44,11 +44,11 @@ FLUJO DEL SISTEMA:
 
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                     λ1: INGESTA DE DATOS                                │
-│  • Lee lista de ETFs de: s3://tfm-config/etf_universe.json              │
+│  • Lee lista de ETFs de: s3://tfm-unir-config/etf_universe.json         │
 │  • Descarga 30 días de OHLCV usando yfinance                            │
 │  • Obtiene noticias últimas 24h de Finnhub API                          │
-│  • Guarda OHLCV: s3://tfm-datalake/raw/{DATE}/ohlcv.csv               │
-│  • Guarda noticias: s3://tfm-datalake/raw/{DATE}/news.json             │
+│  • Guarda OHLCV: s3://tfm-unir-datalake/raw/{DATE}/ohlcv.csv            │
+│  • Guarda noticias: s3://tfm-unir-datalake/raw/{DATE}/news.json         │
 │  • Escribe en Aurora batch_log (status=STARTED)                         │
 └────────┬──────────────────────────────────────────────────────────────┘
          │
@@ -57,15 +57,15 @@ FLUJO DEL SISTEMA:
     ┌────▼─────────────┐  ┌────▼──────────────┐  ┌────▼─────────────────┐
     │  λ2: SENTIMIENTO │  │ λ3: INDICADORES   │  │  [Paralelo]          │
     │                  │  │     TÉCNICOS      │  │                      │
-    │ • Lee noticias   │  │                    │  │ Ejecutan en paralelo │
-    │ • Bedrock API    │  │ • Lee OHLCV        │  │ para mejor           │
-    │ • Análisis CLs   │  │ • pandas-ta        │  │ performance          │
-    │ • Escribe        │  │ • RSI 14           │  │                      │
-    │   sentiment_     │  │ • SMA 20, SMA 50   │  │                      │
-    │   scores         │  │ • Bandas Bollinger │  │                      │
-    │                  │  │ • Escribe          │  │                      │
-    │                  │  │   technical_       │  │                      │
-    │                  │  │   indicators       │  │                      │
+    │ • Lee noticias   │  │                   │  │ Ejecutan en paralelo │
+    │ • Bedrock API    │  │ • Lee OHLCV       │  │ para mejor           │
+    │ • Análisis CLs   │  │ • pandas-ta       │  │ performance          │
+    │ • Escribe        │  │ • RSI 14          │  │                      │
+    │   sentiment_     │  │ • SMA 20, SMA 50  │  │                      │
+    │   scores         │  │ • Bandas Bollinger│  │                      │
+    │                  │  │ • Escribe         │  │                      │
+    │                  │  │   technical_      │  │                      │
+    │                  │  │   indicators      │  │                      │
     └────┬─────────────┘  └────┬──────────────┘  └────┬──────────────────┘
          │                      │                      │
          └──────────────────────┼──────────────────────┘
@@ -87,14 +87,14 @@ FLUJO DEL SISTEMA:
                                 │
                            ┌────▼──────────────────────────┐
                            │  λ5: REPORTE & BACKTESTING   │
-                           │                               │
+                           │                              │
                            │ • Lee señales (90 días)       │
                            │ • Calcula métricas:           │
                            │   - Cumulative Return         │
                            │   - Sharpe Ratio Anualizado   │
                            │   - Maximum Drawdown          │
                            │ • Guarda JSON:                │
-                           │   s3://tfm-datalake/results/  │
+                           │   s3://tfm-unir-datalake/results/ │
                            │ • Actualiza batch_log         │
                            │   (status=COMPLETED)          │
                            └────────────────────────────────┘
@@ -104,10 +104,10 @@ ALMACENAMIENTO DE DATOS:
 ========================
 
 AWS S3:
-  tfm-config/
+  tfm-unir-config/
     └── etf_universe.json          [Configuración]
-  
-  tfm-datalake/
+ 
+  tfm-unir-datalake/
     ├── raw/{YYYY-MM-DD}/
     │   ├── ohlcv.csv              [Datos OHLCV]
     │   └── news.json              [Noticias]
@@ -119,7 +119,7 @@ Aurora PostgreSQL:
   sentiment_scores             [Análisis de sentimiento]
   technical_indicators         [Indicadores técnicos]
   trading_signals              [Señales de trading]
-  
+ 
 AWS Secrets Manager:
   aurora/credentials           [Credenciales Aurora]
   finnhub/api_key             [API Key Finnhub]
@@ -130,7 +130,7 @@ DEPENDENCIAS EXTERNAS:
 
 APIs:
   • Finnhub API              → Noticias financieras
-  • Amazon Bedrock           → Análisis de sentimiento (Claude 3 Haiku)
+  • Hugging Face API         → Análisis de sentimiento (FinBERT)
 
 Servicios AWS:
   • Lambda                   → Ejecución de funciones
@@ -140,13 +140,6 @@ Servicios AWS:
   • EventBridge              → Orquestación temporal
   • Step Functions           → Orquestación de flujos
   • CloudWatch               → Logs y métricas
-
-Librerías Python:
-  • yfinance                 → Descarga de datos históricos
-  • pandas-ta                → Indicadores técnicos
-  • pgmpy                    → Redes bayesianas
-  • psycopg2                 → Conexión PostgreSQL
-  • boto3                    → SDK de AWS
 
 
 MÉTRICAS CALCULADAS:
@@ -190,7 +183,7 @@ Lambda Timeout:
   • Todos: 300 segundos (5 minutos)
 
 Aurora Instance:
-  • Mínimo: db.t4.small
+  • Mínimo: db.t4.small / Free Tier PostgreSQL
   • Recomendado: db.t4.medium o superior
 
 Scheduling:
@@ -203,9 +196,8 @@ SEGURIDAD:
 
 ✓ Credenciales en AWS Secrets Manager
 ✓ Política IAM con permisos mínimos
-✓ Aurora en VPC privada
+✓ DB en VPC privada (o securizada por Security Group)
 ✓ Encryption at rest para S3 y RDS
-✓ VPC endpoints para AWS services
 ✓ Logs en CloudWatch con encriptación
 
 No hardcodear:
@@ -216,23 +208,19 @@ No hardcodear:
 
 COSTOS ESTIMADOS:
 ==================
-
 Por ejecución diaria:
   Lambda:        $0.0001-0.001
-  Aurora:        $1-5
-  Bedrock:       $0.25 (estimado, 1000 headlines)
+  Aurora/RDS:    $0 (Free Tier) - $5
+  Hugging Face:  $0.00 (Inferencia gratuita Serverless)
   S3:            <$0.01
   ─────────────────────────
-  TOTAL/DÍA:     ~$2-10
-
-Mensual (30 ejecuciones):
-  TOTAL/MES:     ~$60-300
+  TOTAL/DÍA:     ~$0.05-0.10
 
 
 PRÓXIMOS PASOS:
 ================
 
-1. ✓ Crear infraestructura (Aurora, S3, etc.)
+1. ✓ Crear infraestructura (RDS, S3, etc.)
 2. ✓ Desplegar lambdas con deploy.sh
 3. ✓ Configurar secretos en Secrets Manager
 4. ✓ Ejecutar pipeline de prueba
@@ -255,5 +243,4 @@ Ver archivos:
 
 Contacto/Issues:
   • CloudWatch Logs: /aws/lambda/lambda_*
-  • AWS Console: Lambda, Aurora, S3, Secrets Manager
-
+  • AWS Console: Lambda, RDS, S3, Secrets Manager
