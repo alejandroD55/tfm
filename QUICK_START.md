@@ -50,11 +50,11 @@ aws secretsmanager create-secret \
 
 ```bash
 # Crear buckets
-aws s3 mb s3://tfm-config --region us-east-1
-aws s3 mb s3://tfm-datalake --region us-east-1
+aws s3 mb s3://tfm-unir-config --region us-east-1
+aws s3 mb s3://tfm-unir-datalake --region us-east-1
 
 # Subir configuración de ETFs
-aws s3 cp etf_universe.json s3://tfm-config/etf_universe.json
+aws s3 cp etf_universe.json s3://tfm-unir-config/etf_universe.json
 ```
 
 ### 4. Crear Rol IAM para Lambda
@@ -62,7 +62,7 @@ aws s3 cp etf_universe.json s3://tfm-config/etf_universe.json
 ```bash
 # Crear rol
 aws iam create-role \
-  --role-name tfm-lambda-execution-role \
+  --role-name tfm-unir-lambda-execution-role \
   --assume-role-policy-document '{
     "Version": "2012-10-17",
     "Statement": [
@@ -78,13 +78,13 @@ aws iam create-role \
 
 # Adjuntar política
 aws iam put-role-policy \
-  --role-name tfm-lambda-execution-role \
-  --policy-name tfm-lambda-policy \
+  --role-name tfm-unir-lambda-execution-role \
+  --policy-name tfm-unir-lambda-policy \
   --policy-document file://iam_policy.json
 
 # Opcionalmente, adjuntar rol para VPC (si es necesario)
 aws iam attach-role-policy \
-  --role-name tfm-lambda-execution-role \
+  --role-name tfm-unir-lambda-execution-role \
   --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
 ```
 
@@ -96,7 +96,7 @@ chmod +x deploy.sh
 
 # Desplegar todas las lambdas
 # Reemplazar ACCOUNT_ID con tu ID de cuenta AWS
-./deploy.sh us-east-1 123456789012 arn:aws:iam::123456789012:role/tfm-lambda-execution-role
+./deploy.sh us-east-1 123456789012 arn:aws:iam::123456789012:role/tfm-unir-lambda-execution-role
 ```
 
 ### 6. Configurar Lambda VPC (si es necesario)
@@ -115,7 +115,7 @@ aws lambda update-function-configuration \
 ```bash
 # Crear state machine
 aws stepfunctions create-state-machine \
-  --name tfm-trading-pipeline \
+  --name tfm-unir-trading-pipeline \
   --definition file://stepfunctions_definition.json \
   --role-arn arn:aws:iam::ACCOUNT_ID:role/stepfunctions-execution-role
 
@@ -140,20 +140,20 @@ cat response.json
 ```bash
 # Ejecutar state machine
 aws stepfunctions start-execution \
-  --state-machine-arn arn:aws:states:us-east-1:ACCOUNT_ID:stateMachine:tfm-trading-pipeline
+  --state-machine-arn arn:aws:states:us-east-1:ACCOUNT_ID:stateMachine:tfm-unir-trading-pipeline
 ```
 
 **Opción C: EventBridge (Diario a las 9 AM UTC)**
 ```bash
 # Crear regla de EventBridge
 aws events put-rule \
-  --name tfm-daily-trigger \
+  --name tfm-unir-daily-trigger \
   --schedule-expression "cron(0 9 * * ? *)" \
   --state ENABLED
 
 # Agregar target
 aws events put-targets \
-  --rule tfm-daily-trigger \
+  --rule tfm-unir-daily-trigger \
   --targets "Id"="1","Arn"="arn:aws:lambda:us-east-1:ACCOUNT_ID:function:lambda_ingestion"
 ```
 
@@ -185,8 +185,8 @@ aws secretsmanager describe-secret --secret-id aurora/credentials
 aws secretsmanager describe-secret --secret-id finnhub/api_key
 
 # 3. Verificar S3
-aws s3 ls s3://tfm-config/
-aws s3 ls s3://tfm-datalake/
+aws s3 ls s3://tfm-unir-config/
+aws s3 ls s3://tfm-unir-datalake/
 
 # 4. Verificar Aurora (conectarse y ejecutar)
 SELECT * FROM batch_log;
@@ -202,10 +202,6 @@ SELECT COUNT(*) FROM trading_signals;
 - Verificar que Lambda esté en la misma VPC
 - Verificar secretos en Secrets Manager
 
-### Error: "Model not found" (Bedrock)
-- Verificar que el modelo `anthropic.claude-3-haiku-20240307-v1:0` esté habilitado
-- Puede requerir solicitud de acceso en la consola de AWS
-
 ### Error: "Access Denied" (S3)
 - Verificar política IAM adjunta al rol
 - Verificar nombres de buckets en las políticas
@@ -219,9 +215,8 @@ SELECT COUNT(*) FROM trading_signals;
 Por ejecución diaria del pipeline:
 - **Lambda**: ~$0.0001 (según invocaciones y duración)
 - **Aurora**: ~$1-5 (según cantidad de datos)
-- **Bedrock**: ~$0.25 (por 1000 headlines)
+- **Hugging Face (FinBERT)**: $0.00
 - **S3**: <$0.01 (storage mínimo)
-- **Total estimado**: $2-10/día
 
 ## Próximos Pasos
 
