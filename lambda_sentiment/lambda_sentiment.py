@@ -13,7 +13,7 @@ s3_client = boto3.client('s3')
 secrets_client = boto3.client('secretsmanager')
 
 # --- CONFIGURACIÓN DE HUGGING FACE ---
-HUGGINGFACE_API_KEY = "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"
+HUGGINGFACE_API_KEY = "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"
 # Usamos el SDK oficial para que HF gestione el enrutamiento dinámico (evita el 404)
 hf_client = InferenceClient(token=HUGGINGFACE_API_KEY)
 MODEL_ID = "ProsusAI/finbert"
