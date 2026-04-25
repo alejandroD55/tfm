@@ -26,14 +26,19 @@ def get_trading_data(connection, days_back=90):
         end_date = datetime.now().date()
         start_date = end_date - timedelta(days=days_back)
 
-        cursor.execute("SELECT batch_date, ticker, signal, prob_up, prob_down FROM trading_signals WHERE batch_date >= %s AND batch_date <= %s ORDER BY batch_date, ticker", (start_date, end_date))
-        signals_df = pd.DataFrame(cursor.fetchall(), columns=['batch_date', 'ticker', 'signal', 'prob_up', 'prob_down'])
-        
-        cursor.execute("SELECT batch_date, ticker, sentiment, confidence FROM sentiment_scores WHERE batch_date >= %s AND batch_date <= %s ORDER BY batch_date, ticker", (start_date, end_date))
-        sentiment_df = pd.DataFrame(cursor.fetchall(), columns=['batch_date', 'ticker', 'sentiment', 'confidence'])
+        # CRUZAMOS LAS TABLAS PARA OBTENER EL PRECIO REAL (close_price)
+        query = """
+            SELECT ts.batch_date, ts.ticker, ts.signal, ti.close_price
+            FROM trading_signals ts
+            JOIN technical_indicators ti ON ts.batch_date = ti.batch_date AND ts.ticker = ti.ticker
+            WHERE ts.batch_date >= %s AND ts.batch_date <= %s 
+            ORDER BY ts.batch_date, ts.ticker
+        """
+        cursor.execute(query, (start_date, end_date))
+        signals_df = pd.DataFrame(cursor.fetchall(), columns=['batch_date', 'ticker', 'signal', 'close_price'])
         
         cursor.close()
-        return signals_df, sentiment_df
+        return signals_df
     except Exception as e:
         raise
 
@@ -42,34 +47,61 @@ def calculate_backtesting_metrics(signals_df):
         metrics = {}
         for ticker in signals_df['ticker'].unique():
             ticker_signals = signals_df[signals_df['ticker'] == ticker].sort_values('batch_date')
-            starting_capital, current_capital = 10000, 10000
+            starting_capital = 10000.0
+            current_capital = starting_capital
             equity_curve = [starting_capital]
-            in_position, entry_price = False, None
+            in_position = False
+            entry_price = 0.0
 
             for idx, row in ticker_signals.iterrows():
+                current_price = float(row['close_price']) if row['close_price'] else 0.0
+                if current_price == 0:
+                    continue
+
                 if row['signal'] == 'BUY' and not in_position:
-                    in_position, entry_price = True, current_capital * row['prob_up']
+                    in_position = True
+                    entry_price = current_price
                 elif row['signal'] == 'SELL' and in_position:
                     in_position = False
-                    exit_price = current_capital * row['prob_down']
-                    current_capital *= (1 + (exit_price - entry_price) / entry_price)
+                    # Retorno real basado en la variación del precio
+                    trade_return = (current_price - entry_price) / entry_price
+                    current_capital *= (1 + trade_return)
+                    
                 equity_curve.append(current_capital)
 
-            if in_position and entry_price:
-                current_capital *= (1 + (current_capital - entry_price) / entry_price)
+            # Si seguimos dentro al final del periodo, valoramos a precio de mercado
+            if in_position and entry_price > 0:
+                final_price = float(ticker_signals.iloc[-1]['close_price'])
+                unrealized_return = (final_price - entry_price) / entry_price
+                final_equity = current_capital * (1 + unrealized_return)
+            else:
+                final_equity = current_capital
 
-            cumulative_return = (current_capital - starting_capital) / starting_capital
-            daily_returns = np.diff(equity_curve) / equity_curve[:-1]
-            excess_returns = daily_returns - 0.02 / 252
-            sharpe_ratio = np.mean(excess_returns) / np.std(excess_returns) * np.sqrt(252) if np.std(excess_returns) > 0 else 0
-            max_drawdown = np.min((equity_curve - np.maximum.accumulate(equity_curve)) / np.maximum.accumulate(equity_curve))
+            cumulative_return = (final_equity - starting_capital) / starting_capital
+            
+            # Cálculos estadísticos (solo si hay más de 1 día de datos)
+            if len(equity_curve) > 2:
+                daily_returns = np.diff(equity_curve) / equity_curve[:-1]
+                excess_returns = daily_returns - (0.02 / 252) # Risk-free rate 2%
+                std_dev = np.std(excess_returns)
+                sharpe_ratio = (np.mean(excess_returns) / std_dev * np.sqrt(252)) if std_dev > 0 else 0.0
+                
+                peak = np.maximum.accumulate(equity_curve)
+                drawdown = (equity_curve - peak) / peak
+                max_drawdown = np.min(drawdown)
+            else:
+                sharpe_ratio = 0.0
+                max_drawdown = 0.0
 
             metrics[ticker] = {
-                'cumulative_return': float(cumulative_return), 'sharpe_ratio': float(sharpe_ratio),
-                'max_drawdown': float(max_drawdown), 'final_equity': float(current_capital)
+                'cumulative_return': round(float(cumulative_return), 4), 
+                'sharpe_ratio': round(float(sharpe_ratio), 4),
+                'max_drawdown': round(float(max_drawdown), 4), 
+                'final_equity': round(float(final_equity), 2)
             }
         return metrics
     except Exception as e:
+        logger.error(f"Error in math: {e}")
         raise
 
 def save_report_to_s3(report_data):
@@ -85,19 +117,25 @@ def handler(event, context):
     try:
         logger.info("Lambda report generation started")
         aurora_creds = get_secret('aurora/credentials')
-        connection = psycopg2.connect(**aurora_creds)
+        connection = psycopg2.connect(
+            host=aurora_creds['host'], port=aurora_creds['port'],
+            user=aurora_creds['username'], password=aurora_creds['password'],
+            database=aurora_creds['dbname']
+        )
         today = datetime.now().strftime('%Y-%m-%d')
 
-        signals_df, sentiment_df = get_trading_data(connection, days_back=90)
+        signals_df = get_trading_data(connection, days_back=90)
         backtest_metrics = calculate_backtesting_metrics(signals_df) if not signals_df.empty else {}
 
         report_data = {
-            'report_date': today, 'data_period_days': 90, 'backtesting_metrics': backtest_metrics,
+            'report_date': today, 
+            'data_period_days': 90, 
+            'backtesting_metrics': backtest_metrics,
             'summary': {
                 'total_tickers': len(backtest_metrics),
-                'avg_cumulative_return': np.mean([m['cumulative_return'] for m in backtest_metrics.values()]) if backtest_metrics else 0,
-                'avg_sharpe_ratio': np.mean([m['sharpe_ratio'] for m in backtest_metrics.values()]) if backtest_metrics else 0,
-                'avg_max_drawdown': np.mean([m['max_drawdown'] for m in backtest_metrics.values()]) if backtest_metrics else 0
+                'avg_cumulative_return': round(np.mean([m['cumulative_return'] for m in backtest_metrics.values()]), 4) if backtest_metrics else 0,
+                'avg_sharpe_ratio': round(np.mean([m['sharpe_ratio'] for m in backtest_metrics.values()]), 4) if backtest_metrics else 0,
+                'avg_max_drawdown': round(np.mean([m['max_drawdown'] for m in backtest_metrics.values()]), 4) if backtest_metrics else 0
             }
         }
         report_key = save_report_to_s3(report_data)
@@ -110,4 +148,5 @@ def handler(event, context):
 
         return {'statusCode': 200, 'body': json.dumps({'message': 'Success', 'report': report_key})}
     except Exception as e:
+        logger.error(f"Error: {str(e)}")
         return {'statusCode': 500, 'body': json.dumps({'error': str(e)})}
