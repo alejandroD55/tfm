@@ -12,8 +12,6 @@ logger.setLevel(logging.INFO)
 s3_client = boto3.client('s3')
 secrets_client = boto3.client('secretsmanager')
 
-# --- CONFIGURACIÓN DE HUGGING FACE ---
-HUGGINGFACE_API_KEY = "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"
 # Usamos el SDK oficial para que HF gestione el enrutamiento dinámico (evita el 404)
 hf_client = InferenceClient(token=HUGGINGFACE_API_KEY)
 MODEL_ID = "ProsusAI/finbert"
@@ -41,7 +39,7 @@ def read_news_from_s3():
         logger.error(f"Error reading news from S3: {str(e)}")
         raise
 
-def analyze_sentiment(headline):
+def analyze_sentiment(headline, hf_client):
     # Hacemos hasta 3 intentos por si el modelo está dormido (Cold Start)
     for attempt in range(3):
         try:
@@ -103,7 +101,12 @@ def insert_sentiment_scores(connection, batch_date, ticker, headline, sentiment_
 def handler(event, context):
     try:
         logger.info("Lambda sentiment analysis (FinBERT SDK) started")
+
+        # OBTENEMOS LAS CREDENCIALES DE FORMA SEGURA
         aurora_creds = get_secret('aurora/credentials')
+        hf_creds = get_secret('huggingface/api_key')
+        hf_client = InferenceClient(token=hf_creds['api_key'])
+        
         news_data = read_news_from_s3()
         today = datetime.now().strftime('%Y-%m-%d')
 
@@ -127,7 +130,7 @@ def handler(event, context):
                         skipped_headlines += 1
                         continue
 
-                    sentiment_data = analyze_sentiment(headline)
+                    sentiment_data = analyze_sentiment(headline, hf_client)
                     if sentiment_data is None:
                         skipped_headlines += 1
                         continue
