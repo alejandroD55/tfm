@@ -9,13 +9,12 @@ from huggingface_hub import InferenceClient
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+# Inicializamos clientes de AWS globales (boto3)
 s3_client = boto3.client('s3')
 secrets_client = boto3.client('secretsmanager')
 
-# Usamos el SDK oficial para que HF gestione el enrutamiento dinámico (evita el 404)
-hf_client = InferenceClient(token=HUGGINGFACE_API_KEY)
+# Definimos el ID del modelo a nivel global
 MODEL_ID = "ProsusAI/finbert"
-# -----------------------------------------------
 
 def get_secret(secret_name):
     try:
@@ -105,6 +104,8 @@ def handler(event, context):
         # OBTENEMOS LAS CREDENCIALES DE FORMA SEGURA
         aurora_creds = get_secret('aurora/credentials')
         hf_creds = get_secret('huggingface/api_key')
+        
+        # INICIALIZAMOS EL CLIENTE
         hf_client = InferenceClient(token=hf_creds['api_key'])
         
         news_data = read_news_from_s3()
@@ -130,6 +131,7 @@ def handler(event, context):
                         skipped_headlines += 1
                         continue
 
+                    # Pasamos el hf_client inicializado a la función
                     sentiment_data = analyze_sentiment(headline, hf_client)
                     if sentiment_data is None:
                         skipped_headlines += 1
