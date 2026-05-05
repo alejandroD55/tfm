@@ -84,7 +84,7 @@ def calculate_backtesting_metrics(signals_df):
                 daily_returns = np.diff(equity_curve) / equity_curve[:-1]
                 excess_returns = daily_returns - (0.02 / 252) # Risk-free rate 2%
                 std_dev = np.std(excess_returns)
-                sharpe_ratio = (np.mean(excess_returns) / std_dev * np.sqrt(252)) if std_dev > 0 else 0.0
+                sharpe_ratio = (np.mean(excess_returns) / std_dev * np.sqrt(252)) if std_dev > 1e-6 else 0.0
                 
                 peak = np.maximum.accumulate(equity_curve)
                 drawdown = (equity_curve - peak) / peak
