@@ -2,14 +2,14 @@
   "tickers": [
     "SPY",
     "QQQ",
+    "SMH",
+    "XLE",
+    "XLP",
+    "XLF",
+    "XLV",
     "IWM",
-    "EEM",
-    "VWO",
-    "AGG",
     "TLT",
-    "GLD",
-    "DBC",
-    "USO"
+    "GLD"
   ],
   "description": "Lista de ETFs para análisis de trading"
 }
