@@ -1,0 +1,72 @@
+name: Deploy Pipeline on Master
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-master
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    name: Run DB Migrations
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Run migrations
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          chmod +x scripts/run_migrations.sh
+          ./scripts/run_migrations.sh
+
+  deploy:
+    name: Deploy Lambdas
+    runs-on: ubuntu-latest
+    environment: production
+    needs: migrate
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Deploy Lambda functions
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          LAMBDA_EXECUTION_ROLE_ARN: ${{ vars.LAMBDA_EXECUTION_ROLE_ARN }}
+        run: |
+          chmod +x deploy.sh
+          ./deploy.sh "$AWS_REGION" "$AWS_ACCOUNT_ID" "$LAMBDA_EXECUTION_ROLE_ARN"

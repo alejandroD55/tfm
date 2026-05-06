@@ -1,14 +1,22 @@
 {
   "Comment": "Orquestación del TFM Trading System",
-  "StartAt": "lambda_ingestion",
+  "StartAt": "initialize_batch_context",
   "States": {
+    "initialize_batch_context": {
+      "Type": "Pass",
+      "Parameters": {
+        "batch_date.$": "$$.Execution.StartTime"
+      },
+      "ResultPath": "$.pipeline_context",
+      "Next": "lambda_ingestion"
+    },
     "lambda_ingestion": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
       "Parameters": {
         "FunctionName": "lambda_ingestion",
         "Payload": {
-          "date.$": "$$.State.EnteredTime"
+          "batch_date.$": "$.pipeline_context.batch_date"
         }
       },
       "TimeoutSeconds": 300,
@@ -20,15 +28,6 @@
           "IntervalSeconds": 2,
           "MaxAttempts": 2,
           "BackoffRate": 2
-        }
-      ],
-      "Catch": [
-        {
-          "ErrorEquals": [
-            "States.ALL"
-          ],
-          "Next": "handle_error_ingestion",
-          "ResultPath": "$.error_ingestion"
         }
       ],
       "Next": "parallel_analysis"
@@ -44,7 +43,9 @@
               "Resource": "arn:aws:states:::lambda:invoke",
               "Parameters": {
                 "FunctionName": "lambda_sentiment",
-                "Payload.$": "$"
+                "Payload": {
+                  "batch_date.$": "$.pipeline_context.batch_date"
+                }
               },
               "TimeoutSeconds": 300,
               "Retry": [
@@ -57,20 +58,6 @@
                   "BackoffRate": 2
                 }
               ],
-              "Catch": [
-                {
-                  "ErrorEquals": [
-                    "States.ALL"
-                  ],
-                  "Next": "handle_error_sentiment",
-                  "ResultPath": "$.error_sentiment"
-                }
-              ],
-              "End": true
-            },
-            "handle_error_sentiment": {
-              "Type": "Pass",
-              "Result": "Sentiment analysis failed",
               "End": true
             }
           }
@@ -83,7 +70,9 @@
               "Resource": "arn:aws:states:::lambda:invoke",
               "Parameters": {
                 "FunctionName": "lambda_indicators",
-                "Payload.$": "$"
+                "Payload": {
+                  "batch_date.$": "$.pipeline_context.batch_date"
+                }
               },
               "TimeoutSeconds": 300,
               "Retry": [
@@ -96,42 +85,21 @@
                   "BackoffRate": 2
                 }
               ],
-              "Catch": [
-                {
-                  "ErrorEquals": [
-                    "States.ALL"
-                  ],
-                  "Next": "handle_error_indicators",
-                  "ResultPath": "$.error_indicators"
-                }
-              ],
-              "End": true
-            },
-            "handle_error_indicators": {
-              "Type": "Pass",
-              "Result": "Technical indicators calculation failed",
               "End": true
             }
           }
         }
       ],
-      "Next": "lambda_bayesian",
-      "Catch": [
-        {
-          "ErrorEquals": [
-            "States.ALL"
-          ],
-          "Next": "handle_error_parallel",
-          "ResultPath": "$.error_parallel"
-        }
-      ]
+      "Next": "lambda_bayesian"
     },
     "lambda_bayesian": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
       "Parameters": {
         "FunctionName": "lambda_bayesian",
-        "Payload.$": "$"
+        "Payload": {
+          "batch_date.$": "$.pipeline_context.batch_date"
+        }
       },
       "TimeoutSeconds": 300,
       "Retry": [
@@ -160,7 +128,9 @@
       "Resource": "arn:aws:states:::lambda:invoke",
       "Parameters": {
         "FunctionName": "lambda_report",
-        "Payload.$": "$"
+        "Payload": {
+          "batch_date.$": "$.pipeline_context.batch_date"
+        }
       },
       "TimeoutSeconds": 300,
       "Retry": [
@@ -186,16 +156,6 @@
     },
     "success": {
       "Type": "Succeed"
-    },
-    "handle_error_ingestion": {
-      "Type": "Pass",
-      "Result": "Error in lambda_ingestion",
-      "Next": "failure"
-    },
-    "handle_error_parallel": {
-      "Type": "Pass",
-      "Result": "Error in parallel analysis",
-      "Next": "failure"
     },
     "handle_error_bayesian": {
       "Type": "Pass",

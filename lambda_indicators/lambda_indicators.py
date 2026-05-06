@@ -13,6 +13,12 @@ logger.setLevel(logging.INFO)
 s3_client = boto3.client('s3')
 secrets_client = boto3.client('secretsmanager')
 
+def resolve_batch_date(event):
+    raw_date = (event or {}).get('batch_date') or (event or {}).get('date')
+    if raw_date:
+        return raw_date[:10]
+    return datetime.now().strftime('%Y-%m-%d')
+
 def get_secret(secret_name):
     try:
         response = secrets_client.get_secret_value(SecretId=secret_name)
@@ -23,12 +29,11 @@ def get_secret(secret_name):
         logger.error(f"Error retrieving secret {secret_name}: {str(e)}")
         raise
 
-def read_ohlcv_from_s3():
+def read_ohlcv_from_s3(batch_date):
     try:
-        today = datetime.now().strftime('%Y-%m-%d')
         response = s3_client.get_object(
             Bucket='tfm-unir-datalake',
-            Key=f'raw/{today}/ohlcv.csv'
+            Key=f'raw/{batch_date}/ohlcv.csv'
         )
         csv_content = response['Body'].read().decode('utf-8')
         df = pd.read_csv(StringIO(csv_content))
@@ -96,13 +101,30 @@ def insert_technical_indicators(connection, batch_date, ticker, indicators_df):
         logger.error(f"Error inserting technical indicators: {str(e)}")
         raise
 
+def upsert_pipeline_kpi(connection, batch_date, stage, metrics):
+    try:
+        cursor = connection.cursor()
+        query = """
+            INSERT INTO pipeline_kpis (batch_date, stage, metrics)
+            VALUES (%s, %s, %s::jsonb)
+            ON CONFLICT (batch_date, stage) DO UPDATE
+            SET metrics = EXCLUDED.metrics,
+                updated_at = CURRENT_TIMESTAMP
+        """
+        cursor.execute(query, (batch_date, stage, json.dumps(metrics)))
+        connection.commit()
+        cursor.close()
+    except Exception as e:
+        logger.error(f"Error upserting pipeline KPI: {str(e)}")
+        raise
+
 def handler(event, context):
     try:
         logger.info("Lambda technical indicators started")
+        today = resolve_batch_date(event)
         aurora_creds = get_secret('aurora/credentials')
-        ohlcv_df = read_ohlcv_from_s3()
+        ohlcv_df = read_ohlcv_from_s3(today)
         indicators_by_ticker = calculate_technical_indicators(ohlcv_df)
-        today = datetime.now().strftime('%Y-%m-%d')
 
         connection = psycopg2.connect(
             host=aurora_creds['host'], port=aurora_creds['port'],
@@ -116,6 +138,12 @@ def handler(event, context):
             except Exception as e:
                 logger.error(f"Error inserting indicators for {ticker}: {str(e)}")
                 continue
+
+        upsert_pipeline_kpi(connection, today, 'indicators', {
+            'tickers_in_ohlcv': int(ohlcv_df['Ticker'].nunique()) if 'Ticker' in ohlcv_df.columns else 0,
+            'tickers_with_indicators': len(indicators_by_ticker),
+            'ohlcv_rows_total': int(len(ohlcv_df))
+        })
 
         connection.close()
         return {

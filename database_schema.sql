@@ -70,6 +70,38 @@ CREATE TABLE IF NOT EXISTS trading_signals (
 CREATE INDEX IF NOT EXISTS idx_signals_date_ticker ON trading_signals(batch_date, ticker);
 CREATE INDEX IF NOT EXISTS idx_signals_signal ON trading_signals(signal);
 
+-- Tabla de explicabilidad de senales
+CREATE TABLE IF NOT EXISTS signal_explanations (
+    id SERIAL PRIMARY KEY,
+    batch_date DATE NOT NULL,
+    ticker VARCHAR(10) NOT NULL,
+    sentiment_state VARCHAR(20) NOT NULL,
+    rsi_state VARCHAR(20) NOT NULL,
+    trend_state VARCHAR(20) NOT NULL,
+    volatility_state VARCHAR(20) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(batch_date, ticker),
+    CONSTRAINT explain_sentiment_check CHECK (sentiment_state IN ('bullish', 'bearish', 'neutral')),
+    CONSTRAINT explain_rsi_check CHECK (rsi_state IN ('oversold', 'neutral', 'overbought')),
+    CONSTRAINT explain_trend_check CHECK (trend_state IN ('uptrend', 'downtrend')),
+    CONSTRAINT explain_volatility_check CHECK (volatility_state IN ('low', 'high'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_signal_explanations_date_ticker ON signal_explanations(batch_date, ticker);
+
+-- Tabla de KPIs operativos por etapa de pipeline
+CREATE TABLE IF NOT EXISTS pipeline_kpis (
+    id SERIAL PRIMARY KEY,
+    batch_date DATE NOT NULL,
+    stage VARCHAR(50) NOT NULL,
+    metrics JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(batch_date, stage)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_kpis_date_stage ON pipeline_kpis(batch_date, stage);
+
 -- Vista para reportes: Últimas señales por ticker
 CREATE OR REPLACE VIEW latest_signals AS
 SELECT
@@ -133,6 +165,13 @@ CREATE TRIGGER validate_probabilities_trigger
 BEFORE INSERT OR UPDATE ON trading_signals
 FOR EACH ROW
 EXECUTE FUNCTION validate_probabilities();
+
+-- Trigger para timestamp en pipeline_kpis
+DROP TRIGGER IF EXISTS pipeline_kpis_update_timestamp ON pipeline_kpis;
+CREATE TRIGGER pipeline_kpis_update_timestamp
+BEFORE UPDATE ON pipeline_kpis
+FOR EACH ROW
+EXECUTE FUNCTION update_batch_log_timestamp();
 
 -- Permisos (ajustar según usuario)
 -- GRANT SELECT, INSERT, UPDATE ON batch_log TO lambda_user;

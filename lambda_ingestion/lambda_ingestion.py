@@ -17,6 +17,14 @@ s3_client = boto3.client('s3')
 secrets_client = boto3.client('secretsmanager')
 
 
+def resolve_batch_date(event):
+    """Resolve a consistent batch date from Step Functions payload."""
+    raw_date = (event or {}).get('batch_date') or (event or {}).get('date')
+    if raw_date:
+        return raw_date[:10]
+    return datetime.now().strftime('%Y-%m-%d')
+
+
 def get_secret(secret_name):
     """Retrieve secret from AWS Secrets Manager"""
     try:
@@ -147,6 +155,25 @@ def insert_batch_log(connection, batch_date, status, tickers_processed):
         raise
 
 
+def upsert_pipeline_kpi(connection, batch_date, stage, metrics):
+    """Persist stage KPIs for observability."""
+    try:
+        cursor = connection.cursor()
+        query = """
+            INSERT INTO pipeline_kpis (batch_date, stage, metrics)
+            VALUES (%s, %s, %s::jsonb)
+            ON CONFLICT (batch_date, stage) DO UPDATE
+            SET metrics = EXCLUDED.metrics,
+                updated_at = CURRENT_TIMESTAMP
+        """
+        cursor.execute(query, (batch_date, stage, json.dumps(metrics)))
+        connection.commit()
+        cursor.close()
+    except Exception as e:
+        logger.error(f"Error upserting pipeline KPI: {str(e)}")
+        raise
+
+
 def handler(event, context):
     """Main Lambda handler"""
     try:
@@ -159,6 +186,7 @@ def handler(event, context):
         # Read ETF configuration
         tickers = read_etf_config()
         logger.info(f"Processing {len(tickers)} tickers")
+        batch_date = resolve_batch_date(event)
 
         # Download OHLCV data
         ohlcv_data = download_ohlcv_data(tickers)
@@ -167,10 +195,12 @@ def handler(event, context):
         news_data = download_news(tickers, finnhub_key)
 
         # Combine all OHLCV data into a single DataFrame
+        if not ohlcv_data:
+            raise ValueError("No OHLCV data downloaded for any ticker")
         combined_ohlcv = pd.concat([df for df in ohlcv_data.values()])
 
         # Save to S3
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = batch_date
 
         # Save OHLCV as CSV
         csv_buffer = StringIO()
@@ -192,6 +222,13 @@ def handler(event, context):
         )
 
         insert_batch_log(connection, today, 'STARTED', len(tickers))
+        upsert_pipeline_kpi(connection, today, 'ingestion', {
+            'tickers_expected': len(tickers),
+            'tickers_with_ohlcv': len(ohlcv_data),
+            'tickers_with_news': sum(1 for _, items in news_data.items() if items),
+            'headlines_total': sum(len(items) for _, items in news_data.items()),
+            'ohlcv_rows_total': int(len(combined_ohlcv))
+        })
 
         connection.close()
 

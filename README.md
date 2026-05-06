@@ -267,6 +267,34 @@ Se recomienda usar AWS Step Functions para orquestar la ejecución:
 
 ---
 
+## CI/CD automático en `master`
+
+Se incluye el workflow `/.github/workflows/deploy-master.yml` para ejecutar en cada push a `master`:
+
+1. **Migraciones de base de datos** (`database_schema.sql`)
+2. **Redeploy de Lambdas** (vía `deploy.sh`)
+
+### Secrets requeridos (GitHub Environment `production`)
+
+- `AWS_ROLE_TO_ASSUME`: IAM Role para GitHub OIDC con permisos en AWS
+- `DB_HOST`
+- `DB_PORT`
+- `DB_NAME`
+- `DB_USER`
+- `DB_PASSWORD`
+
+### Variables requeridas (GitHub Environment `production`)
+
+- `AWS_REGION` (ej. `us-east-1`)
+- `AWS_ACCOUNT_ID`
+- `LAMBDA_EXECUTION_ROLE_ARN`
+
+### Nota de conectividad
+
+Si Aurora está en VPC privada, el runner de GitHub debe tener conectividad a la BD (por ejemplo self-hosted runner dentro de la VPC o conectividad controlada).
+
+---
+
 ## Notas Importantes
 
 - Los datos de OHLCV se descargan para los últimos 30 días

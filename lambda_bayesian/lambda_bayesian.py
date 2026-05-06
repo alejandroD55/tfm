@@ -34,6 +34,12 @@ logger.setLevel(logging.INFO)
 
 secrets_client = boto3.client('secretsmanager')
 
+def resolve_batch_date(event):
+    raw_date = (event or {}).get('batch_date') or (event or {}).get('date')
+    if raw_date:
+        return raw_date[:10]
+    return None
+
 def get_secret(secret_name):
     try:
         response = secrets_client.get_secret_value(SecretId=secret_name)
@@ -148,6 +154,41 @@ def infer_signal(model, sentiment, rsi, trend, volatility):
         logger.error(f"Inference math error: {e}")
         raise
 
+def upsert_signal_explanation(connection, batch_date, ticker, sentiment, rsi, trend, volatility):
+    sentiment_state = discretize_sentiment(sentiment)
+    rsi_state = discretize_rsi(rsi)
+    trend_state = discretize_trend(trend[0], trend[1])
+    volatility_state = discretize_volatility(volatility[0], volatility[1], volatility[2])
+
+    cursor = connection.cursor()
+    cursor.execute("""
+        INSERT INTO signal_explanations
+            (batch_date, ticker, sentiment_state, rsi_state, trend_state, volatility_state)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (batch_date, ticker)
+        DO UPDATE SET
+            sentiment_state = EXCLUDED.sentiment_state,
+            rsi_state = EXCLUDED.rsi_state,
+            trend_state = EXCLUDED.trend_state,
+            volatility_state = EXCLUDED.volatility_state
+    """, (batch_date, ticker, sentiment_state, rsi_state, trend_state, volatility_state))
+    connection.commit()
+    cursor.close()
+
+
+def upsert_pipeline_kpi(connection, batch_date, stage, metrics):
+    cursor = connection.cursor()
+    cursor.execute("""
+        INSERT INTO pipeline_kpis (batch_date, stage, metrics)
+        VALUES (%s, %s, %s::jsonb)
+        ON CONFLICT (batch_date, stage) DO UPDATE
+        SET metrics = EXCLUDED.metrics,
+            updated_at = CURRENT_TIMESTAMP
+    """, (batch_date, stage, json.dumps(metrics)))
+    connection.commit()
+    cursor.close()
+
+
 def handler(event, context):
     try:
         logger.info("Lambda bayesian network started")
@@ -162,9 +203,11 @@ def handler(event, context):
         )
 
         cursor = connection.cursor()
-        # Obtenemos la última fecha real registrada
-        cursor.execute("SELECT MAX(batch_date) FROM batch_log")
-        latest_date = cursor.fetchone()[0]
+        requested_date = resolve_batch_date(event)
+        latest_date = requested_date
+        if not latest_date:
+            cursor.execute("SELECT MAX(batch_date) FROM batch_log")
+            latest_date = cursor.fetchone()[0]
         
         if not latest_date:
             logger.warning("No batch logs found. Exiting.")
@@ -191,6 +234,7 @@ def handler(event, context):
                 rsi_14, sma_20, sma_50, close_price, bb_upper, bb_lower = indicators_result
 
                 signal, prob_up, prob_down = infer_signal(model, sentiment, rsi_14, (sma_20, sma_50), (bb_upper, bb_lower, close_price))
+                upsert_signal_explanation(connection, latest_date, ticker, sentiment, rsi_14, (sma_20, sma_50), (bb_upper, bb_lower, close_price))
                 
                 cursor = connection.cursor()
                 cursor.execute("""
@@ -209,6 +253,11 @@ def handler(event, context):
             except Exception as e:
                 logger.error(f"Error generating signal for {ticker}: {str(e)}")
                 continue
+
+        upsert_pipeline_kpi(connection, latest_date, 'bayesian', {
+            'tickers_with_sentiment': len(tickers),
+            'signals_generated': signals_processed
+        })
 
         connection.close()
         return {'statusCode': 200, 'body': json.dumps({'message': 'Success', 'signals': signals_processed})}
