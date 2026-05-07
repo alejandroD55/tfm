@@ -1,1 +1,27 @@
+# Python
 __pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+
+# Node / Angular
+node_modules/
+dist/
+
+# Entornos locales — NUNCA al repo
+.env
+*.pem
+*.key
+
+# Build artifacts Lambda (generados por deploy_lambdas.sh)
+*.zip
+
+# macOS
+.DS_Store
+.AppleDouble
+
+# IDEs
+.idea/
+.vscode/
+*.swp

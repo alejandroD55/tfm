@@ -1,0 +1,36 @@
+# ─── Lambda Bayesian ──────────────────────────────────────────────────────────
+# Red bayesiana con pgmpy: genera señales BUY/SELL/HOLD → Aurora
+#
+# IMPORTANTE: pgmpy intenta importar sklearn/statsmodels/torch en tiempo
+# de carga. El lambda_bayesian.py ya los mockea con MockImporter, pero
+# en la imagen evitamos instalarlos para mantener el tamaño bajo control.
+FROM public.ecr.aws/lambda/python:3.11
+
+LABEL maintainer="tfm-trading" \
+      lambda="lambda_bayesian" \
+      version="1.0"
+
+# ── Dependencias reales que necesita pgmpy 0.1.19 ───────────────────────────
+RUN pip install --no-cache-dir \
+    --only-binary=:all: \
+    psycopg2-binary==2.9.9 \
+    numpy==1.26.4 \
+    pandas==2.2.2 \
+    scipy==1.11.4 \
+    networkx \
+    joblib \
+    pyparsing \
+    tqdm
+
+# ── pgmpy SIN sus dependencias pesadas (sklearn, torch…) ─────────────────────
+RUN pip install --no-cache-dir --no-deps pgmpy==0.1.19
+
+# ── Limpiar cachés y tests innecesarios para reducir tamaño ──────────────────
+RUN find /var/lang/lib/python3.11/site-packages \
+    \( -type d -name "tests" -o -type d -name "__pycache__" \
+       -o -name "*.pyc" -o -name "*.pyo" \) \
+    -exec rm -rf {} + 2>/dev/null || true
+
+COPY lambda_bayesian/lambda_bayesian.py ${LAMBDA_TASK_ROOT}/
+
+CMD ["lambda_bayesian.handler"]

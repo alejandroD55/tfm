@@ -1,0 +1,81 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: tfm-db-migrate
+  namespace: tfm-dashboard
+  labels:
+    app: tfm-db-migrate
+    component: migration
+  annotations:
+    # Ejecutar con: kubectl apply -f infrastructure/k8s/jobs/db-migrate.yaml
+    # Ver logs:     kubectl logs -n tfm-dashboard -l app=tfm-db-migrate --follow
+spec:
+  # El Job se elimina automáticamente 1h después de completarse
+  ttlSecondsAfterFinished: 3600
+  # Solo 1 intento por defecto; aumentar si la BD tarda en arrancar
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: tfm-db-migrate
+        component: migration
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: tfm-api-sa # Para acceso a Secrets Manager vía IRSA
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+      containers:
+        - name: migrate
+          # Imagen generada por deploy_k8s.sh
+          image: ACCOUNT_ID.dkr.ecr.AWS_REGION.amazonaws.com/tfm-db-migrate:latest
+          imagePullPolicy: Always
+          env:
+            - name: AWS_REGION
+              value: "eu-north-1"
+            - name: AURORA_SECRET_NAME
+              value: "aurora/credentials"
+            # Las siguientes variables son opcionales si usas IRSA.
+            # Si no usas IRSA, se leerán del Secret de K8s:
+            - name: AURORA_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: tfm-aurora-secret
+                  key: host
+                  optional: true
+            - name: AURORA_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: tfm-aurora-secret
+                  key: port
+                  optional: true
+            - name: AURORA_USER
+              valueFrom:
+                secretKeyRef:
+                  name: tfm-aurora-secret
+                  key: username
+                  optional: true
+            - name: AURORA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tfm-aurora-secret
+                  key: password
+                  optional: true
+            - name: AURORA_DBNAME
+              valueFrom:
+                secretKeyRef:
+                  name: tfm-aurora-secret
+                  key: dbname
+                  optional: true
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false # psql necesita escribir archivos temporales
+            capabilities:
+              drop: ["ALL"]

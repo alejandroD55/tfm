@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: tfm-frontend-service
+  namespace: tfm-dashboard
+  labels:
+    app: tfm-frontend
+    component: frontend
+  annotations:
+    # Si usas AWS Load Balancer Controller, añade estas anotaciones:
+    # service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    # service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+spec:
+  # LoadBalancer: crea un AWS NLB/ELB para acceso externo
+  # Cambia a NodePort si usas un Ingress Controller propio
+  type: LoadBalancer
+  selector:
+    app: tfm-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP

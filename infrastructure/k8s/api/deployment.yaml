@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tfm-api
+  namespace: tfm-dashboard
+  labels:
+    app: tfm-api
+    component: backend
+    version: "1.0"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: tfm-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0 # zero-downtime deploy
+  template:
+    metadata:
+      labels:
+        app: tfm-api
+        component: backend
+      annotations:
+        # Fuerza re-deploy al cambiar el secreto
+        checksum/secret: "placeholder"
+    spec:
+      serviceAccountName: tfm-api-sa # para IRSA (IAM Roles for Service Accounts)
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+        - name: api
+          # Imagen reemplazada por deploy_k8s.sh
+          image: ACCOUNT_ID.dkr.ecr.AWS_REGION.amazonaws.com/tfm-dashboard-api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: AWS_REGION
+              value: "eu-north-1" # ← ajusta si es otra región
+            - name: DATALAKE_BUCKET
+              value: "tfm-unir-datalake"
+            - name: PRESIGN_TTL_SEC
+              value: "900"
+            - name: DASHBOARD_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: tfm-dashboard-secret
+                  key: api-key
+            # Solo necesario si NO usas IRSA (IAM Roles for Service Accounts)
+            # Si usas IRSA, elimina estas dos variables:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: tfm-dashboard-secret
+                  key: aws-access-key-id
+                  optional: true
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: tfm-dashboard-secret
+                  key: aws-secret-access-key
+                  optional: true
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      terminationGracePeriodSeconds: 30

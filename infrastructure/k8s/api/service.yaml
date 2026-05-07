@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: tfm-api-service
+  namespace: tfm-dashboard
+  labels:
+    app: tfm-api
+    component: backend
+spec:
+  # ClusterIP: solo accesible internamente
+  # El frontend nginx hace proxy → este servicio desde dentro del cluster
+  type: ClusterIP
+  selector:
+    app: tfm-api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      protocol: TCP

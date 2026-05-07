@@ -1,0 +1,14 @@
+# ─── Lambda Sentiment ─────────────────────────────────────────────────────────
+# Análisis de sentimiento con FinBERT vía Hugging Face API → Aurora
+FROM public.ecr.aws/lambda/python:3.11
+
+LABEL maintainer="tfm-trading" \
+      lambda="lambda_sentiment" \
+      version="1.0"
+
+COPY lambda_sentiment/requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
+RUN pip install --no-cache-dir --only-binary=:all: -r ${LAMBDA_TASK_ROOT}/requirements.txt
+
+COPY lambda_sentiment/lambda_sentiment.py ${LAMBDA_TASK_ROOT}/
+
+CMD ["lambda_sentiment.handler"]

@@ -1,0 +1,124 @@
+# =============================================================================
+# docker-compose.yml — Entorno de desarrollo local TFM
+# =============================================================================
+# Levanta el stack completo sin necesidad de AWS real:
+#   - PostgreSQL 15  → imita Aurora (mismo motor, compatibilidad total)
+#   - API            → FastAPI leyendo S3 real (necesitas credenciales AWS)
+#   - Frontend       → nginx sirviendo Angular con proxy a la API
+#
+# Uso:
+#   # Arrancar todo:
+#   docker compose up --build
+#
+#   # Solo la base de datos (para desarrollar las Lambdas en local):
+#   docker compose up postgres
+#
+#   # Solo backend + BD (sin frontend):
+#   docker compose up postgres api
+#
+#   # Ver logs en tiempo real:
+#   docker compose logs -f api
+#
+# Variables de entorno necesarias (copiar .env.example → .env y rellenar):
+#   AWS_ACCESS_KEY_ID      → para que la API lea S3
+#   AWS_SECRET_ACCESS_KEY
+#   DASHBOARD_API_KEY      → API Key del dashboard (invéntate una para local)
+#
+# Puertos expuestos:
+#   5432  → PostgreSQL (conexión directa para psql / pgAdmin)
+#   8000  → FastAPI    (Swagger UI en http://localhost:8000/docs)
+#   8080  → Frontend   (Angular en http://localhost:8080)
+# =============================================================================
+
+services:
+  # ── PostgreSQL — imita Aurora ───────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: tfm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tfm
+      POSTGRES_USER: tfmadmin
+      POSTGRES_PASSWORD: localpassword123
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      # Aplica el schema automáticamente al crear el contenedor
+      - ./database_schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      # Datos persistentes entre reinicios
+      - tfm-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tfmadmin -d tfm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── FastAPI — pod API en local ──────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: infrastructure/k8s/api/Dockerfile
+    container_name: tfm-api
+    restart: unless-stopped
+    environment:
+      AWS_REGION: ${AWS_REGION:-eu-north-1}
+      DATALAKE_BUCKET: ${DATALAKE_BUCKET:-tfm-unir-datalake}
+      DASHBOARD_API_KEY: ${DASHBOARD_API_KEY:-dev-local-key}
+      PRESIGN_TTL_SEC: "900"
+      # Credenciales AWS para leer S3 (del fichero .env)
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ── nginx — pod Frontend en local ────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: infrastructure/k8s/frontend/Dockerfile
+    container_name: tfm-frontend
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost/nginx-health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── pgAdmin (opcional) — UI para explorar la BD ───────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: tfm-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@tfm.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      # Solo arranca si ejecutas: docker compose --profile tools up
+      - tools
+
+volumes:
+  tfm-postgres-data:
+    driver: local
+
+networks:
+  default:
+    name: tfm-network

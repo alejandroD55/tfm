@@ -26,6 +26,7 @@
             ],
             "Resource": [
                 "arn:aws:secretsmanager:*:*:secret:aurora/credentials*",
+                "arn:aws:secretsmanager:*:*:secret:aurora/endpoint*",
                 "arn:aws:secretsmanager:*:*:secret:finnhub/api_key*",
                 "arn:aws:secretsmanager:*:*:secret:huggingface/api_key*"
             ]
@@ -37,7 +38,24 @@
                 "rds:DescribeDBInstances",
                 "rds:DescribeDBClusters"
             ],
-            "Resource": "arn:aws:rds:*:*:db:*"
+            "Resource": "*"
+        },
+        {
+            "Sid": "ECRAccess",
+            "Effect": "Allow",
+            "Action": [
+                "ecr:GetAuthorizationToken",
+                "ecr:BatchCheckLayerAvailability",
+                "ecr:GetDownloadUrlForLayer",
+                "ecr:BatchGetImage",
+                "ecr:InitiateLayerUpload",
+                "ecr:UploadLayerPart",
+                "ecr:CompleteLayerUpload",
+                "ecr:PutImage",
+                "ecr:CreateRepository",
+                "ecr:DescribeRepositories"
+            ],
+            "Resource": "*"
         },
         {
             "Sid": "CloudWatchLogs",
@@ -55,7 +73,10 @@
             "Action": [
                 "ec2:CreateNetworkInterface",
                 "ec2:DescribeNetworkInterfaces",
-                "ec2:DeleteNetworkInterface"
+                "ec2:DeleteNetworkInterface",
+                "ec2:DescribeSecurityGroups",
+                "ec2:DescribeSubnets",
+                "ec2:DescribeVpcs"
             ],
             "Resource": "*"
         },

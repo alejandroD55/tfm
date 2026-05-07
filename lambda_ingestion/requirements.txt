@@ -1,4 +1,5 @@
 yfinance
 requests
-psycopg2-binary
-pandas
+psycopg2-binary==2.9.9
+numpy==1.26.4
+pandas==2.2.2

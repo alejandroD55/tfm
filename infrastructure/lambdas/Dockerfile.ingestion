@@ -1,0 +1,16 @@
+# ─── Lambda Ingestion ─────────────────────────────────────────────────────────
+# Descarga OHLCV (yfinance) y noticias (Finnhub) → S3 + Aurora
+FROM public.ecr.aws/lambda/python:3.11
+
+LABEL maintainer="tfm-trading" \
+      lambda="lambda_ingestion" \
+      version="1.0"
+
+# Copiar e instalar dependencias
+COPY lambda_ingestion/requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
+RUN pip install --no-cache-dir --only-binary=:all: -r ${LAMBDA_TASK_ROOT}/requirements.txt
+
+# Copiar código fuente
+COPY lambda_ingestion/lambda_ingestion.py ${LAMBDA_TASK_ROOT}/
+
+CMD ["lambda_ingestion.handler"]

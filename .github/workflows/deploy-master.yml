@@ -1,72 +1,590 @@
-name: Deploy Pipeline on Master
+# =============================================================================
+# deploy-master.yml — CI/CD automático al hacer push a master
+# =============================================================================
+#
+# Flujo completo en cada push a master:
+#
+#  changes ──┬──► deploy-lambda-ingestion  ─┐
+#             ├──► deploy-lambda-sentiment   │ (paralelo, solo si cambiaron)
+#             ├──► deploy-lambda-indicators  │
+#             ├──► deploy-lambda-bayesian    │
+#             ├──► deploy-lambda-report     ─┤
+#             ├──► deploy-api               ─┤ (si cambió infrastructure/k8s/api)
+#             └──► deploy-frontend          ─┘ (si cambió el Angular o nginx)
+#                                            │
+#                                            ▼
+#                                        migrate  (si cambió database_schema.sql)
+#                                            │
+#                                            ▼
+#                                         notify  (resumen final siempre)
+#
+# Secrets necesarios en GitHub (Settings → Secrets → Actions):
+#   AWS_ROLE_TO_ASSUME     → ARN del rol OIDC (ya existe)
+#   LAMBDA_ROLE_ARN        → ARN del rol de ejecución de Lambda
+#   DASHBOARD_API_KEY      → API Key del pod API en K8s
+#
+# Variables necesarias (Settings → Variables → Actions):
+#   AWS_REGION             → ej: eu-north-1
+#   AWS_ACCOUNT_ID         → ej: 123456789012
+#   EKS_CLUSTER_NAME       → ej: tfm-eks-cluster
+#   LAMBDA_EXECUTION_ROLE_ARN → (alias de LAMBDA_ROLE_ARN si ya lo tienes)
+# =============================================================================
+
+name: Deploy on master
 
 on:
   push:
-    branches:
-      - master
+    branches: [master]
 
 permissions:
-  id-token: write
+  id-token: write # Necesario para OIDC con AWS
   contents: read
 
+# Un solo deploy a la vez — nunca cancelar el que está en curso
 concurrency:
   group: deploy-master
   cancel-in-progress: false
 
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+  EKS_CLUSTER: ${{ vars.EKS_CLUSTER_NAME }}
+  NAMESPACE: tfm-dashboard
+  GIT_SHA: ${{ github.sha }}
+
+# =============================================================================
 jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # 1. DETECTAR CAMBIOS
+  #    Compara los ficheros modificados en el commit y activa solo los jobs
+  #    que corresponden. Así un commit que solo toca el frontal no despliega
+  #    las Lambdas, y viceversa.
+  # ──────────────────────────────────────────────────────────────────────────
+  changes:
+    name: Detectar cambios
+    runs-on: ubuntu-latest
+    outputs:
+      ingestion: ${{ steps.filter.outputs.ingestion }}
+      sentiment: ${{ steps.filter.outputs.sentiment }}
+      indicators: ${{ steps.filter.outputs.indicators }}
+      bayesian: ${{ steps.filter.outputs.bayesian }}
+      report: ${{ steps.filter.outputs.report }}
+      api: ${{ steps.filter.outputs.api }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      schema: ${{ steps.filter.outputs.schema }}
+      any_lambda: ${{ steps.filter.outputs.ingestion == 'true'
+        || steps.filter.outputs.sentiment == 'true'
+        || steps.filter.outputs.indicators == 'true'
+        || steps.filter.outputs.bayesian == 'true'
+        || steps.filter.outputs.report == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Filtrar paths modificados
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            ingestion:
+              - 'lambda_ingestion/**'
+              - 'infrastructure/lambdas/Dockerfile.ingestion'
+            sentiment:
+              - 'lambda_sentiment/**'
+              - 'infrastructure/lambdas/Dockerfile.sentiment'
+            indicators:
+              - 'lambda_indicators/**'
+              - 'infrastructure/lambdas/Dockerfile.indicators'
+            bayesian:
+              - 'lambda_bayesian/**'
+              - 'infrastructure/lambdas/Dockerfile.bayesian'
+            report:
+              - 'lambda_report/**'
+              - 'infrastructure/lambdas/Dockerfile.report'
+            api:
+              - 'infrastructure/k8s/api/**'
+            frontend:
+              - 'Sentiment analysis/pipeline-dashboard/**'
+              - 'infrastructure/k8s/frontend/**'
+            schema:
+              - 'database_schema.sql'
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 2. LAMBDAS — un job por función, corren en paralelo
+  #    Cada job: build imagen Docker → push ECR → update Lambda → publish
+  #    version → update alias 'live'
+  # ──────────────────────────────────────────────────────────────────────────
+  deploy-lambda-ingestion:
+    name: Lambda / ingestion
+    runs-on: ubuntu-latest
+    environment: production
+    needs: changes
+    if: needs.changes.outputs.ingestion == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Deploy lambda_ingestion
+        run: |
+          chmod +x deploy_lambdas.sh
+          ./deploy_lambdas.sh \
+            "$AWS_REGION" "$ACCOUNT_ID" \
+            "${{ secrets.LAMBDA_ROLE_ARN }}" \
+            lambda_ingestion
+
+  deploy-lambda-sentiment:
+    name: Lambda / sentiment
+    runs-on: ubuntu-latest
+    environment: production
+    needs: changes
+    if: needs.changes.outputs.sentiment == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Deploy lambda_sentiment
+        run: |
+          chmod +x deploy_lambdas.sh
+          ./deploy_lambdas.sh \
+            "$AWS_REGION" "$ACCOUNT_ID" \
+            "${{ secrets.LAMBDA_ROLE_ARN }}" \
+            lambda_sentiment
+
+  deploy-lambda-indicators:
+    name: Lambda / indicators
+    runs-on: ubuntu-latest
+    environment: production
+    needs: changes
+    if: needs.changes.outputs.indicators == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Deploy lambda_indicators
+        run: |
+          chmod +x deploy_lambdas.sh
+          ./deploy_lambdas.sh \
+            "$AWS_REGION" "$ACCOUNT_ID" \
+            "${{ secrets.LAMBDA_ROLE_ARN }}" \
+            lambda_indicators
+
+  deploy-lambda-bayesian:
+    name: Lambda / bayesian
+    runs-on: ubuntu-latest
+    environment: production
+    needs: changes
+    if: needs.changes.outputs.bayesian == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Deploy lambda_bayesian
+        run: |
+          chmod +x deploy_lambdas.sh
+          ./deploy_lambdas.sh \
+            "$AWS_REGION" "$ACCOUNT_ID" \
+            "${{ secrets.LAMBDA_ROLE_ARN }}" \
+            lambda_bayesian
+
+  deploy-lambda-report:
+    name: Lambda / report
+    runs-on: ubuntu-latest
+    environment: production
+    needs: changes
+    if: needs.changes.outputs.report == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Deploy lambda_report
+        run: |
+          chmod +x deploy_lambdas.sh
+          ./deploy_lambdas.sh \
+            "$AWS_REGION" "$ACCOUNT_ID" \
+            "${{ secrets.LAMBDA_ROLE_ARN }}" \
+            lambda_report
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 3. POD API — FastAPI
+  #    Build imagen → push ECR → kubectl set image → rollout status
+  # ──────────────────────────────────────────────────────────────────────────
+  deploy-api:
+    name: Pod / API (FastAPI)
+    runs-on: ubuntu-latest
+    environment: production
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build y push imagen API
+        env:
+          ECR_REGISTRY: ${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+          IMAGE_REPO: tfm-dashboard-api
+        run: |
+          TAG="${ECR_REGISTRY}/${IMAGE_REPO}:${GIT_SHA::7}"
+          LATEST="${ECR_REGISTRY}/${IMAGE_REPO}:latest"
+
+          # Crear repo ECR si no existe
+          aws ecr describe-repositories --repository-names "${IMAGE_REPO}" \
+            --region "${AWS_REGION}" > /dev/null 2>&1 || \
+          aws ecr create-repository --repository-name "${IMAGE_REPO}" \
+            --image-scanning-configuration scanOnPush=true \
+            --region "${AWS_REGION}" > /dev/null
+
+          docker build \
+            --file infrastructure/k8s/api/Dockerfile \
+            --tag "${TAG}" --tag "${LATEST}" \
+            --label "git-sha=${GIT_SHA}" .
+          docker push "${TAG}"
+          docker push "${LATEST}"
+
+          echo "IMAGE_TAG=${TAG}" >> "$GITHUB_ENV"
+
+      - name: Conectar kubectl al cluster EKS
+        run: |
+          aws eks update-kubeconfig \
+            --region "${AWS_REGION}" \
+            --name "${EKS_CLUSTER}"
+
+      - name: Actualizar deployment tfm-api
+        run: |
+          kubectl set image deployment/tfm-api \
+            api="${IMAGE_TAG}" \
+            --namespace "${NAMESPACE}"
+
+          kubectl rollout status deployment/tfm-api \
+            --namespace "${NAMESPACE}" \
+            --timeout=180s
+
+      - name: Verificar pods API
+        run: |
+          kubectl get pods -n "${NAMESPACE}" -l app=tfm-api \
+            --no-headers \
+            -o custom-columns="POD:.metadata.name,ESTADO:.status.phase"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 4. POD FRONTEND — nginx + Angular
+  #    Build Angular → build imagen Docker → push ECR → kubectl set image
+  # ──────────────────────────────────────────────────────────────────────────
+  deploy-frontend:
+    name: Pod / Frontend (nginx + Angular)
+    runs-on: ubuntu-latest
+    environment: production
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "Sentiment analysis/pipeline-dashboard/package-lock.json"
+
+      - name: Instalar dependencias npm
+        working-directory: "Sentiment analysis/pipeline-dashboard"
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Build Angular (producción)
+        working-directory: "Sentiment analysis/pipeline-dashboard"
+        run: npx ng build --configuration production
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build y push imagen Frontend
+        env:
+          ECR_REGISTRY: ${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+          IMAGE_REPO: tfm-dashboard-frontend
+        run: |
+          TAG="${ECR_REGISTRY}/${IMAGE_REPO}:${GIT_SHA::7}"
+          LATEST="${ECR_REGISTRY}/${IMAGE_REPO}:latest"
+
+          aws ecr describe-repositories --repository-names "${IMAGE_REPO}" \
+            --region "${AWS_REGION}" > /dev/null 2>&1 || \
+          aws ecr create-repository --repository-name "${IMAGE_REPO}" \
+            --image-scanning-configuration scanOnPush=true \
+            --region "${AWS_REGION}" > /dev/null
+
+          docker build \
+            --file infrastructure/k8s/frontend/Dockerfile \
+            --tag "${TAG}" --tag "${LATEST}" \
+            --label "git-sha=${GIT_SHA}" .
+          docker push "${TAG}"
+          docker push "${LATEST}"
+
+          echo "IMAGE_TAG=${TAG}" >> "$GITHUB_ENV"
+
+      - name: Conectar kubectl al cluster EKS
+        run: |
+          aws eks update-kubeconfig \
+            --region "${AWS_REGION}" \
+            --name "${EKS_CLUSTER}"
+
+      - name: Actualizar deployment tfm-frontend
+        run: |
+          kubectl set image deployment/tfm-frontend \
+            frontend="${IMAGE_TAG}" \
+            --namespace "${NAMESPACE}"
+
+          kubectl rollout status deployment/tfm-frontend \
+            --namespace "${NAMESPACE}" \
+            --timeout=180s
+
+      - name: Verificar pods Frontend
+        run: |
+          kubectl get pods -n "${NAMESPACE}" -l app=tfm-frontend \
+            --no-headers \
+            -o custom-columns="POD:.metadata.name,ESTADO:.status.phase"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 5. MIGRACIÓN AURORA — K8s Job
+  #    Solo si database_schema.sql cambió.
+  #    Corre DESPUÉS de que los pods estén desplegados (Aurora es privada —
+  #    el Job corre dentro del cluster EKS que sí tiene acceso a la VPC).
+  # ──────────────────────────────────────────────────────────────────────────
   migrate:
-    name: Run DB Migrations
+    name: Aurora / Migración schema
     runs-on: ubuntu-latest
     environment: production
+    needs:
+      - changes
+      - deploy-api # esperar a que el cluster esté actualizado
+      - deploy-frontend
+    if: |
+      always() &&
+      needs.changes.outputs.schema == 'true' &&
+      !failure() && !cancelled()
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Install PostgreSQL client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - uses: docker/setup-buildx-action@v3
+      - uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Run migrations
+      - name: Build y push imagen de migración
         env:
-          DB_HOST: ${{ secrets.DB_HOST }}
-          DB_PORT: ${{ secrets.DB_PORT }}
-          DB_NAME: ${{ secrets.DB_NAME }}
-          DB_USER: ${{ secrets.DB_USER }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          ECR_REGISTRY: ${{ env.ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+          IMAGE_REPO: tfm-db-migrate
         run: |
-          chmod +x scripts/run_migrations.sh
-          ./scripts/run_migrations.sh
+          TAG="${ECR_REGISTRY}/${IMAGE_REPO}:${GIT_SHA::7}"
+          LATEST="${ECR_REGISTRY}/${IMAGE_REPO}:latest"
 
-  deploy:
-    name: Deploy Lambdas
+          aws ecr describe-repositories --repository-names "${IMAGE_REPO}" \
+            --region "${AWS_REGION}" > /dev/null 2>&1 || \
+          aws ecr create-repository --repository-name "${IMAGE_REPO}" \
+            --region "${AWS_REGION}" > /dev/null
+
+          docker build \
+            --file infrastructure/k8s/jobs/Dockerfile.migrate \
+            --tag "${TAG}" --tag "${LATEST}" .
+          docker push "${TAG}"
+          docker push "${LATEST}"
+
+          echo "MIGRATE_IMAGE=${TAG}" >> "$GITHUB_ENV"
+
+      - name: Conectar kubectl al cluster EKS
+        run: |
+          aws eks update-kubeconfig \
+            --region "${AWS_REGION}" \
+            --name "${EKS_CLUSTER}"
+
+      - name: Sincronizar credenciales Aurora → K8s Secret
+        run: |
+          CREDS=$(aws secretsmanager get-secret-value \
+            --secret-id "aurora/credentials" \
+            --region "${AWS_REGION}" \
+            --query SecretString --output text)
+
+          HOST=$(echo "$CREDS"     | python3 -c "import sys,json; print(json.load(sys.stdin)['host'])")
+          PORT=$(echo "$CREDS"     | python3 -c "import sys,json; print(json.load(sys.stdin).get('port',5432))")
+          USER=$(echo "$CREDS"     | python3 -c "import sys,json; print(json.load(sys.stdin)['username'])")
+          PASSWORD=$(echo "$CREDS" | python3 -c "import sys,json; print(json.load(sys.stdin)['password'])")
+          DBNAME=$(echo "$CREDS"   | python3 -c "import sys,json; print(json.load(sys.stdin).get('dbname','tfm'))")
+
+          kubectl create secret generic tfm-aurora-secret \
+            --namespace "${NAMESPACE}" \
+            --from-literal=host="$HOST" \
+            --from-literal=port="$PORT" \
+            --from-literal=username="$USER" \
+            --from-literal=password="$PASSWORD" \
+            --from-literal=dbname="$DBNAME" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Lanzar K8s Job de migración
+        run: |
+          # Eliminar Job anterior si quedó de una ejecución previa
+          kubectl delete job tfm-db-migrate \
+            --namespace "${NAMESPACE}" \
+            --ignore-not-found=true
+
+          # Aplicar con la imagen del commit actual
+          sed "s|ACCOUNT_ID.dkr.ecr.AWS_REGION.amazonaws.com/tfm-db-migrate:latest|${MIGRATE_IMAGE}|g" \
+            infrastructure/k8s/jobs/db-migrate.yaml \
+            | kubectl apply -f -
+
+      - name: Esperar que termine el Job (timeout 5 min)
+        run: |
+          kubectl wait job/tfm-db-migrate \
+            --namespace "${NAMESPACE}" \
+            --for=condition=complete \
+            --timeout=300s
+
+      - name: Mostrar logs de la migración
+        if: always()
+        run: |
+          kubectl logs \
+            --namespace "${NAMESPACE}" \
+            -l app=tfm-db-migrate \
+            --tail=50 || true
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 6. RESUMEN FINAL
+  #    Se ejecuta siempre (aunque algún job haya fallado) y muestra
+  #    qué se desplegó, con qué SHA y si todo fue bien.
+  # ──────────────────────────────────────────────────────────────────────────
+  notify:
+    name: Resumen del deploy
     runs-on: ubuntu-latest
     environment: production
-    needs: migrate
+    needs:
+      - changes
+      - deploy-lambda-ingestion
+      - deploy-lambda-sentiment
+      - deploy-lambda-indicators
+      - deploy-lambda-bayesian
+      - deploy-lambda-report
+      - deploy-api
+      - deploy-frontend
+      - migrate
+    if: always()
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Deploy Lambda functions
-        env:
-          AWS_REGION: ${{ vars.AWS_REGION }}
-          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
-          LAMBDA_EXECUTION_ROLE_ARN: ${{ vars.LAMBDA_EXECUTION_ROLE_ARN }}
+      - name: Conectar kubectl
         run: |
-          chmod +x deploy.sh
-          ./deploy.sh "$AWS_REGION" "$AWS_ACCOUNT_ID" "$LAMBDA_EXECUTION_ROLE_ARN"
+          aws eks update-kubeconfig \
+            --region "${AWS_REGION}" \
+            --name "${EKS_CLUSTER}" 2>/dev/null || true
+
+      - name: Estado de los pods
+        run: |
+          echo "════════════════════════════════════"
+          echo "  Pods en namespace ${NAMESPACE}"
+          echo "════════════════════════════════════"
+          kubectl get pods -n "${NAMESPACE}" 2>/dev/null || echo "  (cluster no accesible)"
+          echo ""
+
+      - name: Versiones Lambda publicadas
+        run: |
+          echo "════════════════════════════════════"
+          echo "  Alias 'live' de las Lambdas"
+          echo "════════════════════════════════════"
+          for fn in lambda_ingestion lambda_sentiment lambda_indicators lambda_bayesian lambda_report; do
+            VERSION=$(aws lambda get-alias \
+              --function-name "$fn" \
+              --name live \
+              --region "${AWS_REGION}" \
+              --query 'FunctionVersion' \
+              --output text 2>/dev/null || echo "—")
+            printf "  %-30s v%s\n" "$fn" "$VERSION"
+          done
+
+      - name: Resumen de jobs
+        run: |
+          echo ""
+          echo "════════════════════════════════════════════════════════"
+          echo "  DEPLOY COMPLETADO — commit ${GIT_SHA::7}"
+          echo "════════════════════════════════════════════════════════"
+          echo ""
+          declare -A STATUS=(
+            ["ingestion"]="${{ needs.deploy-lambda-ingestion.result }}"
+            ["sentiment"]="${{ needs.deploy-lambda-sentiment.result }}"
+            ["indicators"]="${{ needs.deploy-lambda-indicators.result }}"
+            ["bayesian"]="${{ needs.deploy-lambda-bayesian.result }}"
+            ["report"]="${{ needs.deploy-lambda-report.result }}"
+            ["api"]="${{ needs.deploy-api.result }}"
+            ["frontend"]="${{ needs.deploy-frontend.result }}"
+            ["migrate"]="${{ needs.migrate.result }}"
+          )
+          for JOB in "${!STATUS[@]}"; do
+            case "${STATUS[$JOB]}" in
+              success)  ICON="✅" ;;
+              skipped)  ICON="⏭️ " ;;
+              failure)  ICON="❌" ;;
+              *)        ICON="⚠️ " ;;
+            esac
+            printf "  %s  %-20s %s\n" "$ICON" "$JOB" "${STATUS[$JOB]}"
+          done
+          echo ""
+
+      - name: Fallar si algún job crítico falló
+        if: |
+          needs.deploy-lambda-ingestion.result == 'failure' ||
+          needs.deploy-lambda-sentiment.result == 'failure'  ||
+          needs.deploy-lambda-indicators.result == 'failure' ||
+          needs.deploy-lambda-bayesian.result == 'failure'   ||
+          needs.deploy-lambda-report.result == 'failure'     ||
+          needs.deploy-api.result == 'failure'               ||
+          needs.deploy-frontend.result == 'failure'          ||
+          needs.migrate.result == 'failure'
+        run: |
+          echo "❌ Uno o más jobs fallaron. Revisa los logs arriba."
+          exit 1

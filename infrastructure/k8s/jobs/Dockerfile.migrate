@@ -1,0 +1,18 @@
+# ─── Migración de schema — Aurora PostgreSQL ──────────────────────────────────
+# Imagen minimalista con psql y el schema SQL del TFM.
+# Se usa como K8s Job (se ejecuta una vez y termina).
+FROM alpine:3.19
+
+# postgresql-client trae psql
+RUN apk add --no-cache postgresql15-client python3 py3-pip curl
+
+# Instalar boto3 para leer credenciales de Secrets Manager
+RUN pip3 install --no-cache-dir boto3==1.34.69 --break-system-packages
+
+WORKDIR /migration
+
+# Copiar schema SQL y script de ejecución
+COPY database_schema.sql .
+COPY infrastructure/k8s/jobs/run_migration.py .
+
+CMD ["python3", "run_migration.py"]

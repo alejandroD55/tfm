@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tfm-frontend
+  namespace: tfm-dashboard
+  labels:
+    app: tfm-frontend
+    component: frontend
+    version: "1.0"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: tfm-frontend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0          # zero-downtime deploy
+  template:
+    metadata:
+      labels:
+        app: tfm-frontend
+        component: frontend
+    spec:
+      securityContext:
+        runAsNonRoot: false      # nginx necesita arrancar como root (bind :80)
+      containers:
+        - name: frontend
+          # Imagen reemplazada por deploy_k8s.sh
+          image: ACCOUNT_ID.dkr.ecr.AWS_REGION.amazonaws.com/tfm-dashboard-frontend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+              name: http
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+          livenessProbe:
+            httpGet:
+              path: /nginx-health
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /nginx-health
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          volumeMounts:
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+      volumes:
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+      terminationGracePeriodSeconds: 30
