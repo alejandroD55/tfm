@@ -14,6 +14,9 @@ s3_client = boto3.client('s3')
 secrets_client = boto3.client('secretsmanager')
 rds_client = boto3.client('rds')
 
+# --- CONFIGURACIÓN GLOBAL ---
+DAYS_BACK = 365  # <-- Cambiado a 1 año de histórico
+
 def resolve_batch_date(event):
     raw_date = (event or {}).get('batch_date') or (event or {}).get('date')
     if raw_date:
@@ -27,7 +30,6 @@ def get_secret(secret_name):
         return json.loads(response['SecretBinary'])
     except Exception:
         raise
-
 
 def connect_to_aurora(aurora_creds):
     auth_mode = str(aurora_creds.get('auth_mode', '')).lower()
@@ -45,29 +47,21 @@ def connect_to_aurora(aurora_creds):
             Region=region,
         )
         return psycopg2.connect(
-            host=host,
-            port=port,
-            user=username,
-            password=token,
-            database=dbname,
-            sslmode='require',
+            host=host, port=port, user=username,
+            password=token, database=dbname, sslmode='require',
         )
 
     return psycopg2.connect(
-        host=host,
-        port=port,
-        user=username,
-        password=aurora_creds['password'],
-        database=dbname,
+        host=host, port=port, user=username,
+        password=aurora_creds['password'], database=dbname,
     )
 
-def get_trading_data(connection, report_date, days_back=90):
+def get_trading_data(connection, report_date, days_back=DAYS_BACK):
     try:
         cursor = connection.cursor()
         end_date = pd.to_datetime(report_date).date()
         start_date = end_date - timedelta(days=days_back)
 
-        # CRUZAMOS LAS TABLAS PARA OBTENER EL PRECIO REAL (close_price)
         query = """
             SELECT ts.batch_date, ts.ticker, ts.signal, ti.close_price
             FROM trading_signals ts
@@ -92,9 +86,12 @@ def calculate_backtesting_metrics(signals_df):
             starting_capital = 10000.0
             current_capital = starting_capital
             equity_curve = [starting_capital]
-            in_position = False
+            
+            # --- NUEVA LÓGICA LONG/SHORT ---
+            current_position = 0 # 1 = Long, -1 = Short, 0 = Cash
             entry_price = 0.0
             trades_returns = []
+            
             signals_count = ticker_signals['signal'].value_counts().to_dict()
 
             for idx, row in ticker_signals.iterrows():
@@ -102,32 +99,59 @@ def calculate_backtesting_metrics(signals_df):
                 if current_price == 0:
                     continue
 
-                if row['signal'] == 'BUY' and not in_position:
-                    in_position = True
-                    entry_price = current_price
-                elif row['signal'] == 'SELL' and in_position:
-                    in_position = False
-                    # Retorno real basado en la variación del precio
-                    trade_return = (current_price - entry_price) / entry_price
-                    current_capital *= (1 + trade_return)
-                    trades_returns.append(float(trade_return))
+                signal = row['signal']
+
+                # Lógica de cierre y apertura de posiciones
+                if signal == 'BUY':
+                    if current_position == -1: # Cerrar Short
+                        trade_return = (entry_price - current_price) / entry_price
+                        current_capital *= (1 + trade_return)
+                        trades_returns.append(float(trade_return))
                     
+                    if current_position != 1: # Abrir Long
+                        current_position = 1
+                        entry_price = current_price
+
+                elif signal == 'SELL':
+                    if current_position == 1: # Cerrar Long
+                        trade_return = (current_price - entry_price) / entry_price
+                        current_capital *= (1 + trade_return)
+                        trades_returns.append(float(trade_return))
+                    
+                    if current_position != -1: # Abrir Short
+                        current_position = -1
+                        entry_price = current_price
+
+                elif signal == 'HOLD':
+                    if current_position == 1: # Cerrar Long
+                        trade_return = (current_price - entry_price) / entry_price
+                        current_capital *= (1 + trade_return)
+                        trades_returns.append(float(trade_return))
+                        current_position = 0
+                    elif current_position == -1: # Cerrar Short
+                        trade_return = (entry_price - current_price) / entry_price
+                        current_capital *= (1 + trade_return)
+                        trades_returns.append(float(trade_return))
+                        current_position = 0
+
                 equity_curve.append(current_capital)
 
-            # Si seguimos dentro al final del periodo, valoramos a precio de mercado
-            if in_position and entry_price > 0:
+            # Valoración MTM al final del periodo
+            final_equity = current_capital
+            if current_position == 1 and entry_price > 0:
                 final_price = float(ticker_signals.iloc[-1]['close_price'])
                 unrealized_return = (final_price - entry_price) / entry_price
                 final_equity = current_capital * (1 + unrealized_return)
-            else:
-                final_equity = current_capital
+            elif current_position == -1 and entry_price > 0:
+                final_price = float(ticker_signals.iloc[-1]['close_price'])
+                unrealized_return = (entry_price - final_price) / entry_price
+                final_equity = current_capital * (1 + unrealized_return)
 
             cumulative_return = (final_equity - starting_capital) / starting_capital
             
-            # Cálculos estadísticos (solo si hay más de 1 día de datos)
             if len(equity_curve) > 2:
                 daily_returns = np.diff(equity_curve) / equity_curve[:-1]
-                excess_returns = daily_returns - (0.02 / 252) # Risk-free rate 2%
+                excess_returns = daily_returns - (0.02 / 252)
                 std_dev = np.std(excess_returns)
                 sharpe_ratio = (np.mean(excess_returns) / std_dev * np.sqrt(252)) if std_dev > 1e-6 else 0.0
                 
@@ -144,8 +168,8 @@ def calculate_backtesting_metrics(signals_df):
                 'max_drawdown': round(float(max_drawdown), 4), 
                 'final_equity': round(float(final_equity), 2)
             }
+            
             wins = sum(1 for value in trades_returns if value > 0)
-            losses = sum(1 for value in trades_returns if value <= 0)
             gross_profit = sum(value for value in trades_returns if value > 0)
             gross_loss = abs(sum(value for value in trades_returns if value < 0))
             profit_factor = (gross_profit / gross_loss) if gross_loss > 1e-9 else (gross_profit if gross_profit > 0 else 0.0)
@@ -160,7 +184,7 @@ def calculate_backtesting_metrics(signals_df):
                 'win_rate': round(float(wins / len(trades_returns)), 4) if trades_returns else 0.0,
                 'avg_trade_return': round(float(np.mean(trades_returns)), 4) if trades_returns else 0.0,
                 'profit_factor': round(float(profit_factor), 4),
-                'time_in_market_ratio': round(float((signals_count.get('BUY', 0) + signals_count.get('HOLD', 0)) / max(len(ticker_signals), 1)), 4)
+                'time_in_market_ratio': round(float((signals_count.get('BUY', 0) + signals_count.get('SELL', 0)) / max(len(ticker_signals), 1)), 4)
             }
 
         return metrics, diagnostics
@@ -170,12 +194,7 @@ def calculate_backtesting_metrics(signals_df):
 
 def get_pipeline_health(connection, report_date):
     cursor = connection.cursor()
-    cursor.execute("""
-        SELECT tickers_processed, status
-        FROM batch_log
-        WHERE batch_date = %s
-        LIMIT 1
-    """, (report_date,))
+    cursor.execute("SELECT tickers_processed, status FROM batch_log WHERE batch_date = %s LIMIT 1", (report_date,))
     batch_row = cursor.fetchone()
 
     cursor.execute("SELECT COUNT(DISTINCT ticker) FROM technical_indicators WHERE batch_date = %s", (report_date,))
@@ -185,11 +204,7 @@ def get_pipeline_health(connection, report_date):
     cursor.execute("SELECT COUNT(*) FROM sentiment_scores WHERE batch_date = %s", (report_date,))
     headlines = cursor.fetchone()[0]
 
-    cursor.execute("""
-        SELECT stage, metrics
-        FROM pipeline_kpis
-        WHERE batch_date = %s
-    """, (report_date,))
+    cursor.execute("SELECT stage, metrics FROM pipeline_kpis WHERE batch_date = %s", (report_date,))
     stage_metrics = {row[0]: row[1] for row in cursor.fetchall()}
     cursor.close()
 
@@ -203,7 +218,6 @@ def get_pipeline_health(connection, report_date):
         'coverage_ratio': round(float((signal_tickers or 0) / tickers_expected), 4) if tickers_expected else 0.0,
         'stage_kpis': stage_metrics
     }
-
 
 def get_explanations_sample(connection, report_date, limit=10):
     cursor = connection.cursor()
@@ -221,32 +235,23 @@ def get_explanations_sample(connection, report_date, limit=10):
     cursor.close()
     return [
         {
-            'ticker': row[0],
-            'signal': row[1],
+            'ticker': row[0], 'signal': row[1],
             'prob_up': round(float(row[2]), 4) if row[2] is not None else None,
             'prob_down': round(float(row[3]), 4) if row[3] is not None else None,
-            'evidence': {
-                'sentiment': row[4],
-                'rsi': row[5],
-                'trend': row[6],
-                'volatility': row[7]
-            }
+            'evidence': {'sentiment': row[4], 'rsi': row[5], 'trend': row[6], 'volatility': row[7]}
         } for row in rows
     ]
-
 
 def compute_benchmark(signals_df):
     benchmark = {}
     for ticker in signals_df['ticker'].unique():
         ticker_df = signals_df[signals_df['ticker'] == ticker].sort_values('batch_date')
-        if ticker_df.empty:
-            continue
+        if ticker_df.empty: continue
         first_price = float(ticker_df.iloc[0]['close_price']) if ticker_df.iloc[0]['close_price'] else 0.0
         last_price = float(ticker_df.iloc[-1]['close_price']) if ticker_df.iloc[-1]['close_price'] else 0.0
         buy_hold_return = ((last_price - first_price) / first_price) if first_price > 0 else 0.0
         benchmark[ticker] = round(float(buy_hold_return), 4)
     return benchmark
-
 
 def upsert_pipeline_kpi(connection, batch_date, stage, metrics):
     cursor = connection.cursor()
@@ -254,12 +259,10 @@ def upsert_pipeline_kpi(connection, batch_date, stage, metrics):
         INSERT INTO pipeline_kpis (batch_date, stage, metrics)
         VALUES (%s, %s, %s::jsonb)
         ON CONFLICT (batch_date, stage) DO UPDATE
-        SET metrics = EXCLUDED.metrics,
-            updated_at = CURRENT_TIMESTAMP
+        SET metrics = EXCLUDED.metrics, updated_at = CURRENT_TIMESTAMP
     """, (batch_date, stage, json.dumps(metrics)))
     connection.commit()
     cursor.close()
-
 
 def save_report_to_s3(report_data, report_date):
     try:
@@ -271,12 +274,12 @@ def save_report_to_s3(report_data, report_date):
 
 def handler(event, context):
     try:
-        logger.info("Lambda report generation started")
+        logger.info("Lambda report generation started (Long/Short Strategy)")
         aurora_creds = get_secret('aurora/credentials')
         connection = connect_to_aurora(aurora_creds)
         today = resolve_batch_date(event)
 
-        signals_df = get_trading_data(connection, today, days_back=90)
+        signals_df = get_trading_data(connection, today, days_back=DAYS_BACK)
         backtest_metrics, diagnostics = calculate_backtesting_metrics(signals_df) if not signals_df.empty else ({}, {})
         pipeline_health = get_pipeline_health(connection, today)
         explanations = get_explanations_sample(connection, today, limit=10)
@@ -284,7 +287,7 @@ def handler(event, context):
 
         report_data = {
             'report_date': today,
-            'data_period_days': 90,
+            'data_period_days': DAYS_BACK,
             'generated_at': datetime.now().isoformat(),
             'pipeline_health': pipeline_health,
             'signal_diagnostics': diagnostics,
@@ -304,17 +307,14 @@ def handler(event, context):
                 'avg_max_drawdown': round(np.mean([m['max_drawdown'] for m in backtest_metrics.values()]), 4) if backtest_metrics else 0,
                 'total_closed_trades': int(sum(item['trades_closed'] for item in diagnostics.values())) if diagnostics else 0
             },
-            # Parametros de backtesting documentados explicitamente
             'backtesting_config': {
                 'initial_capital':   10000.0,
                 'risk_free_rate':    0.02,
-                'period_days':       90,
+                'period_days':       DAYS_BACK,
+                'strategy_type':     'Long/Short',
                 'sharpe_annualized': True,
-                'limitation': ('El backtesting usa precios de cierre del dia de la senal. '
-                               'No considera slippage, comisiones ni spread. '
-                               'Capital inicial fijo de $10,000 por ticker.')
+                'limitation': 'El backtesting usa precios de cierre del dia de la senal. No considera slippage ni comisiones.'
             },
-            # Referencia cruzada al artefacto de trazabilidad bayesiana
             'trace_artifact': f'results/{today}/bayesian_trace.json',
         }
         report_key = save_report_to_s3(report_data, today)
