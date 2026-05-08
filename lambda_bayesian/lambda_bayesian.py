@@ -18,6 +18,7 @@ sys.meta_path.insert(0, MockImporter())
 import json
 import boto3
 import psycopg2
+import os
 from datetime import datetime, timezone
 import logging
 import numpy as np
@@ -31,6 +32,7 @@ logger.setLevel(logging.INFO)
 
 s3_client      = boto3.client('s3')
 secrets_client = boto3.client('secretsmanager')
+rds_client     = boto3.client('rds')
 
 DATALAKE_BUCKET = 'tfm-unir-datalake'
 
@@ -126,6 +128,39 @@ def resolve_batch_date(event):
 def get_secret(secret_name):
     resp = secrets_client.get_secret_value(SecretId=secret_name)
     return json.loads(resp.get('SecretString', resp.get('SecretBinary')))
+
+
+def connect_to_aurora(aurora_creds):
+    auth_mode = str(aurora_creds.get('auth_mode', '')).lower()
+    region = os.getenv('AWS_REGION', 'eu-north-1')
+    host = aurora_creds['host']
+    port = int(aurora_creds.get('port', 5432))
+    username = aurora_creds['username']
+    dbname = aurora_creds.get('dbname', 'tfm')
+
+    if auth_mode == 'iam':
+        token = rds_client.generate_db_auth_token(
+            DBHostname=host,
+            Port=port,
+            DBUsername=username,
+            Region=region,
+        )
+        return psycopg2.connect(
+            host=host,
+            port=port,
+            user=username,
+            password=token,
+            database=dbname,
+            sslmode='require',
+        )
+
+    return psycopg2.connect(
+        host=host,
+        port=port,
+        user=username,
+        password=aurora_creds['password'],
+        database=dbname,
+    )
 
 
 def discretize_rsi(rsi_value):
@@ -363,11 +398,7 @@ def handler(event, context):
     try:
         model        = create_bayesian_network()
         aurora_creds = get_secret('aurora/credentials')
-        connection   = psycopg2.connect(
-            host=aurora_creds['host'], port=aurora_creds['port'],
-            user=aurora_creds['username'], password=aurora_creds['password'],
-            database=aurora_creds['dbname']
-        )
+        connection   = connect_to_aurora(aurora_creds)
 
         cursor = connection.cursor()
         latest_date = resolve_batch_date(event)

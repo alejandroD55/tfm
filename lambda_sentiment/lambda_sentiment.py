@@ -3,6 +3,7 @@ import psycopg2
 from datetime import datetime
 import logging
 import boto3
+import os
 import time
 from huggingface_hub import InferenceClient
 
@@ -12,6 +13,7 @@ logger.setLevel(logging.INFO)
 # Inicializamos clientes de AWS globales (boto3)
 s3_client = boto3.client('s3')
 secrets_client = boto3.client('secretsmanager')
+rds_client = boto3.client('rds')
 
 # Definimos el ID del modelo a nivel global
 MODEL_ID = "ProsusAI/finbert"
@@ -31,6 +33,39 @@ def get_secret(secret_name):
     except Exception as e:
         logger.error(f"Error retrieving secret {secret_name}: {str(e)}")
         raise
+
+
+def connect_to_aurora(aurora_creds):
+    auth_mode = str(aurora_creds.get('auth_mode', '')).lower()
+    region = os.getenv('AWS_REGION', 'eu-north-1')
+    host = aurora_creds['host']
+    port = int(aurora_creds.get('port', 5432))
+    username = aurora_creds['username']
+    dbname = aurora_creds.get('dbname', 'tfm')
+
+    if auth_mode == 'iam':
+        token = rds_client.generate_db_auth_token(
+            DBHostname=host,
+            Port=port,
+            DBUsername=username,
+            Region=region,
+        )
+        return psycopg2.connect(
+            host=host,
+            port=port,
+            user=username,
+            password=token,
+            database=dbname,
+            sslmode='require',
+        )
+
+    return psycopg2.connect(
+        host=host,
+        port=port,
+        user=username,
+        password=aurora_creds['password'],
+        database=dbname,
+    )
 
 def read_news_from_s3(batch_date):
     try:
@@ -133,11 +168,7 @@ def handler(event, context):
         today = resolve_batch_date(event)
         news_data = read_news_from_s3(today)
 
-        connection = psycopg2.connect(
-            host=aurora_creds['host'], port=aurora_creds['port'],
-            user=aurora_creds['username'], password=aurora_creds['password'],
-            database=aurora_creds['dbname']
-        )
+        connection = connect_to_aurora(aurora_creds)
 
         total_headlines = 0
         processed_headlines = 0

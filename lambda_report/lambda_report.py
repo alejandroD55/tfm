@@ -1,6 +1,7 @@
 import json
 import boto3
 import psycopg2
+import os
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -11,6 +12,7 @@ logger.setLevel(logging.INFO)
 
 s3_client = boto3.client('s3')
 secrets_client = boto3.client('secretsmanager')
+rds_client = boto3.client('rds')
 
 def resolve_batch_date(event):
     raw_date = (event or {}).get('batch_date') or (event or {}).get('date')
@@ -25,6 +27,39 @@ def get_secret(secret_name):
         return json.loads(response['SecretBinary'])
     except Exception:
         raise
+
+
+def connect_to_aurora(aurora_creds):
+    auth_mode = str(aurora_creds.get('auth_mode', '')).lower()
+    region = os.getenv('AWS_REGION', 'eu-north-1')
+    host = aurora_creds['host']
+    port = int(aurora_creds.get('port', 5432))
+    username = aurora_creds['username']
+    dbname = aurora_creds.get('dbname', 'tfm')
+
+    if auth_mode == 'iam':
+        token = rds_client.generate_db_auth_token(
+            DBHostname=host,
+            Port=port,
+            DBUsername=username,
+            Region=region,
+        )
+        return psycopg2.connect(
+            host=host,
+            port=port,
+            user=username,
+            password=token,
+            database=dbname,
+            sslmode='require',
+        )
+
+    return psycopg2.connect(
+        host=host,
+        port=port,
+        user=username,
+        password=aurora_creds['password'],
+        database=dbname,
+    )
 
 def get_trading_data(connection, report_date, days_back=90):
     try:
@@ -238,11 +273,7 @@ def handler(event, context):
     try:
         logger.info("Lambda report generation started")
         aurora_creds = get_secret('aurora/credentials')
-        connection = psycopg2.connect(
-            host=aurora_creds['host'], port=aurora_creds['port'],
-            user=aurora_creds['username'], password=aurora_creds['password'],
-            database=aurora_creds['dbname']
-        )
+        connection = connect_to_aurora(aurora_creds)
         today = resolve_batch_date(event)
 
         signals_df = get_trading_data(connection, today, days_back=90)

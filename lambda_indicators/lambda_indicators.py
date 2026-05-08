@@ -2,6 +2,7 @@ import json
 import boto3
 import pandas as pd
 import psycopg2
+import os
 from datetime import datetime
 from io import StringIO
 import logging
@@ -12,6 +13,7 @@ logger.setLevel(logging.INFO)
 
 s3_client = boto3.client('s3')
 secrets_client = boto3.client('secretsmanager')
+rds_client = boto3.client('rds')
 
 def resolve_batch_date(event):
     raw_date = (event or {}).get('batch_date') or (event or {}).get('date')
@@ -28,6 +30,39 @@ def get_secret(secret_name):
     except Exception as e:
         logger.error(f"Error retrieving secret {secret_name}: {str(e)}")
         raise
+
+
+def connect_to_aurora(aurora_creds):
+    auth_mode = str(aurora_creds.get('auth_mode', '')).lower()
+    region = os.getenv('AWS_REGION', 'eu-north-1')
+    host = aurora_creds['host']
+    port = int(aurora_creds.get('port', 5432))
+    username = aurora_creds['username']
+    dbname = aurora_creds.get('dbname', 'tfm')
+
+    if auth_mode == 'iam':
+        token = rds_client.generate_db_auth_token(
+            DBHostname=host,
+            Port=port,
+            DBUsername=username,
+            Region=region,
+        )
+        return psycopg2.connect(
+            host=host,
+            port=port,
+            user=username,
+            password=token,
+            database=dbname,
+            sslmode='require',
+        )
+
+    return psycopg2.connect(
+        host=host,
+        port=port,
+        user=username,
+        password=aurora_creds['password'],
+        database=dbname,
+    )
 
 def read_ohlcv_from_s3(batch_date):
     try:
@@ -126,11 +161,7 @@ def handler(event, context):
         ohlcv_df = read_ohlcv_from_s3(today)
         indicators_by_ticker = calculate_technical_indicators(ohlcv_df)
 
-        connection = psycopg2.connect(
-            host=aurora_creds['host'], port=aurora_creds['port'],
-            user=aurora_creds['username'], password=aurora_creds['password'],
-            database=aurora_creds['dbname']
-        )
+        connection = connect_to_aurora(aurora_creds)
 
         for ticker, indicators_df in indicators_by_ticker.items():
             try:

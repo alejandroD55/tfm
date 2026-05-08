@@ -3,6 +3,7 @@ import boto3
 import yfinance as yf
 import requests
 import psycopg2
+import os
 from datetime import datetime, timedelta
 import pandas as pd
 import logging
@@ -15,6 +16,40 @@ logger.setLevel(logging.INFO)
 # AWS clients
 s3_client = boto3.client('s3')
 secrets_client = boto3.client('secretsmanager')
+rds_client = boto3.client('rds')
+
+
+def connect_to_aurora(aurora_creds):
+    auth_mode = str(aurora_creds.get('auth_mode', '')).lower()
+    region = os.getenv('AWS_REGION', 'eu-north-1')
+    host = aurora_creds['host']
+    port = int(aurora_creds.get('port', 5432))
+    username = aurora_creds['username']
+    dbname = aurora_creds.get('dbname', 'tfm')
+
+    if auth_mode == 'iam':
+        token = rds_client.generate_db_auth_token(
+            DBHostname=host,
+            Port=port,
+            DBUsername=username,
+            Region=region,
+        )
+        return psycopg2.connect(
+            host=host,
+            port=port,
+            user=username,
+            password=token,
+            database=dbname,
+            sslmode='require',
+        )
+
+    return psycopg2.connect(
+        host=host,
+        port=port,
+        user=username,
+        password=aurora_creds['password'],
+        database=dbname,
+    )
 
 
 def resolve_batch_date(event):
@@ -213,13 +248,7 @@ def handler(event, context):
         save_to_s3(news_data, 'tfm-unir-datalake', news_key, is_json=True)
 
         # Connect to Aurora and insert batch log
-        connection = psycopg2.connect(
-            host=aurora_creds['host'],
-            port=aurora_creds['port'],
-            user=aurora_creds['username'],
-            password=aurora_creds['password'],
-            database=aurora_creds['dbname']
-        )
+        connection = connect_to_aurora(aurora_creds)
 
         insert_batch_log(connection, today, 'STARTED', len(tickers))
         upsert_pipeline_kpi(connection, today, 'ingestion', {
