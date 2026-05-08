@@ -251,8 +251,8 @@ def infer_signal(model, evidence_states):
     prob_down = round(float(result.values[0]), 4)
 
     cfg = MODEL_CONFIG["signal_thresholds"]
-    if   prob_up > cfg["BUY"]["prob_up_above"]:   signal = "BUY"
-    elif prob_up < cfg["SELL"]["prob_up_below"]:  signal = "SELL"
+    if   prob_up >= cfg["BUY"]["prob_up_above"]:   signal = "BUY"
+    elif prob_up <= cfg["SELL"]["prob_up_below"]:  signal = "SELL"
     else:                                          signal = "HOLD"
 
     return signal, prob_up, prob_down
@@ -309,8 +309,9 @@ def aggregate_sentiment(all_sentiments):
     distribution = {k: {"count": v, "pct": round(v/total*100, 1)} for k, v in dist.items()}
 
     best = all_sentiments[0]
-    dominant_sentiment  = best[0]
-    dominant_confidence = round(float(best[1]), 4)
+    # Usamos Voto Mayoritario real basado en el conteo (dist)
+    dominant_sentiment  = max(dist, key=dist.get) if dist else "neutral"
+    dominant_confidence = round(float(best[1]), 4) # Mantenemos la confianza de la noticia principal
 
     headlines_sample = [
         {"headline":   row[2][:120] + "..." if len(row[2]) > 120 else row[2],
@@ -325,8 +326,7 @@ def aggregate_sentiment(all_sentiments):
         "distribution":       distribution,
         "dominant":           {"sentiment": dominant_sentiment, "confidence": dominant_confidence},
         "headlines_sample":   headlines_sample,
-        "limitation":         ("Solo se usa el headline con mayor confidence para la inferencia. "
-                               "Los demas titulares no influyen en la senal actual.")
+        "limitation":         "Se utiliza Voto Mayoritario de todos los titulares del día para decidir el sentimiento."
     }
 
 
