@@ -22,6 +22,11 @@ export const routes: Routes = [
       import('./features/pipeline/pipeline.component').then(m => m.PipelineComponent),
   },
   {
+    path: 'audit',
+    loadComponent: () =>
+      import('./features/audit/audit.component').then(m => m.AuditComponent),
+  },
+  {
     path: '',
     redirectTo: 'dashboard',
     pathMatch: 'full',

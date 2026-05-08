@@ -21,7 +21,8 @@ export class ReportService {
         date:         d.date,
         s3Key:        d.s3Key,
         lastModified: new Date(d.lastModified),
-      } as ReportDateEntry)))
+        has_trace:    d.has_trace ?? false,
+      } as ReportDateEntry & { has_trace: boolean })))
     );
   }
 

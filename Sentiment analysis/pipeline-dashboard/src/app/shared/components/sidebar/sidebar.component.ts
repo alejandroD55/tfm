@@ -283,6 +283,13 @@ export class SidebarComponent {
       description: 'Estado de las 5 Lambdas y batches diarios',
     },
     {
+      label: 'Auditoría',
+      icon: 'manage_search',
+      route: '/audit',
+      description: 'Trazabilidad completa · CPT · decisiones implícitas · sentimiento multi-headline',
+      badge: 'NEW',
+    },
+    {
       label: 'Data Lake',
       icon: 'database',
       route: '/s3-explorer',

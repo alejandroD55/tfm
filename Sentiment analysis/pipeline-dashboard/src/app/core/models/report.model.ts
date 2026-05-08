@@ -110,7 +110,8 @@ export interface TickerView {
 // ─── S3 index entry ───────────────────────────────────────────────────────
 
 export interface ReportDateEntry {
-  date: string;          // 'YYYY-MM-DD'
-  s3Key: string;         // 'results/YYYY-MM-DD/report.json'
+  date:         string;   // 'YYYY-MM-DD'
+  s3Key:        string;   // 'results/YYYY-MM-DD/report.json'
   lastModified: Date;
+  has_trace?:   boolean;  // true si existe bayesian_trace.json para esta fecha
 }

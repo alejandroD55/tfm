@@ -252,8 +252,9 @@ def handler(event, context):
         benchmark = compute_benchmark(signals_df) if not signals_df.empty else {}
 
         report_data = {
-            'report_date': today, 
-            'data_period_days': 90, 
+            'report_date': today,
+            'data_period_days': 90,
+            'generated_at': datetime.now().isoformat(),
             'pipeline_health': pipeline_health,
             'signal_diagnostics': diagnostics,
             'benchmark_comparison': {
@@ -271,7 +272,19 @@ def handler(event, context):
                 'avg_sharpe_ratio': round(np.mean([m['sharpe_ratio'] for m in backtest_metrics.values()]), 4) if backtest_metrics else 0,
                 'avg_max_drawdown': round(np.mean([m['max_drawdown'] for m in backtest_metrics.values()]), 4) if backtest_metrics else 0,
                 'total_closed_trades': int(sum(item['trades_closed'] for item in diagnostics.values())) if diagnostics else 0
-            }
+            },
+            # Parametros de backtesting documentados explicitamente
+            'backtesting_config': {
+                'initial_capital':   10000.0,
+                'risk_free_rate':    0.02,
+                'period_days':       90,
+                'sharpe_annualized': True,
+                'limitation': ('El backtesting usa precios de cierre del dia de la senal. '
+                               'No considera slippage, comisiones ni spread. '
+                               'Capital inicial fijo de $10,000 por ticker.')
+            },
+            # Referencia cruzada al artefacto de trazabilidad bayesiana
+            'trace_artifact': f'results/{today}/bayesian_trace.json',
         }
         report_key = save_report_to_s3(report_data, today)
         upsert_pipeline_kpi(connection, today, 'report', {

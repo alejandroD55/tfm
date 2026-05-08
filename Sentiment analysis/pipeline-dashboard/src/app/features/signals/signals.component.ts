@@ -10,18 +10,22 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { switchMap } from 'rxjs';
+import { RouterModule } from '@angular/router';
+import { switchMap, catchError, of } from 'rxjs';
 import { ReportService } from '../../core/services/report.service';
+import { TraceService } from '../../core/services/trace.service';
 import {
   TickerView, ReportDateEntry, DailyReport,
   SentimentState, RsiState, TrendState, VolatilityState,
 } from '../../core/models/report.model';
+import { TickerTrace } from '../../core/models/trace.model';
 
 @Component({
   selector: 'app-signals',
   standalone: true,
   imports: [
-    CommonModule, FormsModule, MatTableModule, MatSortModule, MatFormFieldModule,
+    CommonModule, FormsModule, RouterModule,
+    MatTableModule, MatSortModule, MatFormFieldModule,
     MatSelectModule, MatInputModule, MatButtonModule, MatIconModule,
     MatProgressSpinnerModule, MatTooltipModule,
   ],
@@ -736,6 +740,7 @@ import {
 })
 export class SignalsComponent implements OnInit {
   private reportSvc = inject(ReportService);
+  private traceSvc  = inject(TraceService);
 
   @ViewChild(MatSort) sort!: MatSort;
 
@@ -753,12 +758,19 @@ export class SignalsComponent implements OnInit {
   holdCount = 0;
   avgProbUp = 0;
 
+  // ─── Trace lazy loading ───────────────────────────────────────────
+  /** Cache de trazas por ticker. Se carga al expandir la fila. */
+  tickerTraceCache = new Map<string, TickerTrace | null>();
+  tickerTraceLoading = new Set<string>();
+  hasTraceForDate = false;
+
   ngOnInit() {
     this.reportSvc.listAvailableDates().pipe(
       switchMap(dates => {
         this.availableDates = dates;
         if (!dates.length) { this.loading = false; return []; }
         this.selectedDate = dates[0].date;
+        this.hasTraceForDate = !!(dates[0] as any).has_trace;
         return this.reportSvc.loadReport(this.selectedDate);
       })
     ).subscribe({
@@ -769,6 +781,10 @@ export class SignalsComponent implements OnInit {
 
   onDateChange(date: string) {
     this.loading = true;
+    this.tickerTraceCache.clear();
+    this.expandedRows.clear();
+    const entry = this.availableDates.find(d => d.date === date);
+    this.hasTraceForDate = !!(entry as any)?.has_trace;
     this.reportSvc.loadReport(date).subscribe({
       next: r => { this.processReport(r); this.loading = false; },
       error: () => { this.loading = false; },
@@ -790,8 +806,41 @@ export class SignalsComponent implements OnInit {
   applyFilter() { this.dataSource.filter = this.filterSignal; }
 
   toggleRow(ticker: string) {
-    if (this.expandedRows.has(ticker)) this.expandedRows.delete(ticker);
-    else this.expandedRows.add(ticker);
+    if (this.expandedRows.has(ticker)) {
+      this.expandedRows.delete(ticker);
+    } else {
+      this.expandedRows.add(ticker);
+      this.loadTickerTrace(ticker);
+    }
+  }
+
+  // ─── Carga lazy del trace por ticker ─────────────────────────────
+  loadTickerTrace(ticker: string) {
+    if (this.tickerTraceCache.has(ticker) || this.tickerTraceLoading.has(ticker)) return;
+    this.tickerTraceLoading.add(ticker);
+    this.traceSvc.getTickerTrace(this.selectedDate, ticker).pipe(
+      catchError(() => of(null))
+    ).subscribe(resp => {
+      this.tickerTraceLoading.delete(ticker);
+      this.tickerTraceCache.set(ticker, resp?.trace ?? null);
+    });
+  }
+
+  getTickerTrace(ticker: string): TickerTrace | null {
+    return this.tickerTraceCache.get(ticker) ?? null;
+  }
+
+  isTraceLoading(ticker: string): boolean {
+    return this.tickerTraceLoading.has(ticker);
+  }
+
+  /** Distribución de sentimientos ordenada para visualización */
+  getSentimentDist(ticker: string): { key: string; count: number; pct: number }[] {
+    const t = this.getTickerTrace(ticker);
+    if (!t?.sentiment_detail?.distribution) return [];
+    return Object.entries(t.sentiment_detail.distribution).map(([key, v]: [string, any]) => ({
+      key, count: v.count, pct: v.pct,
+    }));
   }
 
   signalIcon(s: string) {
