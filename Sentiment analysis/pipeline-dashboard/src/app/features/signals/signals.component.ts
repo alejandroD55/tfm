@@ -1,4 +1,4 @@
-import { Component, OnInit, inject } from '@angular/core';
+import { Component, OnInit, ViewChild, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatTableModule, MatTableDataSource } from '@angular/material/table';
@@ -10,17 +10,12 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { MatChipsModule } from '@angular/material/chips';
-import { MatExpansionModule } from '@angular/material/expansion';
-import { MatDividerModule } from '@angular/material/divider';
-import { NgxChartsModule } from '@swimlane/ngx-charts';
-import { ViewChild } from '@angular/core';
+import { switchMap } from 'rxjs';
 import { ReportService } from '../../core/services/report.service';
 import {
-  DailyReport, TickerView, SignalExplanation, ReportDateEntry,
-  BayesianEvidence, SentimentState, RsiState, TrendState, VolatilityState,
+  TickerView, ReportDateEntry, DailyReport,
+  SentimentState, RsiState, TrendState, VolatilityState,
 } from '../../core/models/report.model';
-import { switchMap } from 'rxjs';
 
 @Component({
   selector: 'app-signals',
@@ -28,20 +23,26 @@ import { switchMap } from 'rxjs';
   imports: [
     CommonModule, FormsModule, MatTableModule, MatSortModule, MatFormFieldModule,
     MatSelectModule, MatInputModule, MatButtonModule, MatIconModule,
-    MatProgressSpinnerModule, MatTooltipModule, MatChipsModule,
-    MatExpansionModule, MatDividerModule, NgxChartsModule,
+    MatProgressSpinnerModule, MatTooltipModule,
   ],
   template: `
-    <div class="signals-page">
+    <div class="page">
 
       <!-- Header -->
-      <div class="page-header">
-        <div>
-          <h2 class="page-title"><mat-icon>psychology</mat-icon> Señales &amp; Decisiones Bayesianas</h2>
-          <p class="page-subtitle">Toma de decisiones explicable · Red bayesiana con 4 nodos de evidencia</p>
+      <header class="page-head">
+        <div class="page-head-text">
+          <div class="page-eyebrow">
+            <mat-icon>psychology</mat-icon>
+            <span>Bayesian decisions</span>
+          </div>
+          <h1 class="page-title">Señales &amp; decisiones explicables</h1>
+          <p class="page-sub">
+            Cada señal se explica como una cadena de evidencia bayesiana sobre 4 nodos:
+            sentimiento (FinBERT), RSI 14, tendencia (SMA20 vs SMA50) y volatilidad (Bollinger).
+          </p>
         </div>
-        <div class="header-controls">
-          <mat-form-field appearance="outline" class="date-sel">
+        <div class="page-actions">
+          <mat-form-field appearance="outline" class="date-input" subscriptSizing="dynamic">
             <mat-label>Fecha</mat-label>
             <mat-select [(ngModel)]="selectedDate" (ngModelChange)="onDateChange($event)">
               @for (d of availableDates; track d.date) {
@@ -49,8 +50,8 @@ import { switchMap } from 'rxjs';
               }
             </mat-select>
           </mat-form-field>
-          <mat-form-field appearance="outline">
-            <mat-label>Señal</mat-label>
+          <mat-form-field appearance="outline" subscriptSizing="dynamic">
+            <mat-label>Filtrar señal</mat-label>
             <mat-select [(ngModel)]="filterSignal" (ngModelChange)="applyFilter()">
               <mat-option value="">Todas</mat-option>
               <mat-option value="BUY">BUY</mat-option>
@@ -59,84 +60,110 @@ import { switchMap } from 'rxjs';
             </mat-select>
           </mat-form-field>
         </div>
-      </div>
+      </header>
 
       <!-- Bayesian network legend -->
-      <div class="bn-legend">
-        <div class="bn-title"><mat-icon>account_tree</mat-icon> Modelo bayesiano: 4 nodos de evidencia → MarketDirection</div>
-        <div class="bn-nodes">
-          <div class="bn-node sentiment">
+      <section class="bn">
+        <div class="bn-head">
+          <div class="card-title">
+            <mat-icon>account_tree</mat-icon>
+            <span>Modelo bayesiano · 4 nodos de evidencia → MarketDirection</span>
+          </div>
+          <div class="bn-thresholds">
+            <span class="th th-buy">BUY · P(↑) ≥ 65%</span>
+            <span class="th th-hold">HOLD · 35–65%</span>
+            <span class="th th-sell">SELL · P(↑) ≤ 35%</span>
+          </div>
+        </div>
+        <div class="bn-flow">
+          <div class="bn-node bn-sentiment">
             <mat-icon>sentiment_satisfied</mat-icon>
-            <span>Sentimiento</span>
-            <small>FinBERT</small>
+            <div>
+              <div class="bn-label">Sentimiento</div>
+              <small>FinBERT · titulares</small>
+            </div>
           </div>
-          <mat-icon class="arrow">arrow_forward</mat-icon>
-          <div class="bn-node rsi">
+          <span class="bn-arrow">+</span>
+          <div class="bn-node bn-rsi">
             <mat-icon>show_chart</mat-icon>
-            <span>RSI 14</span>
-            <small>&lt;30 / 30-70 / &gt;70</small>
+            <div>
+              <div class="bn-label">RSI 14</div>
+              <small>&lt;30 / 30–70 / &gt;70</small>
+            </div>
           </div>
-          <mat-icon class="arrow">arrow_forward</mat-icon>
-          <div class="bn-node trend">
+          <span class="bn-arrow">+</span>
+          <div class="bn-node bn-trend">
             <mat-icon>trending_up</mat-icon>
-            <span>Tendencia</span>
-            <small>SMA20 vs SMA50</small>
+            <div>
+              <div class="bn-label">Tendencia</div>
+              <small>SMA20 vs SMA50</small>
+            </div>
           </div>
-          <mat-icon class="arrow">arrow_forward</mat-icon>
-          <div class="bn-node volatility">
+          <span class="bn-arrow">+</span>
+          <div class="bn-node bn-vol">
             <mat-icon>swap_vert</mat-icon>
-            <span>Volatilidad</span>
-            <small>Bollinger Width</small>
+            <div>
+              <div class="bn-label">Volatilidad</div>
+              <small>Bollinger Width</small>
+            </div>
           </div>
-          <mat-icon class="arrow big">double_arrow</mat-icon>
-          <div class="bn-node target">
+          <span class="bn-arrow bn-arrow-result">→</span>
+          <div class="bn-node bn-target">
             <mat-icon>query_stats</mat-icon>
-            <span>Market Direction</span>
-            <small>P(up) / P(down)</small>
+            <div>
+              <div class="bn-label">Market Direction</div>
+              <small>P(↑) · P(↓)</small>
+            </div>
           </div>
         </div>
-        <div class="bn-thresholds">
-          Umbrales: <strong>BUY</strong> si P(up) &gt; 65% · <strong>SELL</strong> si P(up) &lt; 35% · <strong>HOLD</strong> en otro caso
-        </div>
-      </div>
+      </section>
 
       @if (loading) {
-        <div class="loading-center">
-          <mat-spinner diameter="48"></mat-spinner>
-          <p>Cargando señales...</p>
+        <div class="loader">
+          <mat-spinner diameter="40"></mat-spinner>
+          <p>Calculando señales bayesianas…</p>
         </div>
       } @else {
 
-        <!-- Table -->
-        <div class="table-wrapper">
-          <table mat-table [dataSource]="dataSource" matSort>
+        <!-- Summary chips -->
+        <div class="summary-chips">
+          <span class="schip buy"  ><mat-icon>arrow_upward</mat-icon> {{ buyCount }} BUY</span>
+          <span class="schip sell" ><mat-icon>arrow_downward</mat-icon> {{ sellCount }} SELL</span>
+          <span class="schip hold" ><mat-icon>remove</mat-icon> {{ holdCount }} HOLD</span>
+          <span class="schip avg"  ><mat-icon>insights</mat-icon> Avg P(↑): {{ avgProbUp | number:'1.1-1' }}%</span>
+        </div>
 
-            <!-- Signal -->
+        <!-- Table card -->
+        <div class="card table-card">
+          <table mat-table [dataSource]="dataSource" matSort class="aurora-table">
+
             <ng-container matColumnDef="signal">
               <th mat-header-cell *matHeaderCellDef mat-sort-header>Señal</th>
               <td mat-cell *matCellDef="let row">
-                <span class="signal-badge {{ row.signal.toLowerCase() }}">
-                  <mat-icon class="sig-icon">{{ signalIcon(row.signal) }}</mat-icon>
+                <span class="signal-pill {{ row.signal.toLowerCase() }}">
+                  <mat-icon>{{ signalIcon(row.signal) }}</mat-icon>
                   {{ row.signal }}
                 </span>
               </td>
             </ng-container>
 
-            <!-- Ticker -->
             <ng-container matColumnDef="ticker">
               <th mat-header-cell *matHeaderCellDef mat-sort-header>Ticker</th>
               <td mat-cell *matCellDef="let row">
-                <span class="ticker-name">{{ row.ticker }}</span>
+                <div class="ticker-cell">
+                  <span class="ticker-mark">{{ row.ticker[0] }}</span>
+                  <span class="ticker-name">{{ row.ticker }}</span>
+                </div>
               </td>
             </ng-container>
 
-            <!-- Prob up gauge -->
             <ng-container matColumnDef="prob_up">
               <th mat-header-cell *matHeaderCellDef mat-sort-header>P(subida)</th>
               <td mat-cell *matCellDef="let row">
                 <div class="prob-cell">
                   <div class="prob-gauge">
-                    <div class="gauge-fill" [style.width.%]="row.prob_up*100"
+                    <div class="gauge-fill"
+                         [style.width.%]="row.prob_up*100"
                          [class.high]="row.prob_up > 0.65"
                          [class.low]="row.prob_up < 0.35"></div>
                   </div>
@@ -147,22 +174,20 @@ import { switchMap } from 'rxjs';
               </td>
             </ng-container>
 
-            <!-- Prob down -->
             <ng-container matColumnDef="prob_down">
               <th mat-header-cell *matHeaderCellDef mat-sort-header>P(bajada)</th>
               <td mat-cell *matCellDef="let row">
-                <span class="prob-down-val">{{ (row.prob_down*100)|number:'1.1-1' }}%</span>
+                <span class="muted-num">{{ (row.prob_down*100)|number:'1.1-1' }}%</span>
               </td>
             </ng-container>
 
-            <!-- Evidence chips (Bayesian) -->
             <ng-container matColumnDef="evidence">
               <th mat-header-cell *matHeaderCellDef>Evidencia bayesiana</th>
               <td mat-cell *matCellDef="let row">
-                <div class="evidence-row">
+                <div class="ev-row">
                   <span class="ev-chip {{ sentimentClass(row.evidence.sentiment) }}"
                         [matTooltip]="'Sentimiento FinBERT: ' + row.evidence.sentiment">
-                    <mat-icon>sentiment_satisfied</mat-icon>
+                    <mat-icon>{{ sentimentIcon(row.evidence.sentiment) }}</mat-icon>
                     {{ row.evidence.sentiment }}
                   </span>
                   <span class="ev-chip {{ rsiClass(row.evidence.rsi) }}"
@@ -176,7 +201,7 @@ import { switchMap } from 'rxjs';
                     {{ row.evidence.trend }}
                   </span>
                   <span class="ev-chip {{ volClass(row.evidence.volatility) }}"
-                        [matTooltip]="'Volatilidad Bollinger: ' + row.evidence.volatility">
+                        [matTooltip]="'Volatilidad: ' + row.evidence.volatility">
                     <mat-icon>swap_vert</mat-icon>
                     {{ row.evidence.volatility }}
                   </span>
@@ -184,146 +209,154 @@ import { switchMap } from 'rxjs';
               </td>
             </ng-container>
 
-            <!-- Trade stats -->
             <ng-container matColumnDef="trades">
-              <th mat-header-cell *matHeaderCellDef>Trades (90d)</th>
+              <th mat-header-cell *matHeaderCellDef>Trades</th>
               <td mat-cell *matCellDef="let row">
                 <div class="trade-stats">
-                  <span class="ts-item" matTooltip="Trades cerrados">🔄 {{ row.trades_closed }}</span>
-                  <span class="ts-item" matTooltip="Win rate">
-                    🎯 {{ (row.win_rate*100)|number:'1.0-0' }}%
+                  <span class="ts-chip" matTooltip="Trades cerrados (90d)">
+                    <mat-icon>swap_horiz</mat-icon>{{ row.trades_closed }}
+                  </span>
+                  <span class="ts-chip wr"
+                        [class.good]="row.win_rate>=0.5"
+                        matTooltip="Win rate (90d)">
+                    <mat-icon>track_changes</mat-icon>{{ (row.win_rate*100)|number:'1.0-0' }}%
                   </span>
                 </div>
               </td>
             </ng-container>
 
-            <!-- Return -->
             <ng-container matColumnDef="return">
               <th mat-header-cell *matHeaderCellDef mat-sort-header>Retorno</th>
               <td mat-cell *matCellDef="let row">
-                <span [class.pos]="row.cumulative_return>0" [class.neg]="row.cumulative_return<0" class="ret-val">
+                <span class="ret-val" [class.pos]="row.cumulative_return>0" [class.neg]="row.cumulative_return<0">
                   {{ row.cumulative_return>0?'+':'' }}{{ (row.cumulative_return*100)|number:'1.2-2' }}%
                 </span>
               </td>
             </ng-container>
 
-            <!-- Alpha -->
             <ng-container matColumnDef="alpha">
-              <th mat-header-cell *matHeaderCellDef mat-sort-header>Alpha</th>
+              <th mat-header-cell *matHeaderCellDef mat-sort-header>α vs B&amp;H</th>
               <td mat-cell *matCellDef="let row">
-                <span [class.pos]="row.alpha_vs_benchmark>0" [class.neg]="row.alpha_vs_benchmark<0" class="ret-val">
+                <span class="ret-val" [class.pos]="row.alpha_vs_benchmark>0" [class.neg]="row.alpha_vs_benchmark<0">
                   {{ row.alpha_vs_benchmark>0?'+':'' }}{{ (row.alpha_vs_benchmark*100)|number:'1.2-2' }}%
                 </span>
               </td>
             </ng-container>
 
-            <!-- Expand button -->
             <ng-container matColumnDef="expand">
               <th mat-header-cell *matHeaderCellDef></th>
               <td mat-cell *matCellDef="let row">
-                <button mat-icon-button (click)="toggleRow(row.ticker); $event.stopPropagation()">
+                <button mat-icon-button (click)="toggleRow(row.ticker); $event.stopPropagation()"
+                        [matTooltip]="expandedRows.has(row.ticker) ? 'Cerrar detalle' : 'Ver decisión completa'">
                   <mat-icon>{{ expandedRows.has(row.ticker) ? 'expand_less' : 'expand_more' }}</mat-icon>
                 </button>
               </td>
             </ng-container>
 
-            <!-- Expanded detail row -->
             <ng-container matColumnDef="expandedDetail">
               <td mat-cell *matCellDef="let row" [attr.colspan]="displayedColumns.length">
                 @if (expandedRows.has(row.ticker)) {
-                  <div class="expanded-panel">
+                  <div class="exp-panel">
+
                     <div class="exp-grid">
 
-                      <!-- Bayesian decision path -->
-                      <div class="exp-card decision-card">
-                        <h4><mat-icon>account_tree</mat-icon> Cadena de decisión bayesiana</h4>
-                        <div class="decision-path">
-                          <div class="dp-node" [class]="sentimentClass(row.evidence.sentiment)">
-                            <div class="dp-label">Sentimiento</div>
-                            <div class="dp-value">{{ row.evidence.sentiment | uppercase }}</div>
-                            <div class="dp-sub">FinBERT sobre titulares</div>
+                      <!-- Decision chain -->
+                      <div class="exp-card">
+                        <h4><mat-icon>account_tree</mat-icon> Cadena de decisión bayesiana — {{ row.ticker }}</h4>
+
+                        <div class="dec-chain">
+                          <div class="dec-node {{ sentimentClass(row.evidence.sentiment) }}">
+                            <span class="dec-cap">Sentimiento</span>
+                            <span class="dec-val">{{ row.evidence.sentiment | uppercase }}</span>
+                            <span class="dec-sub">FinBERT sobre titulares</span>
                           </div>
-                          <mat-icon class="dp-arrow">add</mat-icon>
-                          <div class="dp-node" [class]="rsiClass(row.evidence.rsi)">
-                            <div class="dp-label">RSI 14</div>
-                            <div class="dp-value">{{ row.evidence.rsi | uppercase }}</div>
-                            <div class="dp-sub">&lt;30 sobrevendido / &gt;70 sobrecomprado</div>
+                          <span class="dec-plus">+</span>
+                          <div class="dec-node {{ rsiClass(row.evidence.rsi) }}">
+                            <span class="dec-cap">RSI 14</span>
+                            <span class="dec-val">{{ row.evidence.rsi | uppercase }}</span>
+                            <span class="dec-sub">&lt;30 oversold / &gt;70 overbought</span>
                           </div>
-                          <mat-icon class="dp-arrow">add</mat-icon>
-                          <div class="dp-node" [class]="trendClass(row.evidence.trend)">
-                            <div class="dp-label">Tendencia</div>
-                            <div class="dp-value">{{ row.evidence.trend | uppercase }}</div>
-                            <div class="dp-sub">SMA20 {{ row.evidence.trend === 'uptrend' ? '>' : '<' }} SMA50</div>
+                          <span class="dec-plus">+</span>
+                          <div class="dec-node {{ trendClass(row.evidence.trend) }}">
+                            <span class="dec-cap">Tendencia</span>
+                            <span class="dec-val">{{ row.evidence.trend | uppercase }}</span>
+                            <span class="dec-sub">SMA20 {{ row.evidence.trend === 'uptrend' ? '>' : '<' }} SMA50</span>
                           </div>
-                          <mat-icon class="dp-arrow">add</mat-icon>
-                          <div class="dp-node" [class]="volClass(row.evidence.volatility)">
-                            <div class="dp-label">Volatilidad</div>
-                            <div class="dp-value">{{ row.evidence.volatility | uppercase }}</div>
-                            <div class="dp-sub">Ancho bandas Bollinger</div>
+                          <span class="dec-plus">+</span>
+                          <div class="dec-node {{ volClass(row.evidence.volatility) }}">
+                            <span class="dec-cap">Volatilidad</span>
+                            <span class="dec-val">{{ row.evidence.volatility | uppercase }}</span>
+                            <span class="dec-sub">Bollinger Width</span>
                           </div>
-                          <mat-icon class="dp-arrow result-arrow">double_arrow</mat-icon>
-                          <div class="dp-node result {{ row.signal.toLowerCase() }}">
-                            <div class="dp-label">Señal</div>
-                            <div class="dp-value">{{ row.signal }}</div>
-                            <div class="dp-sub">P↑={{ (row.prob_up*100)|number:'1.1-1' }}% P↓={{ (row.prob_down*100)|number:'1.1-1' }}%</div>
+                          <span class="dec-arrow">→</span>
+                          <div class="dec-result {{ row.signal.toLowerCase() }}">
+                            <span class="dec-cap">Señal</span>
+                            <span class="dec-val">{{ row.signal }}</span>
+                            <span class="dec-sub">P↑ {{ (row.prob_up*100)|number:'1.1-1' }}% · P↓ {{ (row.prob_down*100)|number:'1.1-1' }}%</span>
                           </div>
                         </div>
 
-                        <!-- CPT explanation -->
-                        <div class="cpt-note">
-                          <mat-icon>info_outline</mat-icon>
+                        <div class="explainer">
+                          <mat-icon>info</mat-icon>
                           <span>
                             La señal <strong>{{ row.signal }}</strong> se genera porque
                             @if (row.signal === 'BUY') {
-                              la combinación de evidencias produce P(subida) = {{ (row.prob_up*100)|number:'1.1-1' }}% &gt; umbral BUY (65%).
+                              la combinación de evidencias produce P(↑) = <strong>{{ (row.prob_up*100)|number:'1.1-1' }}%</strong> &gt; umbral BUY (65%).
                             }
                             @if (row.signal === 'SELL') {
-                              la combinación de evidencias produce P(subida) = {{ (row.prob_up*100)|number:'1.1-1' }}% &lt; umbral SELL (35%).
+                              la combinación de evidencias produce P(↑) = <strong>{{ (row.prob_up*100)|number:'1.1-1' }}%</strong> &lt; umbral SELL (35%).
                             }
                             @if (row.signal === 'HOLD') {
-                              P(subida) = {{ (row.prob_up*100)|number:'1.1-1' }}% está entre umbrales (35%–65%), señal de espera.
+                              P(↑) = <strong>{{ (row.prob_up*100)|number:'1.1-1' }}%</strong> está entre los umbrales (35–65%): señal de espera.
                             }
                           </span>
                         </div>
                       </div>
 
-                      <!-- Trade stats detail -->
+                      <!-- Diagnostics -->
                       <div class="exp-card">
-                        <h4><mat-icon>bar_chart</mat-icon> Diagnóstico de operativas (90d)</h4>
-                        <div class="stat-grid">
-                          <div class="stat-item">
-                            <span class="sl">Trades cerrados</span>
-                            <span class="sv">{{ row.trades_closed }}</span>
+                        <h4><mat-icon>insights</mat-icon> Diagnóstico de la operativa (90 días)</h4>
+                        <div class="diag-grid">
+                          <div class="diag-cell">
+                            <span class="diag-label">Trades cerrados</span>
+                            <span class="diag-value">{{ row.trades_closed }}</span>
                           </div>
-                          <div class="stat-item">
-                            <span class="sl">Win rate</span>
-                            <span class="sv" [class.green]="row.win_rate>0.5">{{ (row.win_rate*100)|number:'1.1-1' }}%</span>
+                          <div class="diag-cell">
+                            <span class="diag-label">Win rate</span>
+                            <span class="diag-value" [class.pos]="row.win_rate>=0.5">{{ (row.win_rate*100)|number:'1.1-1' }}%</span>
                           </div>
-                          <div class="stat-item">
-                            <span class="sl">Profit factor</span>
-                            <span class="sv" [class.green]="row.profit_factor>1">{{ row.profit_factor|number:'1.2-2' }}</span>
+                          <div class="diag-cell">
+                            <span class="diag-label">Profit factor</span>
+                            <span class="diag-value" [class.pos]="row.profit_factor>1">{{ row.profit_factor|number:'1.2-2' }}</span>
                           </div>
-                          <div class="stat-item">
-                            <span class="sl">Ret. medio/trade</span>
-                            <span class="sv">—</span>
-                          </div>
-                          <div class="stat-item">
-                            <span class="sl">Señales BUY</span>
-                            <span class="sv buy-txt">{{ row.signals_count.BUY }}</span>
-                          </div>
-                          <div class="stat-item">
-                            <span class="sl">Señales SELL</span>
-                            <span class="sv sell-txt">{{ row.signals_count.SELL }}</span>
-                          </div>
-                          <div class="stat-item">
-                            <span class="sl">Señales HOLD</span>
-                            <span class="sv hold-txt">{{ row.signals_count.HOLD }}</span>
-                          </div>
-                          <div class="stat-item">
-                            <span class="sl">Alpha vs B&H</span>
-                            <span class="sv" [class.green]="row.alpha_vs_benchmark>0" [class.red]="row.alpha_vs_benchmark<0">
+                          <div class="diag-cell">
+                            <span class="diag-label">α vs B&amp;H</span>
+                            <span class="diag-value"
+                                  [class.pos]="row.alpha_vs_benchmark>0"
+                                  [class.neg]="row.alpha_vs_benchmark<0">
                               {{ row.alpha_vs_benchmark>0?'+':'' }}{{ (row.alpha_vs_benchmark*100)|number:'1.2-2' }}%
                             </span>
+                          </div>
+
+                          <div class="signals-mix">
+                            <div class="mix-label">Mix de señales emitidas</div>
+                            <div class="mix-bars">
+                              <div class="mix buy"
+                                   [style.flex]="row.signals_count.BUY || 0"
+                                   [matTooltip]="row.signals_count.BUY + ' señales BUY'">
+                                {{ row.signals_count.BUY }}
+                              </div>
+                              <div class="mix sell"
+                                   [style.flex]="row.signals_count.SELL || 0"
+                                   [matTooltip]="row.signals_count.SELL + ' señales SELL'">
+                                {{ row.signals_count.SELL }}
+                              </div>
+                              <div class="mix hold"
+                                   [style.flex]="row.signals_count.HOLD || 0"
+                                   [matTooltip]="row.signals_count.HOLD + ' señales HOLD'">
+                                {{ row.signals_count.HOLD }}
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -335,12 +368,15 @@ import { switchMap } from 'rxjs';
             </ng-container>
 
             <tr mat-header-row *matHeaderRowDef="displayedColumns; sticky: true"></tr>
-            <tr mat-row *matRowDef="let row; columns: displayedColumns;"
-                class="data-row" (click)="toggleRow(row.ticker)"></tr>
+            <tr mat-row *matRowDef="let row; columns: displayedColumns;" class="data-row"
+                (click)="toggleRow(row.ticker)"></tr>
             <tr mat-row *matRowDef="let row; columns: ['expandedDetail']" class="detail-row"></tr>
 
             <tr *matNoDataRow>
-              <td [attr.colspan]="displayedColumns.length" class="no-data">Sin datos para los filtros seleccionados</td>
+              <td [attr.colspan]="displayedColumns.length" class="no-data">
+                <mat-icon>filter_alt_off</mat-icon>
+                <p>Sin tickers para los filtros aplicados</p>
+              </td>
             </tr>
           </table>
         </div>
@@ -349,188 +385,353 @@ import { switchMap } from 'rxjs';
     </div>
   `,
   styles: [`
-    .signals-page { max-width: 1400px; margin: 0 auto; }
-    .page-header {
+    /* shared page chrome */
+    .page { max-width: var(--content-max); margin: 0 auto; }
+    .page-head {
       display: flex; justify-content: space-between; align-items: flex-start;
-      margin-bottom: 20px; flex-wrap: wrap; gap: 12px;
+      gap: 24px; flex-wrap: wrap; margin-bottom: 22px;
     }
-    .page-title {
-      display: flex; align-items: center; gap: 8px;
-      font-size: 22px; font-weight: 700; color: #1a237e; margin: 0;
+    .page-eyebrow {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px;
+      background: rgba(124, 58, 237, .1);
+      color: var(--accent-violet);
+      border-radius: var(--r-pill);
+      font-size: 11px; font-weight: 600;
+      letter-spacing: .04em; text-transform: uppercase;
+      margin-bottom: 10px;
+      mat-icon { font-size: 14px; height: 14px; width: 14px; }
     }
-    .page-subtitle { color: #666; font-size: 13px; margin-top: 4px; }
-    .header-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-    .date-sel { min-width: 150px; }
+    .page-title { font-size: 26px; font-weight: 700; color: var(--slate-900); letter-spacing: -.02em; }
+    .page-sub { color: var(--slate-500); font-size: 13px; margin-top: 6px; max-width: 760px; }
+    .page-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .date-input, mat-form-field { min-width: 170px; }
 
-    /* BN legend */
-    .bn-legend {
-      background: #fff; border-radius: 12px; padding: 16px 20px;
-      box-shadow: 0 2px 8px rgba(0,0,0,.07); margin-bottom: 20px;
+    .card {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--r-md);
+      box-shadow: var(--shadow-sm);
     }
-    .bn-title {
+    .card-title {
       display: flex; align-items: center; gap: 8px;
-      font-size: 14px; font-weight: 600; color: #1a237e; margin-bottom: 12px;
-      mat-icon { font-size: 18px; }
+      font-size: 14px; font-weight: 600; color: var(--slate-900);
+      mat-icon { font-size: 18px; height: 18px; width: 18px; color: var(--brand-600); }
     }
-    .bn-nodes {
-      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    .loader {
+      display: flex; flex-direction: column; align-items: center;
+      gap: 14px; padding: 80px 16px; color: var(--slate-500);
+    }
+
+    /* ─── Bayesian network legend ─── */
+    .bn {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--r-md);
+      box-shadow: var(--shadow-sm);
+      padding: 18px;
+      margin-bottom: 18px;
+    }
+    .bn-head {
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 12px; flex-wrap: wrap; margin-bottom: 14px;
+    }
+    .bn-thresholds { display: flex; gap: 6px; }
+    .th {
+      font-size: 11px; font-weight: 700;
+      padding: 3px 10px; border-radius: var(--r-pill); letter-spacing: .03em;
+    }
+    .th-buy  { background: var(--success-100); color: var(--success-700); }
+    .th-hold { background: var(--warn-100);    color: var(--warn-700); }
+    .th-sell { background: var(--danger-100);  color: var(--danger-700); }
+
+    .bn-flow {
+      display: flex; align-items: stretch; gap: 8px;
+      flex-wrap: wrap;
+      padding: 8px;
+      background: var(--slate-50);
+      border-radius: var(--r-md);
     }
     .bn-node {
-      display: flex; flex-direction: column; align-items: center; gap: 2px;
-      padding: 8px 14px; border-radius: 8px; min-width: 100px; text-align: center;
-      mat-icon { font-size: 20px; margin-bottom: 2px; }
-      span { font-size: 13px; font-weight: 600; }
-      small { font-size: 10px; opacity: .7; }
-      &.sentiment { background: #e3f2fd; color: #1565c0; }
-      &.rsi { background: #f3e5f5; color: #6a1b9a; }
-      &.trend { background: #e8f5e9; color: #1b5e20; }
-      &.volatility { background: #fff8e1; color: #f57f17; }
-      &.target { background: #1a237e; color: #fff; }
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 14px;
+      border-radius: var(--r-sm);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      flex: 1 1 160px; min-width: 160px;
+      mat-icon { font-size: 20px; height: 20px; width: 20px; }
     }
-    .arrow { color: #bbb; font-size: 20px; }
-    .big { font-size: 28px; color: #1a237e; }
-    .bn-thresholds {
-      margin-top: 10px; font-size: 12px; color: #666;
-      padding: 6px 12px; background: #f5f5f5; border-radius: 6px; display: inline-block;
+    .bn-label { font-size: 12px; font-weight: 700; color: var(--slate-900); }
+    .bn-node small { font-size: 10px; color: var(--slate-500); }
+    .bn-sentiment mat-icon { color: var(--brand-600); }
+    .bn-rsi       mat-icon { color: var(--accent-violet); }
+    .bn-trend     mat-icon { color: var(--success-600); }
+    .bn-vol       mat-icon { color: var(--warn-600); }
+    .bn-target {
+      background: linear-gradient(135deg, var(--brand-700), var(--brand-600));
+      border-color: transparent;
+      color: #fff;
+      mat-icon { color: #fff; }
+      .bn-label { color: #fff; }
+      small     { color: rgba(255,255,255,.7); }
+    }
+    .bn-arrow {
+      display: flex; align-items: center; justify-content: center;
+      color: var(--slate-400);
+      font-size: 18px; font-weight: 700;
+      padding: 0 4px;
+    }
+    .bn-arrow-result {
+      color: var(--brand-600);
+      font-size: 24px;
     }
 
-    .loading-center {
-      display: flex; flex-direction: column; align-items: center;
-      gap: 16px; padding: 80px; color: #666;
+    /* ─── Summary chips ─── */
+    .summary-chips {
+      display: flex; gap: 8px; flex-wrap: wrap;
+      margin-bottom: 14px;
     }
+    .schip {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px;
+      border-radius: var(--r-pill);
+      font-size: 12px; font-weight: 700;
+      background: var(--slate-100); color: var(--slate-700);
+      mat-icon { font-size: 14px; height: 14px; width: 14px; }
+    }
+    .schip.buy  { background: var(--success-100); color: var(--success-700); }
+    .schip.sell { background: var(--danger-100);  color: var(--danger-700); }
+    .schip.hold { background: var(--warn-100);    color: var(--warn-700); }
+    .schip.avg  { background: var(--brand-100);   color: var(--brand-700); }
 
-    /* Table */
-    .table-wrapper {
-      border-radius: 12px; overflow: hidden;
-      box-shadow: 0 2px 8px rgba(0,0,0,.08);
-    }
-    table { width: 100%; }
+    /* ─── Table ─── */
+    .table-card { overflow: hidden; }
+    .aurora-table { width: 100%; }
     .data-row { cursor: pointer; transition: background .15s; }
-    .data-row:hover { background: #f5f7ff; }
+    .data-row:hover { background: var(--slate-50); }
     .detail-row { height: 0; }
-
-    .ticker-name { font-size: 16px; font-weight: 700; color: #1a237e; }
-
-    .signal-badge {
-      display: inline-flex; align-items: center; gap: 4px;
-      padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 700;
-      .sig-icon { font-size: 14px; height: 14px; width: 14px; }
-      &.buy  { background: #e8f5e9; color: #2e7d32; }
-      &.sell { background: #ffebee; color: #c62828; }
-      &.hold { background: #fff8e1; color: #f57f17; }
+    .no-data {
+      text-align: center; padding: 40px;
+      color: var(--slate-400);
+      mat-icon { font-size: 36px; height: 36px; width: 36px; opacity: .5; }
+      p { margin-top: 6px; }
     }
 
-    .prob-cell { display: flex; align-items: center; gap: 8px; min-width: 120px; }
+    /* ticker cell */
+    .ticker-cell { display: flex; align-items: center; gap: 10px; }
+    .ticker-mark {
+      width: 28px; height: 28px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, var(--brand-600), var(--accent-cyan));
+      color: #fff;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700;
+    }
+    .ticker-name { font-size: 14px; font-weight: 700; color: var(--slate-900); letter-spacing: -.01em; }
+
+    .signal-pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 10px; border-radius: var(--r-pill);
+      font-size: 11px; font-weight: 700; letter-spacing: .03em;
+      mat-icon { font-size: 13px; height: 13px; width: 13px; }
+    }
+    .signal-pill.buy  { background: var(--success-100); color: var(--success-700); }
+    .signal-pill.sell { background: var(--danger-100);  color: var(--danger-700); }
+    .signal-pill.hold { background: var(--warn-100);    color: var(--warn-700); }
+
+    /* prob gauge */
+    .prob-cell { display: flex; align-items: center; gap: 10px; min-width: 130px; }
     .prob-gauge {
-      flex: 1; height: 8px; background: #eee; border-radius: 4px; overflow: hidden;
+      flex: 1; height: 6px;
+      background: var(--slate-100);
+      border-radius: var(--r-pill); overflow: hidden;
     }
     .gauge-fill {
-      height: 100%; background: #78909c; border-radius: 4px; transition: width .5s;
-      &.high { background: #43a047; }
-      &.low  { background: #e53935; }
+      height: 100%;
+      background: var(--slate-400);
+      border-radius: var(--r-pill);
+      transition: width .5s;
+      &.high { background: linear-gradient(to right, var(--success-500), var(--success-600)); }
+      &.low  { background: linear-gradient(to right, var(--danger-500),  var(--danger-600)); }
     }
-    .prob-pct { font-size: 13px; font-weight: 600; min-width: 40px; text-align: right;
-      &.green { color: #2e7d32; } &.red { color: #c62828; } }
-    .prob-down-val { font-size: 13px; color: #888; }
+    .prob-pct {
+      font-size: 13px; font-weight: 700; min-width: 50px; text-align: right;
+      font-variant-numeric: tabular-nums;
+      color: var(--slate-700);
+      &.green { color: var(--success-700); }
+      &.red   { color: var(--danger-700); }
+    }
+    .muted-num { font-size: 13px; color: var(--slate-500); font-variant-numeric: tabular-nums; }
 
-    .evidence-row { display: flex; gap: 4px; flex-wrap: wrap; }
+    /* evidence chips */
+    .ev-row { display: flex; gap: 6px; flex-wrap: wrap; }
     .ev-chip {
       display: inline-flex; align-items: center; gap: 3px;
-      padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 500; cursor: default;
+      padding: 3px 8px;
+      border-radius: var(--r-pill);
+      font-size: 11px; font-weight: 600;
       mat-icon { font-size: 13px; height: 13px; width: 13px; }
     }
     /* sentiment */
-    .ev-bullish  { background: #e8f5e9; color: #2e7d32; }
-    .ev-bearish  { background: #ffebee; color: #c62828; }
-    .ev-neutral  { background: #f5f5f5; color: #616161; }
+    .ev-bullish  { background: var(--success-100); color: var(--success-700); }
+    .ev-bearish  { background: var(--danger-100);  color: var(--danger-700); }
+    .ev-neutral  { background: var(--slate-100);   color: var(--slate-600); }
     /* rsi */
-    .ev-oversold   { background: #e8f5e9; color: #2e7d32; }
-    .ev-overbought { background: #ffebee; color: #c62828; }
-    .ev-neutral-rsi{ background: #f5f5f5; color: #616161; }
+    .ev-oversold   { background: var(--success-100); color: var(--success-700); }
+    .ev-overbought { background: var(--danger-100);  color: var(--danger-700); }
+    .ev-neutral-rsi{ background: var(--slate-100);   color: var(--slate-600); }
     /* trend */
-    .ev-uptrend   { background: #e8f5e9; color: #2e7d32; }
-    .ev-downtrend { background: #ffebee; color: #c62828; }
+    .ev-uptrend   { background: var(--success-100); color: var(--success-700); }
+    .ev-downtrend { background: var(--danger-100);  color: var(--danger-700); }
     /* volatility */
-    .ev-low-vol  { background: #e3f2fd; color: #1565c0; }
-    .ev-high-vol { background: #fff8e1; color: #f57f17; }
+    .ev-low-vol  { background: var(--brand-100); color: var(--brand-700); }
+    .ev-high-vol { background: var(--warn-100);  color: var(--warn-700); }
 
-    .trade-stats { display: flex; gap: 8px; }
-    .ts-item { font-size: 12px; color: #555; }
+    .trade-stats { display: flex; gap: 4px; flex-wrap: wrap; }
+    .ts-chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; border-radius: var(--r-pill);
+      background: var(--slate-100); color: var(--slate-600);
+      font-size: 12px; font-weight: 600;
+      mat-icon { font-size: 13px; height: 13px; width: 13px; }
+      &.wr.good { background: var(--success-100); color: var(--success-700); }
+    }
 
-    .ret-val { font-size: 14px; font-weight: 600; color: #333;
-      &.pos { color: #2e7d32; } &.neg { color: #c62828; } }
+    .ret-val {
+      font-size: 13px; font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: var(--slate-700);
+      &.pos { color: var(--success-700); }
+      &.neg { color: var(--danger-700); }
+    }
 
-    /* Expanded panel */
-    .expanded-panel {
-      background: #f9faff; padding: 16px;
-      border-top: 1px solid #e8eaf6;
+    /* ─── Expanded detail ─── */
+    .exp-panel {
+      background: var(--slate-50);
+      padding: 16px;
+      border-top: 1px solid var(--border);
     }
     .exp-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
+      grid-template-columns: 2fr 1fr;
+      gap: 14px;
     }
-    @media (max-width: 900px) { .exp-grid { grid-template-columns: 1fr; } }
+    @media (max-width: 1100px) { .exp-grid { grid-template-columns: 1fr; } }
+
     .exp-card {
-      background: #fff; border-radius: 10px; padding: 16px;
-      box-shadow: 0 1px 4px rgba(0,0,0,.06);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--r-md);
+      padding: 16px;
       h4 {
         display: flex; align-items: center; gap: 6px;
-        font-size: 14px; font-weight: 600; color: #1a237e;
-        margin: 0 0 14px;
-        mat-icon { font-size: 16px; }
+        font-size: 13px; font-weight: 600; color: var(--slate-900);
+        margin-bottom: 14px;
+        mat-icon { font-size: 16px; height: 16px; width: 16px; color: var(--brand-600); }
       }
     }
-    .decision-card { grid-column: 1 / -1; }
 
-    /* Decision path */
-    .decision-path {
-      display: flex; align-items: center; gap: 8px;
-      flex-wrap: wrap; margin-bottom: 14px;
+    .dec-chain {
+      display: flex; align-items: center; flex-wrap: wrap;
+      gap: 8px; margin-bottom: 14px;
     }
-    .dp-node {
-      display: flex; flex-direction: column; align-items: center; gap: 2px;
-      padding: 10px 14px; border-radius: 10px; min-width: 100px;
-      text-align: center; border: 2px solid transparent;
-      .dp-label { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; opacity: .7; }
-      .dp-value { font-size: 15px; font-weight: 700; }
-      .dp-sub   { font-size: 10px; opacity: .65; }
-
-      &.ev-bullish, &.ev-uptrend, &.ev-oversold, &.ev-low-vol
-                   { background: #e8f5e9; color: #2e7d32; border-color: #a5d6a7; }
-      &.ev-bearish, &.ev-downtrend, &.ev-overbought, &.ev-high-vol
-                   { background: #ffebee; color: #c62828; border-color: #ef9a9a; }
-      &.ev-neutral  { background: #f5f5f5; color: #616161; border-color: #e0e0e0; }
-      &.result.buy  { background: #e8f5e9; color: #2e7d32; border-color: #2e7d32; }
-      &.result.sell { background: #ffebee; color: #c62828; border-color: #c62828; }
-      &.result.hold { background: #fff8e1; color: #f57f17; border-color: #f57f17; }
-    }
-    .dp-arrow { color: #bbb; }
-    .result-arrow { color: #1a237e; font-size: 28px; }
-
-    .cpt-note {
-      display: flex; align-items: flex-start; gap: 8px;
-      background: #e8eaf6; border-radius: 8px; padding: 10px 14px;
-      font-size: 13px; color: #283593;
-      mat-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
-    }
-
-    /* Stat grid */
-    .stat-grid {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
-    }
-    .stat-item {
+    .dec-node {
       display: flex; flex-direction: column; gap: 2px;
-      background: #f9f9fb; border-radius: 6px; padding: 8px 10px;
+      padding: 10px 14px;
+      border-radius: var(--r-sm);
+      border: 1px solid var(--border);
+      min-width: 130px; flex: 1 1 130px;
     }
-    .sl { font-size: 11px; color: #999; }
-    .sv { font-size: 16px; font-weight: 600; color: #333;
-      &.green { color: #2e7d32; } &.red { color: #c62828; } }
-    .buy-txt  { color: #2e7d32; }
-    .sell-txt { color: #c62828; }
-    .hold-txt { color: #f57f17; }
+    .dec-cap {
+      font-size: 10px; font-weight: 700; letter-spacing: .04em;
+      text-transform: uppercase; opacity: .65;
+    }
+    .dec-val {
+      font-size: 13px; font-weight: 700; letter-spacing: -.01em;
+    }
+    .dec-sub { font-size: 10px; opacity: .65; }
+    .dec-plus, .dec-arrow {
+      color: var(--slate-400);
+      font-weight: 700; font-size: 16px;
+      padding: 0 4px;
+    }
+    .dec-arrow { color: var(--brand-600); font-size: 22px; }
 
-    .no-data { text-align: center; padding: 32px; color: #999; }
+    .dec-node.ev-bullish, .dec-node.ev-uptrend, .dec-node.ev-oversold, .dec-node.ev-low-vol {
+      background: var(--success-50); color: var(--success-700); border-color: var(--success-100);
+    }
+    .dec-node.ev-bearish, .dec-node.ev-downtrend, .dec-node.ev-overbought, .dec-node.ev-high-vol {
+      background: var(--danger-50); color: var(--danger-700); border-color: var(--danger-100);
+    }
+    .dec-node.ev-neutral, .dec-node.ev-neutral-rsi {
+      background: var(--slate-50); color: var(--slate-600); border-color: var(--border);
+    }
+
+    .dec-result {
+      display: flex; flex-direction: column; gap: 2px;
+      padding: 10px 14px;
+      min-width: 150px; flex: 1 1 150px;
+      border-radius: var(--r-sm);
+      border: 2px solid;
+      .dec-cap { opacity: .7; }
+    }
+    .dec-result.buy  { background: var(--success-50); color: var(--success-700); border-color: var(--success-500); }
+    .dec-result.sell { background: var(--danger-50);  color: var(--danger-700);  border-color: var(--danger-500); }
+    .dec-result.hold { background: var(--warn-50);    color: var(--warn-700);    border-color: var(--warn-500); }
+
+    .explainer {
+      display: flex; align-items: flex-start; gap: 8px;
+      background: var(--brand-100);
+      color: var(--brand-700);
+      padding: 10px 14px;
+      border-radius: var(--r-sm);
+      font-size: 13px;
+      mat-icon { font-size: 18px; height: 18px; width: 18px; flex-shrink: 0; margin-top: 1px; }
+    }
+
+    .diag-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .diag-cell {
+      background: var(--slate-50);
+      border-radius: var(--r-sm);
+      padding: 10px 12px;
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    .diag-label {
+      font-size: 10px; font-weight: 600; letter-spacing: .04em;
+      text-transform: uppercase; color: var(--slate-400);
+    }
+    .diag-value {
+      font-size: 16px; font-weight: 700; color: var(--slate-900);
+      font-variant-numeric: tabular-nums;
+      &.pos { color: var(--success-700); }
+      &.neg { color: var(--danger-700); }
+    }
+    .signals-mix {
+      grid-column: 1 / -1;
+      background: var(--slate-50);
+      border-radius: var(--r-sm);
+      padding: 10px 12px;
+    }
+    .mix-label {
+      font-size: 10px; font-weight: 600; letter-spacing: .04em;
+      text-transform: uppercase; color: var(--slate-400); margin-bottom: 6px;
+    }
+    .mix-bars {
+      display: flex; gap: 3px;
+      height: 22px; border-radius: var(--r-pill);
+      overflow: hidden;
+    }
+    .mix {
+      display: flex; align-items: center; justify-content: center;
+      color: #fff; font-size: 11px; font-weight: 700;
+    }
+    .mix.buy  { background: var(--success-500); }
+    .mix.sell { background: var(--danger-500); }
+    .mix.hold { background: var(--warn-500); }
   `],
 })
 export class SignalsComponent implements OnInit {
@@ -546,6 +747,11 @@ export class SignalsComponent implements OnInit {
 
   displayedColumns = ['signal', 'ticker', 'prob_up', 'prob_down', 'evidence', 'trades', 'return', 'alpha', 'expand'];
   dataSource = new MatTableDataSource<TickerView>();
+
+  buyCount  = 0;
+  sellCount = 0;
+  holdCount = 0;
+  avgProbUp = 0;
 
   ngOnInit() {
     this.reportSvc.listAvailableDates().pipe(
@@ -573,13 +779,15 @@ export class SignalsComponent implements OnInit {
     const views = this.reportSvc.buildTickerViews(report);
     this.dataSource.data = views;
     this.dataSource.sort = this.sort;
-    this.dataSource.filterPredicate = (row, filter) =>
-      !filter || row.signal === filter;
+    this.dataSource.filterPredicate = (row, filter) => !filter || row.signal === filter;
+
+    this.buyCount  = views.filter(v => v.signal === 'BUY').length;
+    this.sellCount = views.filter(v => v.signal === 'SELL').length;
+    this.holdCount = views.filter(v => v.signal === 'HOLD').length;
+    this.avgProbUp = views.length ? (views.reduce((s, v) => s + v.prob_up, 0) / views.length) * 100 : 0;
   }
 
-  applyFilter() {
-    this.dataSource.filter = this.filterSignal;
-  }
+  applyFilter() { this.dataSource.filter = this.filterSignal; }
 
   toggleRow(ticker: string) {
     if (this.expandedRows.has(ticker)) this.expandedRows.delete(ticker);
@@ -587,13 +795,16 @@ export class SignalsComponent implements OnInit {
   }
 
   signalIcon(s: string) {
-    return { BUY: 'arrow_upward', SELL: 'arrow_downward', HOLD: 'pause' }[s] ?? 'help';
+    return ({ BUY: 'arrow_upward', SELL: 'arrow_downward', HOLD: 'remove' } as Record<string, string>)[s] ?? 'remove';
+  }
+  sentimentIcon(s: SentimentState) {
+    return ({ bullish: 'sentiment_very_satisfied', bearish: 'sentiment_very_dissatisfied', neutral: 'sentiment_neutral' })[s];
   }
 
   sentimentClass(v: SentimentState)  { return `ev-${v}`; }
-  rsiClass(v: RsiState) {
-    return v === 'oversold' ? 'ev-oversold' : v === 'overbought' ? 'ev-overbought' : 'ev-neutral';
+  rsiClass(v: RsiState)              {
+    return v === 'oversold' ? 'ev-oversold' : v === 'overbought' ? 'ev-overbought' : 'ev-neutral-rsi';
   }
-  trendClass(v: TrendState)     { return `ev-${v}`; }
-  volClass(v: VolatilityState)  { return v === 'low' ? 'ev-low-vol' : 'ev-high-vol'; }
+  trendClass(v: TrendState)          { return `ev-${v}`; }
+  volClass(v: VolatilityState)       { return v === 'low' ? 'ev-low-vol' : 'ev-high-vol'; }
 }

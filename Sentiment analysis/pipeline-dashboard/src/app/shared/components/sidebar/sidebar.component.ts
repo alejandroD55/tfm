@@ -1,140 +1,277 @@
 import { Component } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
-import { MatListModule } from '@angular/material/list';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { MatDividerModule } from '@angular/material/divider';
 
 interface NavItem {
   label: string;
   icon: string;
   route: string;
   description: string;
+  badge?: string;
 }
 
 @Component({
   selector: 'app-sidebar',
   standalone: true,
-  imports: [CommonModule, RouterModule, MatListModule, MatIconModule, MatTooltipModule, MatDividerModule],
+  imports: [CommonModule, RouterModule, MatIconModule, MatTooltipModule],
   template: `
-    <div class="sidebar">
-      <div class="sidebar-section-label">ANÁLISIS</div>
-      <nav mat-nav-list>
-        @for (item of mainNav; track item.route) {
-          <a
-            mat-list-item
-            [routerLink]="item.route"
-            routerLinkActive="active-link"
-            [matTooltip]="item.description"
-            matTooltipPosition="right"
-            class="nav-item"
-          >
-            <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
-            <span matListItemTitle>{{ item.label }}</span>
-          </a>
-        }
-      </nav>
+    <div class="sb">
 
-      <div class="sidebar-divider"></div>
-      <div class="sidebar-section-label">INFRAESTRUCTURA</div>
-      <nav mat-nav-list>
-        @for (item of infraNav; track item.route) {
-          <a
-            mat-list-item
-            [routerLink]="item.route"
-            routerLinkActive="active-link"
-            [matTooltip]="item.description"
-            matTooltipPosition="right"
-            class="nav-item"
-          >
-            <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
-            <span matListItemTitle>{{ item.label }}</span>
-          </a>
-        }
-      </nav>
+      <!-- Brand block -->
+      <div class="sb-brand">
+        <div class="sb-brand-mark">
+          <div class="sb-brand-glow"></div>
+          <span class="sb-brand-letter">A</span>
+        </div>
+        <div class="sb-brand-text">
+          <div class="sb-brand-title">Aurora</div>
+          <div class="sb-brand-sub">FinBERT × Bayesian</div>
+        </div>
+      </div>
 
-      <div class="sidebar-footer">
-        <div class="footer-info">
-          <mat-icon>memory</mat-icon>
+      <!-- Status pill -->
+      <div class="sb-status">
+        <span class="sb-led"></span>
+        <span class="sb-status-text">Pipeline operativo</span>
+      </div>
+
+      <!-- Main nav -->
+      <div class="sb-section">
+        <div class="sb-section-label">Análisis</div>
+        <nav class="sb-nav">
+          @for (item of mainNav; track item.route) {
+            <a class="sb-link"
+               [routerLink]="item.route"
+               routerLinkActive="active"
+               [matTooltip]="item.description"
+               matTooltipPosition="right">
+              <mat-icon class="sb-link-icon">{{ item.icon }}</mat-icon>
+              <span class="sb-link-label">{{ item.label }}</span>
+              @if (item.badge) {
+                <span class="sb-badge">{{ item.badge }}</span>
+              }
+              <span class="sb-link-arrow">
+                <mat-icon>chevron_right</mat-icon>
+              </span>
+            </a>
+          }
+        </nav>
+      </div>
+
+      <div class="sb-divider"></div>
+
+      <div class="sb-section">
+        <div class="sb-section-label">Infraestructura</div>
+        <nav class="sb-nav">
+          @for (item of infraNav; track item.route) {
+            <a class="sb-link"
+               [routerLink]="item.route"
+               routerLinkActive="active"
+               [matTooltip]="item.description"
+               matTooltipPosition="right">
+              <mat-icon class="sb-link-icon">{{ item.icon }}</mat-icon>
+              <span class="sb-link-label">{{ item.label }}</span>
+              <span class="sb-link-arrow">
+                <mat-icon>chevron_right</mat-icon>
+              </span>
+            </a>
+          }
+        </nav>
+      </div>
+
+      <!-- Footer -->
+      <div class="sb-footer">
+        <div class="sb-foot-row">
+          <mat-icon>verified</mat-icon>
           <div>
-            <div class="footer-title">TFM Trading System</div>
-            <div class="footer-sub">FinBERT + Red Bayesiana</div>
+            <div class="sb-foot-title">TFM Trading System</div>
+            <div class="sb-foot-sub">v1.0 · AWS Lambda + EKS</div>
           </div>
         </div>
       </div>
     </div>
   `,
   styles: [`
-    .sidebar {
-      width: 240px;
+    .sb {
       height: 100%;
-      background: #1a237e;
-      display: flex;
-      flex-direction: column;
-      padding-top: 8px;
+      display: flex; flex-direction: column;
+      color: var(--side-fg);
+      padding: 20px 14px 16px;
+      gap: 14px;
     }
-    .sidebar-section-label {
-      padding: 8px 20px 4px;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 1.5px;
-      color: rgba(255,255,255,.35);
+
+    /* Brand */
+    .sb-brand {
+      display: flex; align-items: center; gap: 12px;
+      padding: 6px 8px 4px;
     }
-    mat-nav-list { padding-top: 0; }
-    .nav-item {
-      color: rgba(255,255,255,.7) !important;
-      margin: 2px 10px;
-      border-radius: 8px;
-      transition: background .2s, color .2s;
+    .sb-brand-mark {
+      position: relative;
+      width: 40px; height: 40px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #2563EB 0%, #06B6D4 100%);
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 6px 14px rgba(37, 99, 235, .35), inset 0 1px 0 rgba(255,255,255,.25);
     }
-    .nav-item:hover {
-      background: rgba(255,255,255,.12) !important;
-      color: #fff !important;
+    .sb-brand-glow {
+      position: absolute; inset: -2px;
+      border-radius: 14px;
+      background: conic-gradient(from 220deg, rgba(37,99,235,.6), rgba(6,182,212,.6), rgba(124,58,237,.4), rgba(37,99,235,.6));
+      filter: blur(10px); opacity: .55;
+      z-index: -1;
     }
-    .nav-item.active-link {
-      background: rgba(255,255,255,.2) !important;
-      color: #80cbc4 !important;
+    .sb-brand-letter {
+      font-weight: 800; color: #fff;
+      font-size: 18px; letter-spacing: -.02em;
     }
-    mat-icon[matListItemIcon] { color: inherit !important; }
-    span[matListItemTitle]    { color: inherit !important; font-weight: 500; font-size: 14px; }
-    .sidebar-divider {
+    .sb-brand-text { line-height: 1.15; }
+    .sb-brand-title {
+      font-weight: 700; font-size: 15px;
+      letter-spacing: -.01em; color: #fff;
+    }
+    .sb-brand-sub {
+      font-size: 11px;
+      color: var(--side-fg-dim);
+      font-weight: 500;
+      letter-spacing: .02em;
+    }
+
+    /* Status pill */
+    .sb-status {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 6px 12px; margin: 0 4px;
+      background: rgba(34, 197, 94, .08);
+      border: 1px solid rgba(34, 197, 94, .25);
+      color: #86EFAC;
+      border-radius: var(--r-pill);
+      font-size: 11px; font-weight: 600;
+      letter-spacing: .02em;
+      width: fit-content;
+    }
+    .sb-led {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--success-500);
+      box-shadow: 0 0 0 3px rgba(34,197,94,.25);
+      animation: sb-pulse 2.2s ease-in-out infinite;
+    }
+    @keyframes sb-pulse {
+      0%,100% { box-shadow: 0 0 0 3px rgba(34,197,94,.25); }
+      50%     { box-shadow: 0 0 0 6px rgba(34,197,94,.10); }
+    }
+
+    /* Section + nav */
+    .sb-section { display: flex; flex-direction: column; gap: 4px; }
+    .sb-section-label {
+      padding: 4px 12px;
+      font-size: 10px; font-weight: 700;
+      letter-spacing: .15em; text-transform: uppercase;
+      color: var(--side-fg-muted);
+    }
+    .sb-nav { display: flex; flex-direction: column; gap: 2px; }
+
+    .sb-link {
+      position: relative;
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 12px;
+      border-radius: var(--r-sm);
+      color: var(--side-fg-dim);
+      font-size: 13px; font-weight: 500;
+      cursor: pointer;
+      transition: background .18s, color .18s, transform .18s;
+    }
+    .sb-link::before {
+      content: ''; position: absolute;
+      left: -14px; top: 8px; bottom: 8px; width: 3px;
+      background: transparent;
+      border-radius: 0 3px 3px 0;
+      transition: background .18s;
+    }
+    .sb-link:hover {
+      background: rgba(255, 255, 255, .04);
+      color: #fff;
+    }
+    .sb-link.active {
+      background: var(--side-active);
+      color: #fff;
+    }
+    .sb-link.active::before { background: var(--side-active-bar); }
+    .sb-link-icon { color: inherit; font-size: 20px; height: 20px; width: 20px; }
+    .sb-link-label { flex: 1; }
+    .sb-link-arrow {
+      opacity: 0; transform: translateX(-4px);
+      transition: opacity .18s, transform .18s;
+    }
+    .sb-link-arrow mat-icon { font-size: 16px; height: 16px; width: 16px; color: inherit; }
+    .sb-link.active .sb-link-arrow,
+    .sb-link:hover .sb-link-arrow {
+      opacity: .8; transform: translateX(0);
+    }
+    .sb-badge {
+      font-size: 10px; font-weight: 700;
+      padding: 2px 8px;
+      background: var(--brand-600);
+      color: #fff;
+      border-radius: var(--r-pill);
+      letter-spacing: .04em;
+    }
+
+    .sb-divider {
       height: 1px;
-      background: rgba(255,255,255,.1);
-      margin: 8px 16px;
+      background: linear-gradient(to right, transparent, rgba(255,255,255,.08), transparent);
+      margin: 4px 4px;
     }
-    .sidebar-footer {
+
+    /* Footer */
+    .sb-footer {
       margin-top: auto;
-      padding: 12px 16px;
-      border-top: 1px solid rgba(255,255,255,.1);
+      padding-top: 12px;
+      border-top: 1px solid rgba(255,255,255,.06);
     }
-    .footer-info {
+    .sb-foot-row {
       display: flex; align-items: center; gap: 10px;
-      mat-icon { color: rgba(255,255,255,.35); font-size: 20px; }
+      padding: 6px 8px;
+      mat-icon {
+        color: var(--brand-400); font-size: 22px;
+        height: 22px; width: 22px;
+      }
     }
-    .footer-title { font-size: 12px; color: rgba(255,255,255,.5); font-weight: 600; }
-    .footer-sub   { font-size: 10px; color: rgba(255,255,255,.3); margin-top: 1px; }
+    .sb-foot-title { font-size: 12px; font-weight: 600; color: rgba(255,255,255,.78); }
+    .sb-foot-sub   { font-size: 10px; color: var(--side-fg-muted); margin-top: 1px; letter-spacing: .02em; }
+
+    /* Compact mode */
+    @media (max-width: 1100px) {
+      .sb { padding: 16px 8px; align-items: center; }
+      .sb-brand-text, .sb-brand-sub, .sb-section-label,
+      .sb-link-label, .sb-link-arrow, .sb-badge,
+      .sb-status-text, .sb-foot-title, .sb-foot-sub { display: none; }
+      .sb-status { padding: 6px; }
+      .sb-link { justify-content: center; padding: 10px; }
+      .sb-foot-row { justify-content: center; }
+    }
   `],
 })
 export class SidebarComponent {
   mainNav: NavItem[] = [
     {
       label: 'Portfolio',
-      icon: 'dashboard',
+      icon: 'space_dashboard',
       route: '/dashboard',
-      description: 'Resumen general: KPIs, señales activas y retornos',
+      description: 'Resumen general · KPIs · señales activas',
     },
     {
-      label: 'Señales Bayesianas',
+      label: 'Señales',
       icon: 'psychology',
       route: '/signals',
-      description: 'BUY/SELL/HOLD con cadena de decisión explicable',
+      description: 'BUY / SELL / HOLD · cadena de decisión bayesiana',
+      badge: 'AI',
     },
     {
       label: 'Backtesting',
-      icon: 'analytics',
+      icon: 'insights',
       route: '/backtesting',
-      description: 'Estrategia vs Buy&Hold · Sharpe · Drawdown · Win rate',
+      description: 'Sharpe · Drawdown · Alpha vs Buy & Hold',
     },
   ];
 
@@ -146,10 +283,10 @@ export class SidebarComponent {
       description: 'Estado de las 5 Lambdas y batches diarios',
     },
     {
-      label: 'Explorador S3',
-      icon: 'storage',
+      label: 'Data Lake',
+      icon: 'database',
       route: '/s3-explorer',
-      description: 'Navegar los buckets tfm-unir-datalake y tfm-unir-config',
+      description: 'Buckets tfm-unir-datalake y tfm-unir-config',
     },
   ];
 }
