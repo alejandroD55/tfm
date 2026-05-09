@@ -179,27 +179,19 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
           <div class="nodes-2x2">
             <div class="chart-box">
               <h4>Sentimiento FinBERT</h4>
-              <div class="chart-container">
-                <ngx-charts-pie-chart [results]="sentimentChart" [labels]="false" [legend]="true" [legendTitle]="'Frecuencia'" [doughnut]="true" [arcWidth]="0.3" [customColors]="customSentimentColors"></ngx-charts-pie-chart>
-              </div>
+              <ngx-charts-pie-chart [results]="sentimentChart" [labels]="true" [legend]="false" [doughnut]="true" [arcWidth]="0.3" [customColors]="customSentimentColors" [view]="[340, 160]"></ngx-charts-pie-chart>
             </div>
             <div class="chart-box">
               <h4>Fuerza (RSI)</h4>
-              <div class="chart-container">
-                <ngx-charts-pie-chart [results]="rsiChart" [labels]="false" [legend]="true" [legendTitle]="'Frecuencia'" [doughnut]="true" [arcWidth]="0.3" [customColors]="customRsiColors"></ngx-charts-pie-chart>
-              </div>
+              <ngx-charts-pie-chart [results]="rsiChart" [labels]="true" [legend]="false" [doughnut]="true" [arcWidth]="0.3" [customColors]="customRsiColors" [view]="[340, 160]"></ngx-charts-pie-chart>
             </div>
             <div class="chart-box">
               <h4>Tendencia General</h4>
-              <div class="chart-container">
-                <ngx-charts-pie-chart [results]="trendChart" [labels]="false" [legend]="true" [legendTitle]="'Frecuencia'" [doughnut]="true" [arcWidth]="0.3" [customColors]="customTrendColors"></ngx-charts-pie-chart>
-              </div>
+              <ngx-charts-pie-chart [results]="trendChart" [labels]="true" [legend]="false" [doughnut]="true" [arcWidth]="0.3" [customColors]="customTrendColors" [view]="[340, 160]"></ngx-charts-pie-chart>
             </div>
             <div class="chart-box">
               <h4>Volatilidad Mercado</h4>
-              <div class="chart-container">
-                <ngx-charts-pie-chart [results]="volatilityChart" [labels]="false" [legend]="true" [legendTitle]="'Frecuencia'" [doughnut]="true" [arcWidth]="0.3" [customColors]="customVolColors"></ngx-charts-pie-chart>
-              </div>
+              <ngx-charts-pie-chart [results]="volatilityChart" [labels]="true" [legend]="false" [doughnut]="true" [arcWidth]="0.3" [customColors]="customVolColors" [view]="[340, 160]"></ngx-charts-pie-chart>
             </div>
           </div>
           
@@ -425,6 +417,10 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
     </div>
   `,
   styles: [`
+    /* Ajuste para las etiquetas de los Smart Donuts */
+    .ngx-charts .pie-label-path { stroke: var(--slate-300) !important; }
+    .ngx-charts .pie-label text { fill: var(--slate-600) !important; font-size: 11px !important; font-weight: 600; }
+
     /* shared page chrome */
     .page { max-width: var(--content-max); margin: 0 auto; padding-bottom: 40px;}
     .page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; flex-wrap: wrap; margin-bottom: 22px; }
