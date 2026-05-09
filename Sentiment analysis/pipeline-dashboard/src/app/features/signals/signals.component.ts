@@ -175,34 +175,43 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
         </div>
       } @else {
 
-        <section class="charts-grid-layout">
-          <div class="nodes-2x2">
+        <section class="charts-overview">
+          <div class="nodes-grid-full">
             <div class="chart-box">
               <h4>Sentimiento FinBERT</h4>
-              <ngx-charts-pie-chart [results]="sentimentChart" [labels]="true" [legend]="false" [doughnut]="true" [arcWidth]="0.3" [customColors]="customSentimentColors" [view]="[340, 160]"></ngx-charts-pie-chart>
+              <div class="chart-container">
+                <ngx-charts-pie-chart [results]="sentimentChart" [labels]="false" [legend]="true" [legendPosition]="'below'" [legendTitle]="''" [doughnut]="true" [arcWidth]="0.3" [customColors]="customSentimentColors"></ngx-charts-pie-chart>
+              </div>
             </div>
             <div class="chart-box">
               <h4>Fuerza (RSI)</h4>
-              <ngx-charts-pie-chart [results]="rsiChart" [labels]="true" [legend]="false" [doughnut]="true" [arcWidth]="0.3" [customColors]="customRsiColors" [view]="[340, 160]"></ngx-charts-pie-chart>
+              <div class="chart-container">
+                <ngx-charts-pie-chart [results]="rsiChart" [labels]="false" [legend]="true" [legendPosition]="'below'" [legendTitle]="''" [doughnut]="true" [arcWidth]="0.3" [customColors]="customRsiColors"></ngx-charts-pie-chart>
+              </div>
             </div>
             <div class="chart-box">
               <h4>Tendencia General</h4>
-              <ngx-charts-pie-chart [results]="trendChart" [labels]="true" [legend]="false" [doughnut]="true" [arcWidth]="0.3" [customColors]="customTrendColors" [view]="[340, 160]"></ngx-charts-pie-chart>
+              <div class="chart-container">
+                <ngx-charts-pie-chart [results]="trendChart" [labels]="false" [legend]="true" [legendPosition]="'below'" [legendTitle]="''" [doughnut]="true" [arcWidth]="0.3" [customColors]="customTrendColors"></ngx-charts-pie-chart>
+              </div>
             </div>
             <div class="chart-box">
               <h4>Volatilidad Mercado</h4>
-              <ngx-charts-pie-chart [results]="volatilityChart" [labels]="true" [legend]="false" [doughnut]="true" [arcWidth]="0.3" [customColors]="customVolColors" [view]="[340, 160]"></ngx-charts-pie-chart>
+              <div class="chart-container">
+                <ngx-charts-pie-chart [results]="volatilityChart" [labels]="false" [legend]="true" [legendPosition]="'below'" [legendTitle]="''" [doughnut]="true" [arcWidth]="0.3" [customColors]="customVolColors"></ngx-charts-pie-chart>
+              </div>
             </div>
           </div>
           
-          <div class="chart-box main-chart">
+          <div class="chart-box main-chart-full">
             <h4>Decisión Final de Inversión</h4>
             <div class="chart-container" style="position: relative;">
-              <ngx-charts-pie-chart [results]="signalChart" [labels]="false" [legend]="true" [legendTitle]="'Señales Hoy'" [doughnut]="true" [arcWidth]="0.3" [customColors]="customSignalColors"></ngx-charts-pie-chart>
+              <ngx-charts-pie-chart [results]="signalChart" [labels]="false" [legend]="true" [legendPosition]="'below'" [legendTitle]="''" [doughnut]="true" [arcWidth]="0.25" [customColors]="customSignalColors"></ngx-charts-pie-chart>
               <div class="chart-center"><mat-icon>psychology</mat-icon></div>
             </div>
           </div>
         </section>
+          
         
 
         <div class="card table-card">
@@ -470,11 +479,28 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
     .bn-target { background: linear-gradient(135deg, var(--brand-700), var(--brand-600)); border-color: transparent; color: #fff; mat-icon { color: #fff; } .bn-label { color: #fff; } small { color: rgba(255,255,255,.7); } }
 
     /* Layout Gráficos de Nodos (Dashboard Visual) */
-    .charts-grid-layout { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 24px; }
-    @media (max-width: 1100px) { .charts-grid-layout { grid-template-columns: 1fr; } }
-    .nodes-2x2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .charts-overview { display: flex; flex-direction: column; gap: 16px; margin-bottom: 24px; }
+    .nodes-grid-full { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 768px) { .nodes-grid-full { grid-template-columns: 1fr; } }
+    
     .chart-box { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); padding: 16px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; }
-    .chart-box h4 { font-size: 13px; font-weight: 700; text-transform: uppercase; color: var(--slate-700); text-align: center; margin-bottom: 8px; }
+    .chart-box h4 { font-size: 13px; font-weight: 700; text-transform: uppercase; color: var(--slate-700); text-align: center; margin-bottom: 4px; }
+    
+    /* Contenedores con altura suficiente para la leyenda debajo */
+    .chart-container { width: 100%; height: 220px; display: flex; align-items: center; justify-content: center; }
+    
+    .main-chart-full { border-color: rgba(124, 58, 237, 0.3); background: rgba(124, 58, 237, 0.02); position: relative; align-items: center;}
+    .main-chart-full h4 { color: var(--accent-violet); font-size: 16px; margin-bottom: 12px;}
+    .main-chart-full .chart-container { height: 280px; max-width: 600px; margin: 0 auto; }
+    
+    .chart-center { position: absolute; top: 38%; left: 50%; transform: translate(-50%, -50%); color: var(--slate-300); pointer-events: none;}
+    .chart-center mat-icon { font-size: 48px; height: 48px; width: 48px;}
+    
+    /* Ajustes obligatorios para que las leyendas de ngx-charts se vean bien */
+    .ngx-charts .legend-labels { background: transparent !important; }
+    .ngx-charts .legend-title-text { display: none; } /* Ocultamos el título de la leyenda para ahorrar espacio */
+    .chart-legend .legend-labels { padding-left: 0 !important; text-align: center; }
+    .chart-legend .legend-label { font-size: 11px !important; color: var(--slate-700) !important; font-weight: 600; white-space: nowrap; margin-right: 12px;}
     
     /* Contenedor elástico para solucionar la leyenda cortada */
     .chart-container { width: 100%; height: 160px; display: flex; align-items: center; justify-content: center; }
