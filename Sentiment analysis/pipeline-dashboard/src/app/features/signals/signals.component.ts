@@ -8,7 +8,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatExpansionModule } from '@angular/material/expansion';
-import { NgxChartsModule } from '@swimlane/ngx-charts';
+import { NgxChartsModule, LegendPosition } from '@swimlane/ngx-charts';
 import { switchMap, catchError, of } from 'rxjs';
 import { ReportService } from '../../core/services/report.service';
 import { TraceService } from '../../core/services/trace.service';
@@ -180,25 +180,25 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
             <div class="chart-box">
               <h4>Sentimiento FinBERT</h4>
               <div class="chart-container">
-                <ngx-charts-pie-chart [results]="sentimentChart" [labels]="false" [legend]="true" [legendPosition]="'below'" [legendTitle]="''" [doughnut]="true" [arcWidth]="0.3" [customColors]="customSentimentColors"></ngx-charts-pie-chart>
+                <ngx-charts-pie-chart [results]="sentimentChart" [labels]="false" [legend]="true" [legendPosition]="legendBelow" [legendTitle]="''" [doughnut]="true" [arcWidth]="0.3" [customColors]="customSentimentColors"></ngx-charts-pie-chart>
               </div>
             </div>
             <div class="chart-box">
               <h4>Fuerza (RSI)</h4>
               <div class="chart-container">
-                <ngx-charts-pie-chart [results]="rsiChart" [labels]="false" [legend]="true" [legendPosition]="'below'" [legendTitle]="''" [doughnut]="true" [arcWidth]="0.3" [customColors]="customRsiColors"></ngx-charts-pie-chart>
+                <ngx-charts-pie-chart [results]="rsiChart" [labels]="false" [legend]="true" [legendPosition]="legendBelow" [legendTitle]="''" [doughnut]="true" [arcWidth]="0.3" [customColors]="customRsiColors"></ngx-charts-pie-chart>
               </div>
             </div>
             <div class="chart-box">
               <h4>Tendencia General</h4>
               <div class="chart-container">
-                <ngx-charts-pie-chart [results]="trendChart" [labels]="false" [legend]="true" [legendPosition]="'below'" [legendTitle]="''" [doughnut]="true" [arcWidth]="0.3" [customColors]="customTrendColors"></ngx-charts-pie-chart>
+                <ngx-charts-pie-chart [results]="trendChart" [labels]="false" [legend]="true" [legendPosition]="legendBelow" [legendTitle]="''" [doughnut]="true" [arcWidth]="0.3" [customColors]="customTrendColors"></ngx-charts-pie-chart>
               </div>
             </div>
             <div class="chart-box">
               <h4>Volatilidad Mercado</h4>
               <div class="chart-container">
-                <ngx-charts-pie-chart [results]="volatilityChart" [labels]="false" [legend]="true" [legendPosition]="'below'" [legendTitle]="''" [doughnut]="true" [arcWidth]="0.3" [customColors]="customVolColors"></ngx-charts-pie-chart>
+                <ngx-charts-pie-chart [results]="volatilityChart" [labels]="false" [legend]="true" [legendPosition]="legendBelow" [legendTitle]="''" [doughnut]="true" [arcWidth]="0.3" [customColors]="customVolColors"></ngx-charts-pie-chart>
               </div>
             </div>
           </div>
@@ -206,7 +206,7 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
           <div class="chart-box main-chart-full">
             <h4>Decisión Final de Inversión</h4>
             <div class="chart-container" style="position: relative;">
-              <ngx-charts-pie-chart [results]="signalChart" [labels]="false" [legend]="true" [legendPosition]="'below'" [legendTitle]="''" [doughnut]="true" [arcWidth]="0.25" [customColors]="customSignalColors"></ngx-charts-pie-chart>
+              <ngx-charts-pie-chart [results]="signalChart" [labels]="false" [legend]="true" [legendPosition]="legendBelow" [legendTitle]="''" [doughnut]="true" [arcWidth]="0.25" [customColors]="customSignalColors"></ngx-charts-pie-chart>
               <div class="chart-center"><mat-icon>psychology</mat-icon></div>
             </div>
           </div>
@@ -501,19 +501,6 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
     .ngx-charts .legend-title-text { display: none; } /* Ocultamos el título de la leyenda para ahorrar espacio */
     .chart-legend .legend-labels { padding-left: 0 !important; text-align: center; }
     .chart-legend .legend-label { font-size: 11px !important; color: var(--slate-700) !important; font-weight: 600; white-space: nowrap; margin-right: 12px;}
-    
-    /* Contenedor elástico para solucionar la leyenda cortada */
-    .chart-container { width: 100%; height: 160px; display: flex; align-items: center; justify-content: center; }
-    .main-chart .chart-container { height: 360px; }
-
-    .main-chart { border-color: rgba(124, 58, 237, 0.3); background: rgba(124, 58, 237, 0.02); }
-    .main-chart h4 { color: var(--accent-violet); font-size: 15px; }
-    .chart-center { position: absolute; top: 50%; left: 35%; transform: translate(-50%, -50%); color: var(--slate-300); pointer-events: none;}
-    .chart-center mat-icon { font-size: 40px; height: 40px; width: 40px;}
-    
-    /* Ajuste para que los textos de las leyendas no se recorten */
-    .ngx-charts .legend-title-text { font-size: 11px !important; color: var(--slate-500) !important; font-weight: bold; }
-    .ngx-charts .legend-labels { background: transparent !important; }
 
     /* ─── Table ─── */
     .card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-sm); }
@@ -649,17 +636,19 @@ export class SignalsComponent implements OnInit, AfterViewInit {
 
   @ViewChild(MatSort) sort!: MatSort;
 
+  legendBelow = LegendPosition.Below;
+
   loading = true;
   availableDates: ReportDateEntry[] = [];
   selectedDate = '';
   filterSignal = '';
   expandedRows = new Set<string>();
 
-  // Nombres Limpios y en Castellano para la Tabla
+  // Columnas actualizadas
   displayedColumns = ['signal', 'ticker', 'prob_up', 'evidence', 'trades', 'winrate', 'return', 'alpha', 'expand'];
   dataSource = new MatTableDataSource<TickerView>();
 
-  // Gráficos de Resumen
+  // Gráficos Donut
   signalChart: ChartDataPoint[] = [];
   sentimentChart: ChartDataPoint[] = [];
   rsiChart: ChartDataPoint[] = [];
@@ -675,7 +664,7 @@ export class SignalsComponent implements OnInit, AfterViewInit {
   tickerTraceLoading = new Set<string>();
   hasTraceForDate = false;
 
-  // Funciones de Coloreado Dinámico (Para NGX-Charts)
+  // Paletas de color personalizadas para los nuevos gráficos
   customSignalColors = (name: string) => {
     if (name === 'COMPRAR') return '#22C55E';
     if (name === 'CASH') return '#7C3AED';
@@ -709,7 +698,7 @@ export class SignalsComponent implements OnInit, AfterViewInit {
     });
   }
 
-  // SOLUCIONA EL BUG DE LAS FLECHAS DE ORDENACIÓN
+  // Se activa justo cuando la vista y la tabla están listas
   ngAfterViewInit() {
     this.dataSource.sort = this.sort;
   }
@@ -730,7 +719,7 @@ export class SignalsComponent implements OnInit, AfterViewInit {
     const views = this.reportSvc.buildTickerViews(report);
     this.dataSource.data = views;
     
-    // Reconectar la ordenación al cargar nuevos datos
+    // Reconectamos el sort por si los datos han mutado
     if (this.sort) {
       this.dataSource.sort = this.sort;
     }
@@ -742,7 +731,7 @@ export class SignalsComponent implements OnInit, AfterViewInit {
     this.holdCount = views.filter(v => v.signal === 'HOLD').length;
     this.avgProbUp = views.length ? (views.reduce((s, v) => s + v.prob_up, 0) / views.length) * 100 : 0;
 
-    // Procesar datos para gráficos de Nodos (Con nombres en castellano)
+    // Procesar datos para los nuevos gráficos de Nodos
     const sent = { ALCISTA: 0, BAJISTA: 0, NEUTRAL: 0 };
     const rsi = { SOBREVENTA: 0, SOBRECOMPRA: 0, NEUTRAL: 0 };
     const trend = { ALCISTA: 0, BAJISTA: 0 };
