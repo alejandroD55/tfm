@@ -179,29 +179,39 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
           <div class="nodes-2x2">
             <div class="chart-box">
               <h4>Sentimiento FinBERT</h4>
-              <ngx-charts-pie-chart [results]="sentimentChart" [labels]="false" [legend]="true" [legendTitle]="'Frecuencia'" [doughnut]="true" [arcWidth]="0.3" [customColors]="customSentimentColors" [view]="[340, 160]"></ngx-charts-pie-chart>
+              <div class="chart-container">
+                <ngx-charts-pie-chart [results]="sentimentChart" [labels]="false" [legend]="true" [legendTitle]="'Frecuencia'" [doughnut]="true" [arcWidth]="0.3" [customColors]="customSentimentColors"></ngx-charts-pie-chart>
+              </div>
             </div>
             <div class="chart-box">
               <h4>Fuerza (RSI)</h4>
-              <ngx-charts-pie-chart [results]="rsiChart" [labels]="false" [legend]="true" [legendTitle]="'Frecuencia'" [doughnut]="true" [arcWidth]="0.3" [customColors]="customRsiColors" [view]="[340, 160]"></ngx-charts-pie-chart>
+              <div class="chart-container">
+                <ngx-charts-pie-chart [results]="rsiChart" [labels]="false" [legend]="true" [legendTitle]="'Frecuencia'" [doughnut]="true" [arcWidth]="0.3" [customColors]="customRsiColors"></ngx-charts-pie-chart>
+              </div>
             </div>
             <div class="chart-box">
               <h4>Tendencia General</h4>
-              <ngx-charts-pie-chart [results]="trendChart" [labels]="false" [legend]="true" [legendTitle]="'Frecuencia'" [doughnut]="true" [arcWidth]="0.3" [customColors]="customTrendColors" [view]="[340, 160]"></ngx-charts-pie-chart>
+              <div class="chart-container">
+                <ngx-charts-pie-chart [results]="trendChart" [labels]="false" [legend]="true" [legendTitle]="'Frecuencia'" [doughnut]="true" [arcWidth]="0.3" [customColors]="customTrendColors"></ngx-charts-pie-chart>
+              </div>
             </div>
             <div class="chart-box">
               <h4>Volatilidad Mercado</h4>
-              <ngx-charts-pie-chart [results]="volatilityChart" [labels]="false" [legend]="true" [legendTitle]="'Frecuencia'" [doughnut]="true" [arcWidth]="0.3" [customColors]="customVolColors" [view]="[340, 160]"></ngx-charts-pie-chart>
+              <div class="chart-container">
+                <ngx-charts-pie-chart [results]="volatilityChart" [labels]="false" [legend]="true" [legendTitle]="'Frecuencia'" [doughnut]="true" [arcWidth]="0.3" [customColors]="customVolColors"></ngx-charts-pie-chart>
+              </div>
             </div>
           </div>
           
           <div class="chart-box main-chart">
             <h4>Decisión Final de Inversión</h4>
-            <div style="flex:1; display:flex; align-items:center; justify-content:center;">
-              <ngx-charts-pie-chart [results]="signalChart" [labels]="false" [legend]="true" [legendTitle]="'Señales Hoy'" [doughnut]="true" [arcWidth]="0.3" [customColors]="customSignalColors" [view]="[380, 320]"></ngx-charts-pie-chart>
+            <div class="chart-container" style="position: relative;">
+              <ngx-charts-pie-chart [results]="signalChart" [labels]="false" [legend]="true" [legendTitle]="'Señales Hoy'" [doughnut]="true" [arcWidth]="0.3" [customColors]="customSignalColors"></ngx-charts-pie-chart>
+              <div class="chart-center"><mat-icon>psychology</mat-icon></div>
             </div>
           </div>
         </section>
+        
 
         <div class="card table-card">
           <table mat-table [dataSource]="dataSource" multiTemplateDataRows matSort class="aurora-table">
@@ -468,11 +478,20 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
     @media (max-width: 1100px) { .charts-grid-layout { grid-template-columns: 1fr; } }
     .nodes-2x2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     .chart-box { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); padding: 16px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; }
-    .chart-box h4 { font-size: 13px; font-weight: 700; text-transform: uppercase; color: var(--slate-700); text-align: center; margin-bottom: 4px; }
-    .main-chart { border-color: rgba(124, 58, 237, 0.3); background: rgba(124, 58, 237, 0.02); position: relative; }
+    .chart-box h4 { font-size: 13px; font-weight: 700; text-transform: uppercase; color: var(--slate-700); text-align: center; margin-bottom: 8px; }
+    
+    /* Contenedor elástico para solucionar la leyenda cortada */
+    .chart-container { width: 100%; height: 160px; display: flex; align-items: center; justify-content: center; }
+    .main-chart .chart-container { height: 360px; }
+
+    .main-chart { border-color: rgba(124, 58, 237, 0.3); background: rgba(124, 58, 237, 0.02); }
     .main-chart h4 { color: var(--accent-violet); font-size: 15px; }
-    .chart-center { position: absolute; top: 58%; left: 24%; transform: translate(-50%, -50%); color: var(--slate-300); pointer-events: none;}
+    .chart-center { position: absolute; top: 50%; left: 35%; transform: translate(-50%, -50%); color: var(--slate-300); pointer-events: none;}
     .chart-center mat-icon { font-size: 40px; height: 40px; width: 40px;}
+    
+    /* Ajuste para que los textos de las leyendas no se recorten */
+    .ngx-charts .legend-title-text { font-size: 11px !important; color: var(--slate-500) !important; font-weight: bold; }
+    .ngx-charts .legend-labels { background: transparent !important; }
 
     /* ─── Table ─── */
     .card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-sm); }
