@@ -59,13 +59,16 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
           </mat-expansion-panel-header>
           <div class="glossary-content">
             <div class="g-col">
-              <strong>Estrategia IA vs Mercado:</strong> Compara el rendimiento de nuestra IA (que entra y sale del mercado) frente a la estrategia pasiva de "Comprar y Mantener" (Buy & Hold). La IA busca preservar el capital estando en liquidez (cash) cuando hay peligro.
+              <strong>Estrategia IA vs Mercado:</strong> Compara el rendimiento de nuestra IA frente a la estrategia pasiva "Comprar y Mantener" (Buy & Hold). La IA busca preservar el capital estando en liquidez (cash) ante el peligro.
             </div>
             <div class="g-col">
               <strong>Ratio de Sharpe:</strong> Mide la calidad de la inversión. Relaciona la rentabilidad obtenida con el riesgo asumido. Un valor superior a 1.0 indica un comportamiento excelente ajustado al riesgo.
             </div>
             <div class="g-col">
-              <strong>Caída Máxima (Drawdown):</strong> Es el mayor porcentaje de dinero que la cartera llegó a perder desde su punto más alto. Un valor bajo (cercano a 0%) demuestra que el sistema es extremadamente seguro.
+              <strong>Caída Máxima:</strong> El mayor porcentaje de dinero que la cartera llegó a perder desde su pico más alto. Un valor cercano a 0% demuestra que el sistema es extremadamente seguro.
+            </div>
+            <div class="g-col">
+              <strong>Probabilidad Alcista P(↑):</strong> Confianza matemática de la IA sobre si el ETF subirá. Si es ≥ 65% compramos; si es ≤ 35% pasamos a liquidez (Cash); y en el rango medio mantenemos.
             </div>
           </div>
         </mat-expansion-panel>
@@ -124,7 +127,7 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
 
           <article class="kpi kpi-neg">
             <div class="kpi-head">
-              <span class="kpi-label">Caída Máx. (Drawdown)</span>
+              <span class="kpi-label">Caída Máxima</span>
               <span class="kpi-icon"><mat-icon>water_drop</mat-icon></span>
             </div>
             <div class="kpi-value">{{ (report.summary.avg_max_drawdown * 100) | number:'1.2-2' }}<span class="unit">%</span></div>
@@ -137,9 +140,9 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
 
         <section class="row">
           
-          <div class="card chart-card span-5">
+          <div class="card chart-card span-4">
             <div class="card-head">
-              <div class="card-title"><mat-icon>donut_large</mat-icon> <span>Posicionamiento de la IA (Hoy)</span></div>
+              <div class="card-title"><mat-icon>donut_large</mat-icon> <span>Decisiones de IA (Hoy)</span></div>
             </div>
             
             <div class="donut-container">
@@ -160,7 +163,6 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
               </div>
               
               <div class="custom-legend">
-                <h4 class="cl-title">Decisiones Emitidas</h4>
                 <div class="cl-item">
                   <span class="cl-color" style="background-color: #22C55E;"></span>
                   <span class="cl-label">COMPRAR</span>
@@ -168,7 +170,7 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
                 </div>
                 <div class="cl-item">
                   <span class="cl-color" style="background-color: #7C3AED;"></span>
-                  <span class="cl-label">LIQUIDEZ (CASH)</span>
+                  <span class="cl-label">CASH</span>
                   <span class="cl-value">{{ sellCount }}</span>
                 </div>
                 <div class="cl-item">
@@ -180,19 +182,39 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
             </div>
           </div>
 
-          <div class="card chart-card span-7">
+          <div class="card chart-card span-8">
+            <div class="card-head">
+              <div class="card-title"><mat-icon>track_changes</mat-icon> <span>Tasa de Acierto (Win Rate) Histórica por ETF</span></div>
+              <span class="card-sub">Efectividad de las operaciones cerradas en el último año</span>
+            </div>
+            <div class="chart-host">
+              <ngx-charts-bar-vertical
+                [results]="winRateChart"
+                [xAxis]="true" [yAxis]="true" [showGridLines]="true"
+                [customColors]="customWinRateColors"
+                [view]="[700, 220]"
+                yAxisLabel="Acierto (%)" [showYAxisLabel]="true"
+                [showDataLabel]="true" [yScaleMax]="100" [barPadding]="16" [roundEdges]="true">
+              </ngx-charts-bar-vertical>
+            </div>
+          </div>
+
+        </section>
+
+        <section class="row">
+          <div class="card chart-card span-12">
             <div class="card-head">
               <div class="card-title"><mat-icon>bar_chart</mat-icon> <span>Probabilidad Alcista P(↑) por ETF</span></div>
-              <span class="card-sub">Inferencia Bayesiana</span>
+              <span class="card-sub">Confianza matemática calculada por la Red Bayesiana</span>
             </div>
             <div class="chart-host">
               <ngx-charts-bar-vertical
                 [results]="probUpChart"
                 [xAxis]="true" [yAxis]="true" [showGridLines]="true"
-                [scheme]="probScheme"
-                [view]="[620, 220]"
+                [customColors]="customProbColors"
+                [view]="[1180, 220]"
                 yAxisLabel="Probabilidad (%)" [showYAxisLabel]="true"
-                [showDataLabel]="true" [yScaleMax]="100" [barPadding]="12" [roundEdges]="true">
+                [showDataLabel]="true" [yScaleMax]="100" [barPadding]="16" [roundEdges]="true">
               </ngx-charts-bar-vertical>
             </div>
             <div class="thresholds">
@@ -201,7 +223,6 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
               <span class="th-sell">CASH ≤ 35%</span>
             </div>
           </div>
-
         </section>
 
       } @else {
@@ -228,7 +249,7 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
     .glossary-panel { background: rgba(59, 130, 246, 0.05) !important; border: 1px solid rgba(59, 130, 246, 0.2) !important; border-radius: 8px !important; box-shadow: none !important; }
     .glossary-panel mat-panel-title { color: var(--brand-700); font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
     .glossary-panel mat-icon { font-size: 18px; height: 18px; width: 18px; color: var(--brand-500); }
-    .glossary-content { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; padding-top: 10px; font-size: 12.5px; color: var(--slate-700); line-height: 1.5; }
+    .glossary-content { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; padding-top: 10px; font-size: 12.5px; color: var(--slate-700); line-height: 1.5; }
     .g-col strong { color: var(--slate-900); display: block; margin-bottom: 4px; }
 
     /* KPIs */
@@ -261,9 +282,10 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
 
     /* Layout Gráficos */
     .row { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; margin-bottom: 18px; }
-    .span-5 { grid-column: span 5; }
-    .span-7 { grid-column: span 7; }
-    @media (max-width: 1100px) { .span-5, .span-7 { grid-column: span 12; } }
+    .span-4 { grid-column: span 4; }
+    .span-8 { grid-column: span 8; }
+    .span-12 { grid-column: span 12; }
+    @media (max-width: 1100px) { .span-4, .span-8, .span-12 { grid-column: span 12; } }
 
     .card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-sm); padding: 18px; }
     .card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
@@ -280,7 +302,7 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
     .dc-num { font-size: 32px; font-weight: 700; color: var(--slate-900); line-height: 1; }
     .dc-lbl { font-size: 12px; color: var(--slate-500); font-weight: 600; letter-spacing: 0.05em; }
 
-    .custom-legend { display: flex; flex-direction: column; gap: 12px; min-width: 140px; }
+    .custom-legend { display: flex; flex-direction: column; gap: 12px; min-width: 130px; }
     .cl-title { font-size: 12px; font-weight: 600; color: var(--slate-500); margin: 0 0 4px; text-transform: uppercase; letter-spacing: 0.05em; }
     .cl-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
     .cl-color { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
@@ -292,7 +314,7 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
     .thresholds span { font-size: 11px; padding: 4px 12px; border-radius: var(--r-pill); font-weight: 700; letter-spacing: 0.03em; }
     .th-buy  { background: var(--success-100); color: var(--success-700); }
     .th-hold { background: var(--warn-100); color: var(--warn-700); }
-    .th-sell { background: rgba(124, 58, 237, .15); color: #7C3AED; } /* Violeta Cortos */
+    .th-sell { background: rgba(124, 58, 237, .15); color: #7C3AED; }
 
     .loader { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 80px 16px; color: var(--slate-500); }
     .empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 80px 16px; color: var(--slate-400); }
@@ -310,17 +332,32 @@ export class DashboardComponent implements OnInit {
 
   signalPieChart: ChartDataPoint[] = [];
   probUpChart: ChartDataPoint[] = [];
+  winRateChart: ChartDataPoint[] = [];
   
   avgBenchmark: number = 0; 
 
-  // Colores seguros y fijos para la tarta
-  customSignalColors = [
-    { name: 'BUY', value: '#22C55E' },
-    { name: 'SELL', value: '#7C3AED' },
-    { name: 'HOLD', value: '#F59E0B' }
-  ];
-  
-  probScheme: any = { domain: ['#3B82F6'] };
+  // Función para forzar los colores de la Tarta
+  customSignalColors = (name: string) => {
+    if (name === 'BUY') return '#22C55E';
+    if (name === 'SELL') return '#7C3AED';
+    return '#F59E0B'; // HOLD
+  };
+
+  // Función dinámica para colorear las barras de probabilidad según el valor
+  customProbColors = (name: string) => {
+    const item = this.probUpChart.find(d => d.name === name);
+    if (!item) return '#3B82F6';
+    if (item.value >= 65) return '#22C55E'; // BUY (Verde)
+    if (item.value <= 35) return '#7C3AED'; // SELL/CASH (Violeta)
+    return '#F59E0B'; // HOLD (Amarillo)
+  };
+
+  // Función dinámica para colorear la tasa de acierto (Azul corporativo si > 50%, rojo si no)
+  customWinRateColors = (name: string) => {
+    const item = this.winRateChart.find(d => d.name === name);
+    if (!item) return '#3B82F6';
+    return item.value >= 50 ? '#06B6D4' : '#EF4444'; 
+  };
 
   get buyCount()  { return this.tickerViews.filter(t => t.signal === 'BUY').length;  }
   get sellCount() { return this.tickerViews.filter(t => t.signal === 'SELL').length; }
@@ -356,16 +393,25 @@ export class DashboardComponent implements OnInit {
     this.report = report;
     this.tickerViews = this.reportSvc.buildTickerViews(report).sort((a, b) => b.prob_up - a.prob_up);
     
+    // Calcular Media de Mercado
     const sumBH = this.tickerViews.reduce((acc, curr) => acc + curr.buy_hold_return, 0);
     this.avgBenchmark = this.tickerViews.length > 0 ? (sumBH / this.tickerViews.length) : 0;
 
+    // Tarta de Decisiones
     this.signalPieChart = [
       { name: 'BUY', value: this.buyCount },
       { name: 'SELL', value: this.sellCount },
       { name: 'HOLD', value: this.holdCount }
     ].filter(item => item.value > 0);
 
+    // Gráfico de Probabilidades
     this.probUpChart = this.reportSvc.probUpChart(this.tickerViews);
+
+    // Nuevo Gráfico: Tasa de Acierto (Win Rate)
+    this.winRateChart = this.tickerViews.map(t => ({
+      name: t.ticker,
+      value: t.win_rate * 100
+    })).sort((a, b) => b.value - a.value); // Ordenado de mejor a peor
   }
 
   qualityLabel(s: number) {
