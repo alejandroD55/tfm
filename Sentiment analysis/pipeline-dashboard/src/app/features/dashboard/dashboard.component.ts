@@ -6,18 +6,20 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSelectModule } from '@angular/material/select';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { LegendPosition, NgxChartsModule } from '@swimlane/ngx-charts';
+import { MatExpansionModule } from '@angular/material/expansion';
+import { NgxChartsModule } from '@swimlane/ngx-charts';
 import { switchMap } from 'rxjs';
 import { ReportService } from '../../core/services/report.service';
 import { DailyReport, TickerView, ReportDateEntry } from '../../core/models/report.model';
-import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
+import { ChartDataPoint } from '../../core/models/pipeline.model';
 
 @Component({
   selector: 'app-dashboard',
   standalone: true,
   imports: [
     CommonModule, FormsModule, MatIconModule, MatButtonModule,
-    MatProgressSpinnerModule, MatSelectModule, MatTooltipModule, NgxChartsModule,
+    MatProgressSpinnerModule, MatSelectModule, MatTooltipModule,
+    MatExpansionModule, NgxChartsModule,
   ],
   template: `
     <div class="page">
@@ -40,12 +42,34 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
               }
             </mat-select>
           </mat-form-field>
-          <button class="btn btn-ghost" (click)="refresh()" matTooltip="Recargar último informe">
+          <button class="btn btn-ghost" (click)="refresh()" matTooltip="Recargar datos">
             <mat-icon>refresh</mat-icon>
             <span>Actualizar</span>
           </button>
         </div>
       </header>
+
+      <mat-accordion class="glossary-accordion">
+        <mat-expansion-panel class="glossary-panel">
+          <mat-expansion-panel-header>
+            <mat-panel-title>
+              <mat-icon>lightbulb</mat-icon>
+              <span>¿Cómo interpretar estas métricas? (Glosario)</span>
+            </mat-panel-title>
+          </mat-expansion-panel-header>
+          <div class="glossary-content">
+            <div class="g-col">
+              <strong>Estrategia IA vs Mercado:</strong> Compara el rendimiento de nuestra IA (que entra y sale del mercado) frente a la estrategia pasiva de "Comprar y Mantener" (Buy & Hold). La IA busca preservar el capital estando en liquidez (cash) cuando hay peligro.
+            </div>
+            <div class="g-col">
+              <strong>Ratio de Sharpe:</strong> Mide la calidad de la inversión. Relaciona la rentabilidad obtenida con el riesgo asumido. Un valor superior a 1.0 indica un comportamiento excelente ajustado al riesgo.
+            </div>
+            <div class="g-col">
+              <strong>Caída Máxima (Drawdown):</strong> Es el mayor porcentaje de dinero que la cartera llegó a perder desde su punto más alto. Un valor bajo (cercano a 0%) demuestra que el sistema es extremadamente seguro.
+            </div>
+          </div>
+        </mat-expansion-panel>
+      </mat-accordion>
 
       @if (loading) {
         <div class="loader">
@@ -56,13 +80,10 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
 
         <section class="kpi-grid">
 
-          <article class="kpi"
-                   [class.kpi-pos]="report.summary.avg_cumulative_return > 0"
-                   [class.kpi-neg]="report.summary.avg_cumulative_return < 0"
-                   matTooltip="Beneficio neto medio obtenido por la inteligencia artificial frente al capital inicial.">
+          <article class="kpi" [class.kpi-pos]="report.summary.avg_cumulative_return > 0" [class.kpi-neg]="report.summary.avg_cumulative_return < 0">
             <div class="kpi-head">
-              <span class="kpi-label">Rentabilidad (Estrategia IA)</span>
-              <span class="kpi-icon"><mat-icon>account_balance_wallet</mat-icon></span>
+              <span class="kpi-label">Beneficio Estrategia IA</span>
+              <span class="kpi-icon"><mat-icon>smart_toy</mat-icon></span>
             </div>
             <div class="kpi-value">
               {{ report.summary.avg_cumulative_return > 0 ? '+' : '' }}{{ (report.summary.avg_cumulative_return * 100) | number:'1.2-2' }}<span class="unit">%</span>
@@ -70,14 +91,25 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
             <div class="kpi-foot">
               <span class="delta" [class.up]="report.summary.avg_cumulative_return > 0" [class.down]="report.summary.avg_cumulative_return < 0">
                 <mat-icon>{{ report.summary.avg_cumulative_return >= 0 ? 'arrow_upward' : 'arrow_downward' }}</mat-icon>
-                {{ report.data_period_days }} días
+                Rentabilidad Neta
               </span>
-              <span class="kpi-sub">Media de {{ report.summary.total_tickers }} activos</span>
             </div>
           </article>
 
-          <article class="kpi" [class.kpi-pos]="report.summary.avg_sharpe_ratio > 1"
-                   matTooltip="Mide si el beneficio justifica el riesgo asumido. >1 es Bueno, >2 es Excelente.">
+          <article class="kpi" [class.kpi-pos]="avgBenchmark > 0" [class.kpi-neg]="avgBenchmark < 0">
+            <div class="kpi-head">
+              <span class="kpi-label">Rentabilidad Mercado (B&H)</span>
+              <span class="kpi-icon"><mat-icon>public</mat-icon></span>
+            </div>
+            <div class="kpi-value">
+              {{ avgBenchmark > 0 ? '+' : '' }}{{ (avgBenchmark * 100) | number:'1.2-2' }}<span class="unit">%</span>
+            </div>
+            <div class="kpi-foot">
+              <span class="quality">Comprar y Mantener</span>
+            </div>
+          </article>
+
+          <article class="kpi" [class.kpi-pos]="report.summary.avg_sharpe_ratio > 1">
             <div class="kpi-head">
               <span class="kpi-label">Ratio de Sharpe (Riesgo)</span>
               <span class="kpi-icon"><mat-icon>balance</mat-icon></span>
@@ -87,62 +119,89 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
               <span class="quality" [class.good]="report.summary.avg_sharpe_ratio > 1" [class.bad]="report.summary.avg_sharpe_ratio < 0">
                 {{ qualityLabel(report.summary.avg_sharpe_ratio) }}
               </span>
-              <span class="kpi-sub">Anualizado · Tasa libre 2%</span>
             </div>
           </article>
 
-          <article class="kpi kpi-neg"
-                   matTooltip="Representa la peor racha de pérdidas consecutivas (Drawdown) del sistema.">
+          <article class="kpi kpi-neg">
             <div class="kpi-head">
-              <span class="kpi-label">Caída Máxima (Drawdown)</span>
+              <span class="kpi-label">Caída Máx. (Drawdown)</span>
               <span class="kpi-icon"><mat-icon>water_drop</mat-icon></span>
             </div>
             <div class="kpi-value">{{ (report.summary.avg_max_drawdown * 100) | number:'1.2-2' }}<span class="unit">%</span></div>
             <div class="kpi-foot">
-              <span class="delta down"><mat-icon>warning_amber</mat-icon> Peor escenario</span>
-            </div>
-          </article>
-
-          <article class="kpi kpi-signals">
-            <div class="kpi-head">
-              <span class="kpi-label">Posicionamiento Actual</span>
-              <span class="kpi-icon"><mat-icon>psychology</mat-icon></span>
-            </div>
-            <div class="kpi-value">
-              {{ tickerViews.length }} <span class="unit">ETFs analizados</span>
-            </div>
-            <div class="signals-bar">
-              <span class="seg buy"   [style.flex]="buyCount  || 0" *ngIf="buyCount > 0">{{ buyCount  }} COMPRAR</span>
-              <span class="seg sell"  [style.flex]="sellCount || 0" *ngIf="sellCount > 0" style="background-color: #7C3AED;">{{ sellCount }} CORTOS</span>
-              <span class="seg hold"  [style.flex]="holdCount || 0" *ngIf="holdCount > 0">{{ holdCount }} MANTENER</span>
+              <span class="delta down"><mat-icon>security</mat-icon> Protección de capital</span>
             </div>
           </article>
 
         </section>
 
         <section class="row">
-          <div class="card chart-card span-4">
+          
+          <div class="card chart-card span-5">
             <div class="card-head">
-              <div class="card-title"><mat-icon>donut_large</mat-icon> <span>Distribución de Decisiones</span></div>
+              <div class="card-title"><mat-icon>donut_large</mat-icon> <span>Posicionamiento de la IA (Hoy)</span></div>
             </div>
-            <div class="chart-host">
-              <ngx-charts-pie-chart [results]="signalPieChart" [legend]="true" [legendPosition]="legendBelow" [labels]="false" [doughnut]="true" [arcWidth]="0.32" [scheme]="signalScheme" [view]="[360, 280]"></ngx-charts-pie-chart>
+            
+            <div class="donut-container">
+              <div class="donut-chart-wrapper">
+                <ngx-charts-pie-chart
+                  [results]="signalPieChart"
+                  [legend]="false"
+                  [labels]="false"
+                  [doughnut]="true"
+                  [arcWidth]="0.35"
+                  [customColors]="customSignalColors"
+                  [view]="[220, 220]">
+                </ngx-charts-pie-chart>
+                <div class="donut-center">
+                  <div class="dc-num">{{ tickerViews.length }}</div>
+                  <div class="dc-lbl">ETFs</div>
+                </div>
+              </div>
+              
+              <div class="custom-legend">
+                <h4 class="cl-title">Decisiones Emitidas</h4>
+                <div class="cl-item">
+                  <span class="cl-color" style="background-color: #22C55E;"></span>
+                  <span class="cl-label">COMPRAR</span>
+                  <span class="cl-value">{{ buyCount }}</span>
+                </div>
+                <div class="cl-item">
+                  <span class="cl-color" style="background-color: #7C3AED;"></span>
+                  <span class="cl-label">LIQUIDEZ (CASH)</span>
+                  <span class="cl-value">{{ sellCount }}</span>
+                </div>
+                <div class="cl-item">
+                  <span class="cl-color" style="background-color: #F59E0B;"></span>
+                  <span class="cl-label">MANTENER</span>
+                  <span class="cl-value">{{ holdCount }}</span>
+                </div>
+              </div>
             </div>
           </div>
 
-          <div class="card chart-card span-8">
+          <div class="card chart-card span-7">
             <div class="card-head">
               <div class="card-title"><mat-icon>bar_chart</mat-icon> <span>Probabilidad Alcista P(↑) por ETF</span></div>
+              <span class="card-sub">Inferencia Bayesiana</span>
             </div>
             <div class="chart-host">
-              <ngx-charts-bar-vertical [results]="probUpChart" [xAxis]="true" [yAxis]="true" [showGridLines]="true" [scheme]="probScheme" [view]="[760, 280]" yAxisLabel="Probabilidad (%)" [showYAxisLabel]="true" [showDataLabel]="true" [yScaleMax]="100" [barPadding]="14" [roundEdges]="true"></ngx-charts-bar-vertical>
+              <ngx-charts-bar-vertical
+                [results]="probUpChart"
+                [xAxis]="true" [yAxis]="true" [showGridLines]="true"
+                [scheme]="probScheme"
+                [view]="[620, 220]"
+                yAxisLabel="Probabilidad (%)" [showYAxisLabel]="true"
+                [showDataLabel]="true" [yScaleMax]="100" [barPadding]="12" [roundEdges]="true">
+              </ngx-charts-bar-vertical>
             </div>
             <div class="thresholds">
               <span class="th-buy">COMPRAR ≥ 65%</span>
               <span class="th-hold">MANTENER 35–65%</span>
-              <span class="th-sell" style="background: rgba(124, 58, 237, .15); color: #7C3AED;">CORTOS (VENDER) ≤ 35%</span>
+              <span class="th-sell">CASH ≤ 35%</span>
             </div>
           </div>
+
         </section>
 
       } @else {
@@ -154,347 +213,91 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
     </div>
   `,
   styles: [`
-    /* ─── Page chrome (shared shape) ─── */
-    .page { max-width: var(--content-max); margin: 0 auto; }
-    .page-head {
-      display: flex; justify-content: space-between; align-items: flex-start;
-      gap: 24px; flex-wrap: wrap; margin-bottom: 24px;
-    }
-    .page-eyebrow {
-      display: inline-flex; align-items: center; gap: 6px;
-      padding: 4px 10px;
-      background: var(--brand-100);
-      color: var(--brand-700);
-      border-radius: var(--r-pill);
-      font-size: 11px; font-weight: 600;
-      letter-spacing: .04em; text-transform: uppercase;
-      margin-bottom: 10px;
-      mat-icon { font-size: 14px; height: 14px; width: 14px; }
-    }
-    .page-title {
-      font-size: 26px; font-weight: 700;
-      color: var(--slate-900); letter-spacing: -.02em; line-height: 1.2;
-    }
-    .page-sub { color: var(--slate-500); font-size: 13px; margin-top: 6px; max-width: 740px; }
+    .page { max-width: var(--content-max); margin: 0 auto; padding-bottom: 30px; }
+    .page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; flex-wrap: wrap; margin-bottom: 22px; }
+    .page-eyebrow { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: rgba(6, 182, 212, .12); color: var(--accent-cyan); border-radius: var(--r-pill); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 10px; }
+    .page-eyebrow mat-icon { font-size: 14px; height: 14px; width: 14px; }
+    .page-title { font-size: 26px; font-weight: 700; color: var(--slate-900); letter-spacing: -.02em; }
+    .page-sub { color: var(--slate-500); font-size: 13px; margin-top: 6px; }
 
-    .page-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-    .date-input { min-width: 200px; }
-
-    .btn {
-      display: inline-flex; align-items: center; gap: 6px;
-      padding: 8px 14px;
-      border-radius: var(--r-sm);
-      border: 1px solid var(--border);
-      font-family: var(--font-sans); font-size: 13px; font-weight: 600;
-      cursor: pointer; transition: all .15s;
-      background: var(--bg-elevated); color: var(--slate-700);
-      mat-icon { font-size: 18px; height: 18px; width: 18px; }
-    }
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: var(--r-sm); border: 1px solid var(--border); font-size: 13px; font-weight: 600; cursor: pointer; background: var(--bg-elevated); color: var(--slate-700); }
     .btn:hover { border-color: var(--brand-300); color: var(--brand-600); background: var(--slate-50); }
-    .btn-ghost { background: var(--bg-elevated); }
 
-    .loader {
-      display: flex; flex-direction: column; align-items: center;
-      gap: 14px; padding: 80px 16px; color: var(--slate-500);
-    }
-    .empty {
-      display: flex; flex-direction: column; align-items: center; gap: 8px;
-      padding: 80px 16px; color: var(--slate-400);
-      mat-icon { font-size: 48px; height: 48px; width: 48px; opacity: .5; }
-    }
+    /* Glosario */
+    .glossary-accordion { display: block; margin-bottom: 24px; }
+    .glossary-panel { background: rgba(59, 130, 246, 0.05) !important; border: 1px solid rgba(59, 130, 246, 0.2) !important; border-radius: 8px !important; box-shadow: none !important; }
+    .glossary-panel mat-panel-title { color: var(--brand-700); font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .glossary-panel mat-icon { font-size: 18px; height: 18px; width: 18px; color: var(--brand-500); }
+    .glossary-content { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; padding-top: 10px; font-size: 12.5px; color: var(--slate-700); line-height: 1.5; }
+    .g-col strong { color: var(--slate-900); display: block; margin-bottom: 4px; }
 
-    /* ─── Health banner ─── */
-    .health {
-      display: flex; align-items: center; gap: 16px;
-      padding: 14px 18px;
-      background: var(--bg-elevated);
-      border: 1px solid var(--border);
-      border-left-width: 4px;
-      border-radius: var(--r-md);
-      box-shadow: var(--shadow-sm);
-      margin-bottom: 22px;
-    }
-    .health-completed { border-left-color: var(--success-500); }
-    .health-failed    { border-left-color: var(--danger-500); }
-    .health-started   { border-left-color: var(--brand-500); }
-    .health-unknown   { border-left-color: var(--slate-400); }
-
-    .health-icon {
-      width: 38px; height: 38px;
-      border-radius: 10px;
-      display: inline-flex; align-items: center; justify-content: center;
-      background: var(--slate-50);
-      mat-icon { font-size: 22px; height: 22px; width: 22px; }
-    }
-    .health-completed .health-icon { background: var(--success-50); color: var(--success-600); }
-    .health-failed    .health-icon { background: var(--danger-50);  color: var(--danger-600); }
-    .health-started   .health-icon { background: var(--brand-100);   color: var(--brand-600); }
-    .health-unknown   .health-icon { background: var(--slate-100);   color: var(--slate-500); }
-
-    .health-body { flex: 1; min-width: 0; }
-    .health-title { font-size: 14px; font-weight: 600; color: var(--slate-900); }
-    .health-title strong {
-      padding: 1px 8px;
-      background: var(--slate-100);
-      border-radius: var(--r-pill);
-      font-size: 11px; letter-spacing: .04em;
-      vertical-align: middle;
-      margin: 0 4px;
-    }
-    .health-completed .health-title strong { background: var(--success-100); color: var(--success-700); }
-    .health-failed    .health-title strong { background: var(--danger-100);  color: var(--danger-700); }
-    .health-started   .health-title strong { background: var(--brand-100);    color: var(--brand-700); }
-    .health-dot { color: var(--slate-300); margin: 0 4px; }
-    .health-meta { font-size: 12px; color: var(--slate-500); margin-top: 2px; }
-    .health-period {
-      display: inline-flex; align-items: center; gap: 6px;
-      padding: 6px 12px;
-      background: var(--slate-50);
-      border: 1px solid var(--border);
-      border-radius: var(--r-pill);
-      color: var(--slate-600);
-      font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums;
-      mat-icon { font-size: 14px; height: 14px; width: 14px; color: var(--slate-400); }
-    }
-
-    /* ─── KPI grid ─── */
-    .kpi-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 14px;
-      margin-bottom: 22px;
-    }
-    .kpi {
-      position: relative;
-      background: var(--bg-elevated);
-      border: 1px solid var(--border);
-      border-radius: var(--r-md);
-      padding: 18px;
-      box-shadow: var(--shadow-sm);
-      transition: transform .15s, box-shadow .15s, border-color .15s;
-      overflow: hidden;
-    }
-    .kpi::after {
-      content: ''; position: absolute; inset: auto 0 0 0; height: 3px;
-      background: linear-gradient(to right, transparent, var(--brand-300), transparent);
-      opacity: 0; transition: opacity .2s;
-    }
-    .kpi:hover { box-shadow: var(--shadow-md); border-color: var(--brand-300); }
-    .kpi:hover::after { opacity: .5; }
-
-    .kpi-head {
-      display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 12px;
-    }
-    .kpi-label {
-      font-size: 11px; font-weight: 600;
-      letter-spacing: .04em; text-transform: uppercase;
-      color: var(--slate-500);
-    }
-    .kpi-icon {
-      width: 30px; height: 30px;
-      border-radius: 8px;
-      background: var(--slate-50);
-      display: inline-flex; align-items: center; justify-content: center;
-      color: var(--slate-500);
-      mat-icon { font-size: 16px; height: 16px; width: 16px; }
-    }
+    /* KPIs */
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 22px; }
+    .kpi { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); padding: 18px; box-shadow: var(--shadow-sm); transition: transform .15s; }
+    .kpi:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); border-color: var(--brand-300); cursor: help; }
+    .kpi-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .kpi-label { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--slate-500); }
+    .kpi-icon { width: 30px; height: 30px; border-radius: 8px; background: var(--slate-50); display: inline-flex; align-items: center; justify-content: center; color: var(--slate-500); }
+    .kpi-icon mat-icon { font-size: 16px; height: 16px; width: 16px; }
     .kpi-pos .kpi-icon { background: var(--success-50); color: var(--success-600); }
     .kpi-neg .kpi-icon { background: var(--danger-50);  color: var(--danger-600); }
-    .kpi-signals .kpi-icon { background: var(--brand-100); color: var(--brand-600); }
-
-    .kpi-value {
-      font-size: 28px; font-weight: 700;
-      color: var(--slate-900);
-      letter-spacing: -.02em; line-height: 1.1;
-      font-variant-numeric: tabular-nums;
-      .unit { font-size: 14px; font-weight: 500; color: var(--slate-400); margin-left: 2px; }
-    }
+    
+    .kpi-value { font-size: 28px; font-weight: 700; color: var(--slate-900); font-variant-numeric: tabular-nums; line-height: 1.1; }
+    .kpi-value .unit { font-size: 14px; font-weight: 500; color: var(--slate-400); margin-left: 2px; }
     .kpi-pos .kpi-value { color: var(--success-700); }
     .kpi-neg .kpi-value { color: var(--danger-700); }
 
-    .kpi-foot {
-      margin-top: 10px;
-      display: flex; align-items: center; justify-content: space-between;
-      gap: 8px;
-    }
+    .kpi-foot { margin-top: 10px; display: flex; align-items: center; justify-content: space-between; }
     .kpi-sub { font-size: 11px; color: var(--slate-400); }
 
-    .delta {
-      display: inline-flex; align-items: center; gap: 3px;
-      padding: 2px 8px; border-radius: var(--r-pill);
-      font-size: 11px; font-weight: 700;
-      background: var(--slate-100); color: var(--slate-500);
-      mat-icon { font-size: 14px; height: 14px; width: 14px; }
-    }
+    .delta { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: var(--r-pill); font-size: 11px; font-weight: 700; background: var(--slate-100); color: var(--slate-500); }
+    .delta mat-icon { font-size: 14px; height: 14px; width: 14px; }
     .delta.up   { background: var(--success-100); color: var(--success-700); }
     .delta.down { background: var(--danger-100);  color: var(--danger-700); }
 
-    .quality {
-      font-size: 11px; font-weight: 700; padding: 2px 8px;
-      background: var(--slate-100); color: var(--slate-500);
-      border-radius: var(--r-pill);
-    }
+    .quality { font-size: 11px; font-weight: 700; padding: 2px 8px; background: var(--slate-100); color: var(--slate-500); border-radius: var(--r-pill); }
     .quality.good { background: var(--success-100); color: var(--success-700); }
     .quality.bad  { background: var(--danger-100); color: var(--danger-700); }
 
-    .signals-bar {
-      margin-top: 10px;
-      display: flex; gap: 4px;
-      height: 28px;
-      border-radius: var(--r-sm);
-      overflow: hidden;
-    }
-    .signals-bar .seg {
-      display: flex; align-items: center; justify-content: center;
-      font-size: 11px; font-weight: 700; letter-spacing: .03em;
-      color: #fff;
-    }
-    .signals-bar .buy  { background: var(--success-500); }
-    .signals-bar .sell { background: var(--danger-500); }
-    .signals-bar .hold { background: var(--warn-500); }
+    /* Layout Gráficos */
+    .row { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; margin-bottom: 18px; }
+    .span-5 { grid-column: span 5; }
+    .span-7 { grid-column: span 7; }
+    @media (max-width: 1100px) { .span-5, .span-7 { grid-column: span 12; } }
 
-    /* ─── Cards / chart-cards ─── */
-    .row {
-      display: grid;
-      grid-template-columns: repeat(12, 1fr);
-      gap: 16px;
-      margin-bottom: 18px;
-    }
-    .span-4  { grid-column: span 4; }
-    .span-8  { grid-column: span 8; }
-    .span-12 { grid-column: span 12; }
-    @media (max-width: 1100px) {
-      .span-4, .span-8 { grid-column: span 12; }
-    }
-
-    .card {
-      background: var(--bg-elevated);
-      border: 1px solid var(--border);
-      border-radius: var(--r-md);
-      box-shadow: var(--shadow-sm);
-      padding: 18px;
-    }
-    .card-head {
-      display: flex; align-items: center; justify-content: space-between;
-      gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
-    }
-    .card-title {
-      display: flex; align-items: center; gap: 8px;
-      font-size: 14px; font-weight: 600; color: var(--slate-900);
-      mat-icon { font-size: 18px; height: 18px; width: 18px; color: var(--brand-600); }
-    }
-    .card-sub { font-size: 12px; color: var(--slate-400); }
-    .legend {
-      display: inline-flex; align-items: center; gap: 6px;
-      font-size: 12px; color: var(--slate-600);
-    }
-    .leg-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+    .card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-sm); padding: 18px; }
+    .card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+    .card-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--slate-900); }
+    .card-title mat-icon { font-size: 18px; height: 18px; width: 18px; color: var(--brand-600); }
+    .card-sub { font-size: 11px; color: var(--slate-500); }
+    .chart-card { padding: 18px 16px 12px; }
     .chart-host { width: 100%; overflow-x: auto; }
-    .chart-card { padding: 18px 16px 8px; }
 
-    .thresholds {
-      display: flex; gap: 8px; padding: 8px 6px 0;
-      span { font-size: 11px; padding: 3px 10px; border-radius: var(--r-pill); font-weight: 600; }
-      .th-buy  { background: var(--success-100); color: var(--success-700); }
-      .th-hold { background: var(--warn-100); color: var(--warn-700); }
-      .th-sell { background: var(--danger-100); color: var(--danger-700); }
-    }
+    /* Donut y Leyenda Personalizada */
+    .donut-container { display: flex; align-items: center; justify-content: center; gap: 20px; }
+    .donut-chart-wrapper { position: relative; width: 220px; height: 220px; }
+    .donut-center { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+    .dc-num { font-size: 32px; font-weight: 700; color: var(--slate-900); line-height: 1; }
+    .dc-lbl { font-size: 12px; color: var(--slate-500); font-weight: 600; letter-spacing: 0.05em; }
 
-    /* ─── Watchlist ticker cards ─── */
-    .watchlist { padding: 18px 18px 22px; }
-    .ticker-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-      gap: 12px;
-      margin-top: 6px;
-    }
-    .ticker {
-      position: relative;
-      background: var(--bg-elevated);
-      border: 1px solid var(--border);
-      border-radius: var(--r-md);
-      padding: 14px;
-      transition: transform .15s, box-shadow .15s, border-color .15s;
-    }
-    .ticker:hover {
-      box-shadow: var(--shadow-md);
-      transform: translateY(-1px);
-      border-color: var(--brand-300);
-    }
-    .ticker::before {
-      content: ''; position: absolute; left: 0; top: 14px; bottom: 14px;
-      width: 3px; border-radius: 0 3px 3px 0;
-      background: var(--slate-200);
-    }
-    .ticker-buy::before  { background: var(--success-500); }
-    .ticker-sell::before { background: var(--danger-500); }
-    .ticker-hold::before { background: var(--warn-500); }
+    .custom-legend { display: flex; flex-direction: column; gap: 12px; min-width: 140px; }
+    .cl-title { font-size: 12px; font-weight: 600; color: var(--slate-500); margin: 0 0 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .cl-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+    .cl-color { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+    .cl-label { flex: 1; font-weight: 600; color: var(--slate-700); }
+    .cl-value { font-weight: 700; color: var(--slate-900); font-size: 15px; }
 
-    .ticker-head {
-      display: flex; justify-content: space-between; align-items: center;
-      margin-bottom: 12px;
-    }
-    .ticker-symbol {
-      display: flex; align-items: center; gap: 8px;
-      font-size: 16px; font-weight: 700; color: var(--slate-900);
-    }
-    .ticker-mark {
-      width: 28px; height: 28px;
-      border-radius: 8px;
-      background: linear-gradient(135deg, var(--brand-600), var(--accent-cyan));
-      color: #fff;
-      display: inline-flex; align-items: center; justify-content: center;
-      font-size: 13px; font-weight: 700;
-    }
-    .signal-pill {
-      display: inline-flex; align-items: center; gap: 4px;
-      padding: 3px 10px; border-radius: var(--r-pill);
-      font-size: 11px; font-weight: 700; letter-spacing: .03em;
-      mat-icon { font-size: 14px; height: 14px; width: 14px; }
-    }
-    .signal-pill.buy  { background: var(--success-100); color: var(--success-700); }
-    .signal-pill.sell { background: rgba(124, 58, 237, .15); color: #7C3AED; }
-    .signal-pill.hold { background: var(--warn-100);    color: var(--warn-700); }
+    /* Probabilidades */
+    .thresholds { display: flex; justify-content: center; gap: 8px; padding-top: 10px; }
+    .thresholds span { font-size: 11px; padding: 4px 12px; border-radius: var(--r-pill); font-weight: 700; letter-spacing: 0.03em; }
+    .th-buy  { background: var(--success-100); color: var(--success-700); }
+    .th-hold { background: var(--warn-100); color: var(--warn-700); }
+    .th-sell { background: rgba(124, 58, 237, .15); color: #7C3AED; } /* Violeta Cortos */
 
-    .prob-block { margin-bottom: 12px; }
-    .prob-bar {
-      height: 8px; background: var(--slate-100);
-      border-radius: var(--r-pill); overflow: hidden;
-      display: flex; gap: 1px; cursor: help;
-    }
-    .prob-up   { background: linear-gradient(to right, var(--success-500), var(--success-600)); transition: width .5s; }
-    .prob-down { background: linear-gradient(to right, var(--danger-500), var(--danger-600));   transition: width .5s; }
-    .prob-labels {
-      display: flex; justify-content: space-between;
-      margin-top: 5px; font-size: 11px;
-      .up   { color: var(--success-700); font-weight: 700; }
-      .down { color: var(--danger-700);  font-weight: 700; }
-    }
-
-    .ticker-metrics {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 6px;
-    }
-    .metric {
-      background: var(--slate-50);
-      border-radius: var(--r-sm);
-      padding: 6px 8px;
-      display: flex; flex-direction: column; align-items: center;
-      gap: 2px;
-    }
-    .metric-label {
-      font-size: 10px; color: var(--slate-400);
-      letter-spacing: .04em; text-transform: uppercase; font-weight: 600;
-    }
-    .metric-value {
-      font-size: 13px; font-weight: 700; color: var(--slate-800);
-      font-variant-numeric: tabular-nums;
-    }
-    .metric-value.pos { color: var(--success-700); }
-    .metric-value.neg { color: var(--danger-700); }
-  `],
+    .loader { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 80px 16px; color: var(--slate-500); }
+    .empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 80px 16px; color: var(--slate-400); }
+    .empty mat-icon { font-size: 48px; height: 48px; width: 48px; opacity: .5; }
+  `]
 })
 export class DashboardComponent implements OnInit {
   private reportSvc = inject(ReportService);
@@ -507,13 +310,17 @@ export class DashboardComponent implements OnInit {
 
   signalPieChart: ChartDataPoint[] = [];
   probUpChart: ChartDataPoint[] = [];
-  returnComparisonChart: ChartSeries[] = [];
+  
+  avgBenchmark: number = 0; 
 
-  legendBelow = LegendPosition.Below;
-
-  signalScheme: any = { domain: ['#22C55E', '#EF4444', '#F59E0B'] };
-  probScheme: any   = { domain: ['#2563EB'] };
-  compareScheme: any = { domain: ['#2563EB', '#06B6D4'] };
+  // Colores seguros y fijos para la tarta
+  customSignalColors = [
+    { name: 'BUY', value: '#22C55E' },
+    { name: 'SELL', value: '#7C3AED' },
+    { name: 'HOLD', value: '#F59E0B' }
+  ];
+  
+  probScheme: any = { domain: ['#3B82F6'] };
 
   get buyCount()  { return this.tickerViews.filter(t => t.signal === 'BUY').length;  }
   get sellCount() { return this.tickerViews.filter(t => t.signal === 'SELL').length; }
@@ -547,29 +354,24 @@ export class DashboardComponent implements OnInit {
 
   private processReport(report: DailyReport) {
     this.report = report;
-    this.tickerViews = this.reportSvc.buildTickerViews(report)
-      .sort((a, b) => b.prob_up - a.prob_up);
-    this.signalPieChart        = this.reportSvc.signalDistributionChart(this.tickerViews);
-    this.probUpChart           = this.reportSvc.probUpChart(this.tickerViews);
-    this.returnComparisonChart = this.reportSvc.returnComparisonChart(this.tickerViews);
+    this.tickerViews = this.reportSvc.buildTickerViews(report).sort((a, b) => b.prob_up - a.prob_up);
+    
+    const sumBH = this.tickerViews.reduce((acc, curr) => acc + curr.buy_hold_return, 0);
+    this.avgBenchmark = this.tickerViews.length > 0 ? (sumBH / this.tickerViews.length) : 0;
+
+    this.signalPieChart = [
+      { name: 'BUY', value: this.buyCount },
+      { name: 'SELL', value: this.sellCount },
+      { name: 'HOLD', value: this.holdCount }
+    ].filter(item => item.value > 0);
+
+    this.probUpChart = this.reportSvc.probUpChart(this.tickerViews);
   }
 
-  healthClass(status: string) { return status.toLowerCase(); }
-  healthIcon(status: string)  {
-    return ({
-      COMPLETED: 'check_circle',
-      FAILED:    'error',
-      STARTED:   'pending',
-      UNKNOWN:   'help_outline',
-    } as Record<string, string>)[status] ?? 'help_outline';
-  }
-  signalIcon(s: string) {
-    return ({ BUY: 'arrow_upward', SELL: 'arrow_downward', HOLD: 'remove' } as Record<string, string>)[s] ?? 'remove';
-  }
   qualityLabel(s: number) {
     if (s >= 2)  return 'Excelente';
-    if (s >= 1)  return 'Buena';
+    if (s >= 1)  return 'Bueno';
     if (s >= 0)  return 'Aceptable';
-    return 'Pobre';
+    return 'Deficiente';
   }
 }
