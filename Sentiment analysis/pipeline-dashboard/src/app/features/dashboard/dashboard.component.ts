@@ -192,9 +192,8 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
                 [results]="winRateChart"
                 [xAxis]="true" [yAxis]="true" [showGridLines]="true"
                 [customColors]="customWinRateColors"
-                [view]="[700, 220]"
                 yAxisLabel="Acierto (%)" [showYAxisLabel]="true"
-                [showDataLabel]="true" [yScaleMax]="100" [barPadding]="16" [roundEdges]="true">
+                [showDataLabel]="true" [yScaleMax]="100" [barPadding]="4" [roundEdges]="true">
               </ngx-charts-bar-vertical>
             </div>
           </div>
@@ -212,9 +211,8 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
                 [results]="probUpChart"
                 [xAxis]="true" [yAxis]="true" [showGridLines]="true"
                 [customColors]="customProbColors"
-                [view]="[1180, 220]"
                 yAxisLabel="Probabilidad (%)" [showYAxisLabel]="true"
-                [showDataLabel]="true" [yScaleMax]="100" [barPadding]="16" [roundEdges]="true">
+                [showDataLabel]="true" [yScaleMax]="100" [barPadding]="4" [roundEdges]="true">
               </ngx-charts-bar-vertical>
             </div>
             <div class="thresholds">
@@ -293,7 +291,9 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
     .card-title mat-icon { font-size: 18px; height: 18px; width: 18px; color: var(--brand-600); }
     .card-sub { font-size: 11px; color: var(--slate-500); }
     .chart-card { padding: 18px 16px 12px; }
-    .chart-host { width: 100%; overflow-x: auto; }
+    
+    /* El truco responsive para los gráficos de barras */
+    .chart-host { width: 100%; height: 240px; overflow: hidden; }
 
     /* Donut y Leyenda Personalizada */
     .donut-container { display: flex; align-items: center; justify-content: center; gap: 20px; }
