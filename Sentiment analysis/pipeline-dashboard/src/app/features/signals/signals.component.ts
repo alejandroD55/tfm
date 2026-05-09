@@ -540,7 +540,7 @@ import { TickerTrace } from '../../core/models/trace.model';
       mat-icon { font-size: 13px; height: 13px; width: 13px; }
     }
     .signal-pill.buy  { background: var(--success-100); color: var(--success-700); }
-    .signal-pill.sell { background: var(--danger-100);  color: var(--danger-700); }
+    .signal-pill.sell { background: rgba(124, 58, 237, .15); color: #7C3AED; }
     .signal-pill.hold { background: var(--warn-100);    color: var(--warn-700); }
 
     /* prob gauge */

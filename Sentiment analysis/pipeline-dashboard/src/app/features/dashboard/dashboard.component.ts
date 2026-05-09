@@ -22,71 +22,47 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
   template: `
     <div class="page">
 
-      <!-- ─── Page header ─── -->
       <header class="page-head">
         <div class="page-head-text">
           <div class="page-eyebrow">
             <mat-icon>space_dashboard</mat-icon>
-            <span>Portfolio overview</span>
+            <span>Visión General de la Cartera</span>
           </div>
-          <h1 class="page-title">Resumen del portfolio</h1>
-          <p class="page-sub">Sistema de trading algorítmico ETF · Red bayesiana + FinBERT · Datos de los últimos {{ report?.data_period_days || 90 }} días</p>
+          <h1 class="page-title">Resumen Operativo</h1>
+          <p class="page-sub">Sistema de trading algorítmico · Red Bayesiana + FinBERT · Evaluando los últimos {{ report?.data_period_days || 365 }} días</p>
         </div>
         <div class="page-actions">
           <mat-form-field appearance="outline" class="date-input" subscriptSizing="dynamic">
-            <mat-label>Fecha del report</mat-label>
+            <mat-label>Fecha del Informe</mat-label>
             <mat-select [(ngModel)]="selectedDate" (ngModelChange)="onDateChange($event)">
               @for (d of availableDates; track d.date) {
                 <mat-option [value]="d.date">{{ d.date }}</mat-option>
               }
             </mat-select>
           </mat-form-field>
-          <button class="btn btn-ghost" (click)="refresh()" matTooltip="Recargar último report">
+          <button class="btn btn-ghost" (click)="refresh()" matTooltip="Recargar último informe">
             <mat-icon>refresh</mat-icon>
-            <span>Refrescar</span>
+            <span>Actualizar</span>
           </button>
         </div>
       </header>
 
-      <!-- Loader -->
       @if (loading) {
         <div class="loader">
           <mat-spinner diameter="40"></mat-spinner>
-          <p>Cargando report desde el data lake…</p>
+          <p>Extrayendo datos del Data Lake de AWS…</p>
         </div>
       } @else if (report) {
 
-        <!-- Pipeline health banner -->
-        <div class="health" [class]="'health-' + healthClass(report.pipeline_health.batch_status)">
-          <div class="health-icon">
-            <mat-icon>{{ healthIcon(report.pipeline_health.batch_status) }}</mat-icon>
-          </div>
-          <div class="health-body">
-            <div class="health-title">
-              Pipeline <strong>{{ report.pipeline_health.batch_status }}</strong>
-              <span class="health-dot">·</span>
-              {{ report.pipeline_health.tickers_with_signals }}/{{ report.pipeline_health.tickers_expected }} tickers procesados
-            </div>
-            <div class="health-meta">
-              {{ report.pipeline_health.headlines_scored }} titulares analizados ·
-              cobertura {{ (report.pipeline_health.coverage_ratio * 100) | number:'1.0-0' }}%
-            </div>
-          </div>
-          <div class="health-period">
-            <mat-icon>event</mat-icon>
-            {{ report.report_date }}
-          </div>
-        </div>
-
-        <!-- KPI grid -->
         <section class="kpi-grid">
 
           <article class="kpi"
                    [class.kpi-pos]="report.summary.avg_cumulative_return > 0"
-                   [class.kpi-neg]="report.summary.avg_cumulative_return < 0">
+                   [class.kpi-neg]="report.summary.avg_cumulative_return < 0"
+                   matTooltip="Beneficio neto medio obtenido por la inteligencia artificial frente al capital inicial.">
             <div class="kpi-head">
-              <span class="kpi-label">Retorno acumulado medio</span>
-              <span class="kpi-icon"><mat-icon>trending_up</mat-icon></span>
+              <span class="kpi-label">Rentabilidad (Estrategia IA)</span>
+              <span class="kpi-icon"><mat-icon>account_balance_wallet</mat-icon></span>
             </div>
             <div class="kpi-value">
               {{ report.summary.avg_cumulative_return > 0 ? '+' : '' }}{{ (report.summary.avg_cumulative_return * 100) | number:'1.2-2' }}<span class="unit">%</span>
@@ -94,229 +70,85 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
             <div class="kpi-foot">
               <span class="delta" [class.up]="report.summary.avg_cumulative_return > 0" [class.down]="report.summary.avg_cumulative_return < 0">
                 <mat-icon>{{ report.summary.avg_cumulative_return >= 0 ? 'arrow_upward' : 'arrow_downward' }}</mat-icon>
-                {{ report.data_period_days }}d
+                {{ report.data_period_days }} días
               </span>
-              <span class="kpi-sub">{{ report.summary.total_tickers }} ETFs</span>
+              <span class="kpi-sub">Media de {{ report.summary.total_tickers }} activos</span>
             </div>
           </article>
 
-          <article class="kpi" [class.kpi-pos]="report.summary.avg_sharpe_ratio > 1">
+          <article class="kpi" [class.kpi-pos]="report.summary.avg_sharpe_ratio > 1"
+                   matTooltip="Mide si el beneficio justifica el riesgo asumido. >1 es Bueno, >2 es Excelente.">
             <div class="kpi-head">
-              <span class="kpi-label">Sharpe ratio medio</span>
-              <span class="kpi-icon"><mat-icon>speed</mat-icon></span>
+              <span class="kpi-label">Ratio de Sharpe (Riesgo)</span>
+              <span class="kpi-icon"><mat-icon>balance</mat-icon></span>
             </div>
             <div class="kpi-value">{{ report.summary.avg_sharpe_ratio | number:'1.2-2' }}</div>
             <div class="kpi-foot">
               <span class="quality" [class.good]="report.summary.avg_sharpe_ratio > 1" [class.bad]="report.summary.avg_sharpe_ratio < 0">
                 {{ qualityLabel(report.summary.avg_sharpe_ratio) }}
               </span>
-              <span class="kpi-sub">Anualizado · rf 2%</span>
+              <span class="kpi-sub">Anualizado · Tasa libre 2%</span>
             </div>
           </article>
 
-          <article class="kpi kpi-neg">
+          <article class="kpi kpi-neg"
+                   matTooltip="Representa la peor racha de pérdidas consecutivas (Drawdown) del sistema.">
             <div class="kpi-head">
-              <span class="kpi-label">Max drawdown medio</span>
-              <span class="kpi-icon"><mat-icon>arrow_downward</mat-icon></span>
+              <span class="kpi-label">Caída Máxima (Drawdown)</span>
+              <span class="kpi-icon"><mat-icon>water_drop</mat-icon></span>
             </div>
             <div class="kpi-value">{{ (report.summary.avg_max_drawdown * 100) | number:'1.2-2' }}<span class="unit">%</span></div>
             <div class="kpi-foot">
-              <span class="delta down"><mat-icon>warning_amber</mat-icon> Riesgo</span>
-              <span class="kpi-sub">Peor caída del capital</span>
-            </div>
-          </article>
-
-          <article class="kpi">
-            <div class="kpi-head">
-              <span class="kpi-label">Trades cerrados</span>
-              <span class="kpi-icon"><mat-icon>compare_arrows</mat-icon></span>
-            </div>
-            <div class="kpi-value">{{ report.summary.total_closed_trades }}</div>
-            <div class="kpi-foot">
-              <span class="kpi-sub">Total portfolio · {{ report.data_period_days }}d</span>
+              <span class="delta down"><mat-icon>warning_amber</mat-icon> Peor escenario</span>
             </div>
           </article>
 
           <article class="kpi kpi-signals">
             <div class="kpi-head">
-              <span class="kpi-label">Señales activas hoy</span>
+              <span class="kpi-label">Posicionamiento Actual</span>
               <span class="kpi-icon"><mat-icon>psychology</mat-icon></span>
             </div>
             <div class="kpi-value">
-              {{ tickerViews.length }}
-              <span class="unit">tickers</span>
+              {{ tickerViews.length }} <span class="unit">ETFs analizados</span>
             </div>
             <div class="signals-bar">
-              <span class="seg buy"   [style.flex]="buyCount  || 0">{{ buyCount  }} BUY</span>
-              <span class="seg sell"  [style.flex]="sellCount || 0">{{ sellCount }} SELL</span>
-              <span class="seg hold"  [style.flex]="holdCount || 0">{{ holdCount }} HOLD</span>
+              <span class="seg buy"   [style.flex]="buyCount  || 0" *ngIf="buyCount > 0">{{ buyCount  }} COMPRAR</span>
+              <span class="seg sell"  [style.flex]="sellCount || 0" *ngIf="sellCount > 0" style="background-color: #7C3AED;">{{ sellCount }} CORTOS</span>
+              <span class="seg hold"  [style.flex]="holdCount || 0" *ngIf="holdCount > 0">{{ holdCount }} MANTENER</span>
             </div>
           </article>
 
         </section>
 
-        <!-- ─── Charts row 1 ─── -->
         <section class="row">
           <div class="card chart-card span-4">
             <div class="card-head">
-              <div class="card-title">
-                <mat-icon>donut_large</mat-icon>
-                <span>Distribución de señales</span>
-              </div>
-              <span class="card-sub">{{ report.report_date }}</span>
+              <div class="card-title"><mat-icon>donut_large</mat-icon> <span>Distribución de Decisiones</span></div>
             </div>
             <div class="chart-host">
-              <ngx-charts-pie-chart
-                [results]="signalPieChart"
-                [legend]="true"
-                [legendPosition]="legendBelow"
-                [labels]="false"
-                [doughnut]="true"
-                [arcWidth]="0.32"
-                [scheme]="signalScheme"
-                [view]="[360, 280]">
-              </ngx-charts-pie-chart>
+              <ngx-charts-pie-chart [results]="signalPieChart" [legend]="true" [legendPosition]="legendBelow" [labels]="false" [doughnut]="true" [arcWidth]="0.32" [scheme]="signalScheme" [view]="[360, 280]"></ngx-charts-pie-chart>
             </div>
           </div>
 
           <div class="card chart-card span-8">
             <div class="card-head">
-              <div class="card-title">
-                <mat-icon>bar_chart</mat-icon>
-                <span>Probabilidad alcista P(↑) por ETF</span>
-              </div>
-              <span class="card-sub">Bayesian · Markov-blanket inferred</span>
+              <div class="card-title"><mat-icon>bar_chart</mat-icon> <span>Probabilidad Alcista P(↑) por ETF</span></div>
             </div>
             <div class="chart-host">
-              <ngx-charts-bar-vertical
-                [results]="probUpChart"
-                [xAxis]="true"
-                [yAxis]="true"
-                [showGridLines]="true"
-                [scheme]="probScheme"
-                [view]="[760, 280]"
-                yAxisLabel="P(subida) %"
-                [showYAxisLabel]="true"
-                [rotateXAxisTicks]="false"
-                [showDataLabel]="true"
-                [yScaleMax]="100"
-                [barPadding]="14"
-                [roundEdges]="true">
-              </ngx-charts-bar-vertical>
+              <ngx-charts-bar-vertical [results]="probUpChart" [xAxis]="true" [yAxis]="true" [showGridLines]="true" [scheme]="probScheme" [view]="[760, 280]" yAxisLabel="Probabilidad (%)" [showYAxisLabel]="true" [showDataLabel]="true" [yScaleMax]="100" [barPadding]="14" [roundEdges]="true"></ngx-charts-bar-vertical>
             </div>
             <div class="thresholds">
-              <span class="th-buy">BUY ≥ 65%</span>
-              <span class="th-hold">HOLD 35–65%</span>
-              <span class="th-sell">SELL ≤ 35%</span>
+              <span class="th-buy">COMPRAR ≥ 65%</span>
+              <span class="th-hold">MANTENER 35–65%</span>
+              <span class="th-sell" style="background: rgba(124, 58, 237, .15); color: #7C3AED;">CORTOS (VENDER) ≤ 35%</span>
             </div>
-          </div>
-        </section>
-
-        <!-- ─── Strategy vs B&H ─── -->
-        <section class="row">
-          <div class="card chart-card span-12">
-            <div class="card-head">
-              <div class="card-title">
-                <mat-icon>show_chart</mat-icon>
-                <span>Estrategia bayesiana vs Buy &amp; Hold</span>
-              </div>
-              <div class="legend">
-                <span class="leg-dot" style="background:var(--brand-600)"></span>
-                <span>Estrategia</span>
-                <span class="leg-dot" style="background:var(--accent-cyan); margin-left: 14px"></span>
-                <span>Buy &amp; Hold</span>
-              </div>
-            </div>
-            <div class="chart-host">
-              <ngx-charts-bar-vertical-2d
-                [results]="returnComparisonChart"
-                [xAxis]="true"
-                [yAxis]="true"
-                [showGridLines]="true"
-                [scheme]="compareScheme"
-                [view]="[1180, 320]"
-                yAxisLabel="Retorno acumulado (%)"
-                [showYAxisLabel]="true"
-                [showDataLabel]="true"
-                [groupPadding]="14"
-                [roundEdges]="true">
-              </ngx-charts-bar-vertical-2d>
-            </div>
-          </div>
-        </section>
-
-        <!-- ─── Ticker watchlist ─── -->
-        <section class="card watchlist">
-          <div class="card-head">
-            <div class="card-title">
-              <mat-icon>format_list_numbered</mat-icon>
-              <span>ETFs monitorizados</span>
-            </div>
-            <span class="card-sub">{{ tickerViews.length }} instrumentos · ranking por P(↑)</span>
-          </div>
-
-          <div class="ticker-grid">
-            @for (t of tickerViews; track t.ticker) {
-              <article class="ticker"
-                       [class.ticker-buy]="t.signal === 'BUY'"
-                       [class.ticker-sell]="t.signal === 'SELL'"
-                       [class.ticker-hold]="t.signal === 'HOLD'">
-                <header class="ticker-head">
-                  <div class="ticker-symbol">
-                    <span class="ticker-mark">{{ t.ticker[0] }}</span>
-                    <span>{{ t.ticker }}</span>
-                  </div>
-                  <span class="signal-pill {{ t.signal.toLowerCase() }}">
-                    <mat-icon>{{ signalIcon(t.signal) }}</mat-icon>
-                    {{ t.signal }}
-                  </span>
-                </header>
-
-                <div class="prob-block">
-                  <div class="prob-bar"
-                       [matTooltip]="'P↑ ' + (t.prob_up*100|number:'1.1-1') + '% · P↓ ' + (t.prob_down*100|number:'1.1-1') + '%'">
-                    <div class="prob-up"   [style.width.%]="t.prob_up * 100"></div>
-                    <div class="prob-down" [style.width.%]="t.prob_down * 100"></div>
-                  </div>
-                  <div class="prob-labels">
-                    <span class="up">↑ {{ (t.prob_up*100)|number:'1.0-0' }}%</span>
-                    <span class="down">↓ {{ (t.prob_down*100)|number:'1.0-0' }}%</span>
-                  </div>
-                </div>
-
-                <div class="ticker-metrics">
-                  <div class="metric">
-                    <span class="metric-label">Retorno</span>
-                    <span class="metric-value"
-                          [class.pos]="t.cumulative_return>0"
-                          [class.neg]="t.cumulative_return<0">
-                      {{ t.cumulative_return>0?'+':'' }}{{ (t.cumulative_return*100)|number:'1.1-1' }}%
-                    </span>
-                  </div>
-                  <div class="metric">
-                    <span class="metric-label">Sharpe</span>
-                    <span class="metric-value" [class.pos]="t.sharpe_ratio>1">
-                      {{ t.sharpe_ratio|number:'1.2-2' }}
-                    </span>
-                  </div>
-                  <div class="metric">
-                    <span class="metric-label">α vs B&amp;H</span>
-                    <span class="metric-value"
-                          [class.pos]="t.alpha_vs_benchmark>0"
-                          [class.neg]="t.alpha_vs_benchmark<0">
-                      {{ t.alpha_vs_benchmark>0?'+':'' }}{{ (t.alpha_vs_benchmark*100)|number:'1.1-1' }}%
-                    </span>
-                  </div>
-                </div>
-              </article>
-            }
           </div>
         </section>
 
       } @else {
         <div class="empty">
           <mat-icon>inbox</mat-icon>
-          <p>No hay reports disponibles todavía.</p>
+          <p>No hay informes disponibles todavía.</p>
         </div>
       }
     </div>
@@ -622,7 +454,7 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
       mat-icon { font-size: 14px; height: 14px; width: 14px; }
     }
     .signal-pill.buy  { background: var(--success-100); color: var(--success-700); }
-    .signal-pill.sell { background: var(--danger-100);  color: var(--danger-700); }
+    .signal-pill.sell { background: rgba(124, 58, 237, .15); color: #7C3AED; }
     .signal-pill.hold { background: var(--warn-100);    color: var(--warn-700); }
 
     .prob-block { margin-bottom: 12px; }

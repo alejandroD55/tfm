@@ -35,8 +35,9 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
           </div>
           <h1 class="page-title">Backtesting & performance</h1>
           <p class="page-sub">
-            Métricas de la estrategia bayesiana frente a Buy &amp; Hold sobre los últimos 90 días.
-            Capital inicial simulado: <strong>$10,000</strong>.
+            Métricas de la estrategia <strong>Long/Short</strong> bayesiana frente a Buy &amp; Hold.
+            Período: <strong>{{ summary.total_tickers ? 365 : 0 }} días</strong>.
+            Capital inicial: <strong>$10,000</strong>.
           </p>
         </div>
         <div class="page-actions">
@@ -71,7 +72,7 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
               {{ summary.avg_cumulative_return>0?'+':'' }}{{ (summary.avg_cumulative_return*100)|number:'1.2-2' }}<span class="unit">%</span>
             </div>
             <div class="kpi-foot">
-              <span class="kpi-sub">90 días · {{ summary.total_tickers }} ETFs</span>
+              <span class="kpi-sub">365 días · {{ summary.total_tickers }} ETFs</span>
             </div>
           </article>
 
@@ -210,7 +211,7 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
             <ngx-charts-bar-vertical
               [results]="alphaChart"
               [xAxis]="true" [yAxis]="true" [showGridLines]="true"
-              [scheme]="alphaScheme"
+              [customColors]="customColors"
               [view]="[1180, 280]"
               yAxisLabel="Alpha (%)" [showYAxisLabel]="true"
               [showDataLabel]="true" [roundEdges]="true">
@@ -240,83 +241,49 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
             </ng-container>
 
             <ng-container matColumnDef="signal">
-              <th mat-header-cell *matHeaderCellDef>Señal hoy</th>
+              <th mat-header-cell *matHeaderCellDef>Señal de Hoy</th>
               <td mat-cell *matCellDef="let r">
-                <span class="signal-pill {{ r.signal.toLowerCase() }}">{{ r.signal }}</span>
+                <span class="signal-pill {{ r.signal.toLowerCase() }}">
+                  {{ r.signal === 'BUY' ? 'COMPRAR' : r.signal === 'SELL' ? 'VENDER' : 'MANTENER' }}
+                </span>
               </td>
             </ng-container>
 
             <ng-container matColumnDef="return">
-              <th mat-header-cell *matHeaderCellDef>Retorno est.</th>
-              <td mat-cell *matCellDef="let r">
-                <span class="num" [class.pos]="r.cumulative_return>0" [class.neg]="r.cumulative_return<0">
-                  {{ r.cumulative_return>0?'+':'' }}{{ (r.cumulative_return*100)|number:'1.2-2' }}%
-                </span>
-              </td>
-            </ng-container>
+              <th mat-header-cell *matHeaderCellDef mat-sort-header>Retorno Estrategia</th>
+              </ng-container>
 
             <ng-container matColumnDef="bh">
-              <th mat-header-cell *matHeaderCellDef>Buy &amp; Hold</th>
-              <td mat-cell *matCellDef="let r">
-                <span class="num">{{ (r.buy_hold_return*100)|number:'1.2-2' }}%</span>
-              </td>
-            </ng-container>
+              <th mat-header-cell *matHeaderCellDef>Comprar y Mantener</th>
+              </ng-container>
 
             <ng-container matColumnDef="alpha">
-              <th mat-header-cell *matHeaderCellDef>Alpha</th>
-              <td mat-cell *matCellDef="let r">
-                <span class="num bold" [class.pos]="r.alpha_vs_benchmark>0" [class.neg]="r.alpha_vs_benchmark<0">
-                  {{ r.alpha_vs_benchmark>0?'+':'' }}{{ (r.alpha_vs_benchmark*100)|number:'1.2-2' }}%
-                </span>
-              </td>
-            </ng-container>
+              <th mat-header-cell *matHeaderCellDef>Ventaja (Alpha)</th>
+              </ng-container>
 
             <ng-container matColumnDef="sharpe">
-              <th mat-header-cell *matHeaderCellDef>Sharpe</th>
-              <td mat-cell *matCellDef="let r">
-                <span class="num" [class.pos]="r.sharpe_ratio>1">{{ r.sharpe_ratio|number:'1.2-2' }}</span>
-              </td>
-            </ng-container>
+              <th mat-header-cell *matHeaderCellDef>Ratio Sharpe</th>
+              </ng-container>
 
             <ng-container matColumnDef="drawdown">
-              <th mat-header-cell *matHeaderCellDef>Max DD</th>
-              <td mat-cell *matCellDef="let r">
-                <span class="num neg">{{ (r.max_drawdown*100)|number:'1.2-2' }}%</span>
-              </td>
-            </ng-container>
+              <th mat-header-cell *matHeaderCellDef>Caída Máx.</th>
+              </ng-container>
 
             <ng-container matColumnDef="equity">
-              <th mat-header-cell *matHeaderCellDef>Capital final</th>
-              <td mat-cell *matCellDef="let r">
-                <span class="num" [class.pos]="r.final_equity>10000" [class.neg]="r.final_equity<10000">
-                  $&nbsp;{{ r.final_equity|number:'1.0-0' }}
-                </span>
-              </td>
-            </ng-container>
+              <th mat-header-cell *matHeaderCellDef>Capital Final</th>
+              </ng-container>
 
             <ng-container matColumnDef="trades">
-              <th mat-header-cell *matHeaderCellDef>Trades</th>
-              <td mat-cell *matCellDef="let r">
-                <span class="num">{{ r.trades_closed }}</span>
-              </td>
-            </ng-container>
+              <th mat-header-cell *matHeaderCellDef>Operaciones</th>
+              </ng-container>
 
             <ng-container matColumnDef="winrate">
-              <th mat-header-cell *matHeaderCellDef>Win rate</th>
-              <td mat-cell *matCellDef="let r">
-                <div class="winrate-cell">
-                  <div class="wr-bar"><div class="wr-fill" [style.width.%]="r.win_rate*100" [class.high]="r.win_rate>=0.5"></div></div>
-                  <span class="num" [class.pos]="r.win_rate>=0.5">{{ (r.win_rate*100)|number:'1.0-0' }}%</span>
-                </div>
-              </td>
-            </ng-container>
+              <th mat-header-cell *matHeaderCellDef>Tasa Acierto</th>
+              </ng-container>
 
             <ng-container matColumnDef="pf">
-              <th mat-header-cell *matHeaderCellDef>Profit factor</th>
-              <td mat-cell *matCellDef="let r">
-                <span class="num" [class.pos]="r.profit_factor>1">{{ r.profit_factor|number:'1.2-2' }}</span>
-              </td>
-            </ng-container>
+              <th mat-header-cell *matHeaderCellDef>F. Beneficio</th>
+              </ng-container>
 
             <tr mat-header-row *matHeaderRowDef="tableCols; sticky: true"></tr>
             <tr mat-row *matRowDef="let r; columns: tableCols;"></tr>
@@ -513,10 +480,15 @@ export class BacktestingComponent implements OnInit {
   tableSource = new MatTableDataSource<TickerView>();
   tableCols = ['ticker', 'signal', 'return', 'bh', 'alpha', 'sharpe', 'drawdown', 'equity', 'trades', 'winrate', 'pf'];
 
-  compareScheme: any  = { domain: ['#2563EB', '#06B6D4'] };
+  compareScheme: any  = { domain: ['#60A5FA', '#94A3B8'] }; // Azul claro (Estrategia) vs Gris neutro (B&H)
   sharpeScheme: any   = { domain: ['#14B8A6'] };
-  drawdownScheme: any = { domain: ['#DC2626'] };
-  alphaScheme: any    = { domain: ['#7C3AED'] };
+  drawdownScheme: any = { domain: ['#EF4444'] };
+  
+  // Hacemos que el color de Alpha dependa de si es positivo o negativo
+  customColors = (name: string) => {
+    const item = this.alphaChart.find(d => d.name === name);
+    return (item && item.value >= 0) ? '#22C55E' : '#EF4444'; // Verde si ganamos, Rojo si perdemos
+  };
 
   get winnersCount() { return this.tickerViews.filter(t => t.cumulative_return > 0).length; }
 
