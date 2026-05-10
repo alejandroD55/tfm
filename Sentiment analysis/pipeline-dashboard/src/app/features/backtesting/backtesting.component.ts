@@ -160,10 +160,10 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
           <div class="chart-host">
             <ngx-charts-bar-vertical-2d
               [results]="returnChart"
-              [xAxis]="true" [yAxis]="true" [showGridLines]="true"
+              [xAxis]="true" [yAxis]="true" [showGridLines]="false"
               [scheme]="compareScheme"
               yAxisLabel="Rentabilidad Anual (%)" [showYAxisLabel]="true"
-              [showDataLabel]="true" [groupPadding]="4" [barPadding]="2" [roundEdges]="true">
+              [showDataLabel]="true" [groupPadding]="16" [barPadding]="2" [roundEdges]="false">
             </ngx-charts-bar-vertical-2d>
           </div>
         </section>
