@@ -8,13 +8,10 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatExpansionModule } from '@angular/material/expansion';
 import { MatChipsModule } from '@angular/material/chips';
-import { NgxChartsModule } from '@swimlane/ngx-charts';
 import { switchMap } from 'rxjs';
 import { TraceService } from '../../core/services/trace.service';
 import { ReportService } from '../../core/services/report.service';
-import {
-  BayesianTrace, TickerTrace, ModelConfig, ExecutionMeta, SentimentDetail,
-} from '../../core/models/trace.model';
+import { BayesianTrace, ModelConfig } from '../../core/models/trace.model';
 import { ReportDateEntry } from '../../core/models/report.model';
 
 @Component({
@@ -23,161 +20,158 @@ import { ReportDateEntry } from '../../core/models/report.model';
   imports: [
     CommonModule, FormsModule, MatIconModule, MatButtonModule,
     MatProgressSpinnerModule, MatSelectModule, MatTooltipModule,
-    MatExpansionModule, MatChipsModule, NgxChartsModule,
+    MatExpansionModule, MatChipsModule
   ],
   template: `
     <div class="page">
 
-      <!-- Header -->
       <header class="page-head">
         <div class="page-head-text">
           <div class="page-eyebrow">
             <mat-icon>manage_search</mat-icon>
-            <span>Observabilidad · Trazabilidad</span>
+            <span>Observabilidad y Trazabilidad MLOps</span>
           </div>
-          <h1 class="page-title">Auditoría del pipeline bayesiano</h1>
+          <h1 class="page-title">Auditoría del Modelo Matemático</h1>
           <p class="page-sub">
-            Configuración completa del modelo, decisiones implícitas documentadas,
-            cadena de razonamiento por ticker y distribución de sentimientos.
+            Inspección de caja blanca (Whitebox) de la Red Bayesiana. Consulta los pesos, distribuciones y umbrales exactos usados en la versión del modelo de este día.
           </p>
         </div>
         <div class="page-actions">
-          <mat-form-field appearance="outline" class="date-input" subscriptSizing="dynamic">
-            <mat-label>Fecha</mat-label>
-            <mat-select [(ngModel)]="selectedDate" (ngModelChange)="onDateChange($event)">
+          <div class="filter-group">
+            <label>Fecha de la Traza</label>
+            <select class="aurora-select" [(ngModel)]="selectedDate" (change)="onDateChange(selectedDate)">
               @for (d of availableDates; track d.date) {
-                <mat-option [value]="d.date">
-                  {{ d.date }}
-                  @if (!d.has_trace) { <span class="no-trace">(sin trace)</span> }
-                </mat-option>
+                <option [value]="d.date">{{ d.date }}</option>
               }
-            </mat-select>
-          </mat-form-field>
+            </select>
+          </div>
         </div>
       </header>
+
+      <mat-accordion class="glossary-accordion">
+        <mat-expansion-panel class="glossary-panel">
+          <mat-expansion-panel-header>
+            <mat-panel-title>
+              <mat-icon>lightbulb</mat-icon>
+              <span>¿Cómo auditar el comportamiento del algoritmo? (Glosario)</span>
+            </mat-panel-title>
+          </mat-expansion-panel-header>
+          
+          <div class="glossary-content">
+            <div class="g-col">
+              <strong>1. Reglas de Discretización:</strong> Los modelos bayesianos no entienden de números continuos. Aquí documentamos cómo convertimos un número (ej. RSI = 25) en un estado discreto entendible por la IA (ej. "Sobreventa").
+            </div>
+            <div class="g-col">
+              <strong>2. Distribuciones Prior:</strong> Los sesgos matemáticos base. Antes de analizar ningún ETF, la IA asume estas probabilidades estadísticas (ej: Asume que el mercado está en tendencia alcista el 50% de las veces).
+            </div>
+            <div class="g-col">
+              <strong>3. Matriz CPT (Tabla Condicional):</strong> El núcleo de la IA. Muestra las 36 combinaciones posibles del mercado y qué probabilidad exacta de subida se le asigna a cada escenario.
+            </div>
+
+            <div class="g-col full-width limitation-box">
+              <strong><mat-icon>engineering</mat-icon> Decisiones Implícitas (Hardcoded) de esta versión:</strong>
+              <ul class="limit-list">
+                @for (lim of limitations; track $index) {
+                  <li>{{ lim }}</li>
+                }
+              </ul>
+            </div>
+          </div>
+        </mat-expansion-panel>
+      </mat-accordion>
 
       @if (loading) {
         <div class="loader">
           <mat-spinner diameter="40"></mat-spinner>
-          <p>Cargando traza bayesiana...</p>
+          <p>Cargando pesos matemáticos desde AWS S3...</p>
         </div>
       } @else if (!trace) {
         <div class="empty-state">
           <mat-icon>info_outline</mat-icon>
-          <h3>No hay traza disponible para esta fecha</h3>
-          <p>La traza se genera a partir de la versión 2.0 de lambda_bayesian.<br>
-             Ejecuta el pipeline para generar datos auditables.</p>
+          <h3>No hay traza auditable para esta fecha</h3>
+          <p>La traza de caja blanca se genera a partir de la versión 2.0 del algoritmo.</p>
         </div>
       } @else {
 
-        <!-- Ejecución metadata -->
         <section class="exec-banner">
-          <div class="exec-icon"><mat-icon>play_circle</mat-icon></div>
+          <div class="exec-icon"><mat-icon>verified_user</mat-icon></div>
           <div class="exec-body">
             <div class="exec-title">
-              lambda_bayesian · {{ trace.batch_date }} · v{{ trace.model_config?.version }}
+              Firma de Ejecución: lambda_bayesian · {{ trace.batch_date }} · Versión del Modelo: v{{ model?.version || '1.0.0' }}
             </div>
             <div class="exec-meta">
-              {{ trace.execution?.signals_generated }} señales generadas en
-              {{ trace.execution?.duration_seconds }}s ·
-              {{ trace.execution?.tickers_skipped }} tickers omitidos ·
-              generado {{ trace.generated_at | date:'dd/MM HH:mm' }}
+              {{ trace.execution.signals_generated }} decisiones generadas en
+              {{ trace.execution.duration_seconds }}s ·
+              {{ trace.execution.tickers_skipped }} activos omitidos por falta de datos
             </div>
           </div>
           <div class="exec-stats">
-            <span class="es ok">{{ trace.execution?.signals_generated }} OK</span>
-            <span class="es warn">{{ trace.execution?.tickers_skipped }} omitidos</span>
+            <span class="es ok">Trazabilidad OK</span>
           </div>
         </section>
 
-        <!-- Decisiones implícitas -->
-        <section class="card">
-          <div class="card-head">
-            <div class="card-title warn-title">
-              <mat-icon>warning_amber</mat-icon>
-              <span>Decisiones implícitas documentadas ({{ limitations.length }})</span>
-            </div>
-            <span class="card-sub">Aspectos del modelo no visibles en la señal final</span>
-          </div>
-          <div class="limit-list">
-            @for (lim of limitations; track $index) {
-              <div class="limit-item">
-                <mat-icon class="lim-icon">info</mat-icon>
-                <span>{{ lim }}</span>
-              </div>
-            }
-          </div>
-        </section>
-
-        <!-- Configuración del modelo -->
         <section class="card">
           <div class="card-head">
             <div class="card-title">
               <mat-icon>tune</mat-icon>
-              <span>Configuración del modelo bayesiano</span>
+              <span>Parámetros de Configuración del Algoritmo</span>
             </div>
-            <span class="card-sub">Todos los parámetros que determinan las señales</span>
+            <span class="card-sub">Reglas deterministas aplicadas a los datos crudos</span>
           </div>
 
           <div class="config-grid">
 
-            <!-- Discretización -->
             <div class="config-box">
-              <h4 class="config-box-title"><mat-icon>compress</mat-icon> Discretización</h4>
+              <h4 class="config-box-title"><mat-icon>compress</mat-icon> Reglas de Discretización</h4>
               <div class="config-rows">
                 <div class="cr">
-                  <span class="cr-label">RSI sobrevendido si</span>
+                  <span class="cr-label">Considerar Sobreventa si:</span>
                   <span class="cr-val badge-blue">RSI &lt; {{ model?.discretization?.rsi?.oversold_below }}</span>
                 </div>
                 <div class="cr">
-                  <span class="cr-label">RSI sobrecomprado si</span>
+                  <span class="cr-label">Considerar Sobrecompra si:</span>
                   <span class="cr-val badge-red">RSI &gt; {{ model?.discretization?.rsi?.overbought_above }}</span>
                 </div>
                 <div class="cr">
-                  <span class="cr-label">Tendencia</span>
-                  <span class="cr-val">{{ model?.discretization?.trend?.rule }}</span>
+                  <span class="cr-label">Considerar Tendencia Alcista si:</span>
+                  <span class="cr-val badge-green">SMA 20 &gt; SMA 50</span>
                 </div>
                 <div class="cr">
-                  <span class="cr-label">Volatilidad alta si</span>
-                  <span class="cr-val badge-orange">
-                    BB width &gt; {{ (model?.discretization?.volatility?.high_if_band_width_ratio_above || 0) * 100 }}% del precio
-                  </span>
+                  <span class="cr-label">Considerar Alta Volatilidad si:</span>
+                  <span class="cr-val badge-orange">Bandas Bollinger &gt; {{ (model?.discretization?.volatility?.high_if_band_width_ratio_above || 0.05) * 100 }}%</span>
                 </div>
               </div>
             </div>
 
-            <!-- Umbrales de señal -->
             <div class="config-box">
-              <h4 class="config-box-title"><mat-icon>call_split</mat-icon> Umbrales de señal</h4>
+              <h4 class="config-box-title"><mat-icon>call_split</mat-icon> Umbrales de Inversión</h4>
               <div class="config-rows">
                 <div class="cr">
-                  <span class="signal-badge buy">BUY</span>
-                  <span class="cr-val">si P(up) &gt; {{ model?.signal_thresholds?.BUY?.prob_up_above }}</span>
+                  <span class="signal-badge buy">COMPRAR</span>
+                  <span class="cr-val">Si Confianza &gt; {{ (model?.signal_thresholds?.BUY?.prob_up_above || 0.65) * 100 }}%</span>
                 </div>
                 <div class="cr">
-                  <span class="signal-badge sell">SELL</span>
-                  <span class="cr-val">si P(up) &lt; {{ model?.signal_thresholds?.SELL?.prob_up_below }}</span>
+                  <span class="signal-badge sell">CASH (CORTOS)</span>
+                  <span class="cr-val">Si Confianza &lt; {{ (model?.signal_thresholds?.SELL?.prob_up_below || 0.35) * 100 }}%</span>
                 </div>
                 <div class="cr">
-                  <span class="signal-badge hold">HOLD</span>
+                  <span class="signal-badge hold">MANTENER</span>
                   <span class="cr-val">
-                    si P(up) entre {{ model?.signal_thresholds?.HOLD?.range?.[0] }}
-                    y {{ model?.signal_thresholds?.HOLD?.range?.[1] }}
+                    Si Confianza está entre {{ (model?.signal_thresholds?.HOLD?.range?.[0] || 0.35) * 100 }}% y {{ (model?.signal_thresholds?.HOLD?.range?.[1] || 0.65) * 100 }}%
                   </span>
                 </div>
               </div>
             </div>
 
-            <!-- Priors -->
             <div class="config-box">
-              <h4 class="config-box-title"><mat-icon>donut_small</mat-icon> Distribuciones prior</h4>
+              <h4 class="config-box-title"><mat-icon>donut_small</mat-icon> Distribuciones Estadísticas Base (Priors)</h4>
               @for (node of priorNodes; track node.name) {
                 <div class="prior-node">
-                  <span class="pn-name">{{ node.name }}</span>
+                  <span class="pn-name">{{ translateNode(node.name) }}</span>
                   <div class="pn-bars">
                     @for (state of node.states; track state.key) {
                       <div class="pn-bar-row">
-                        <span class="pn-state">{{ state.key }}</span>
+                        <span class="pn-state">{{ translateState(state.key) }}</span>
                         <div class="pn-bar-wrap">
                           <div class="pn-bar"
                                [style.width.%]="state.value * 100"
@@ -195,33 +189,34 @@ import { ReportDateEntry } from '../../core/models/report.model';
           </div>
         </section>
 
-        <!-- CPT -->
         <section class="card">
           <div class="card-head">
             <div class="card-title">
               <mat-icon>grid_on</mat-icon>
-              <span>Tabla de Probabilidades Condicionales — MarketDirection</span>
+              <span>Matriz de Probabilidad Condicional (CPT)</span>
             </div>
-            <span class="card-sub">36 combinaciones · filtra para ver el razonamiento en contexto</span>
+            <span class="card-sub">Tabla completa de las 36 combinaciones matemáticas que rigen la decisión final del algoritmo.</span>
           </div>
 
           <div class="cpt-filters">
-            <select [(ngModel)]="cptFilterSentiment" class="cpt-select">
-              <option value="">Sentimiento: todos</option>
-              <option value="bullish">bullish</option>
-              <option value="bearish">bearish</option>
-              <option value="neutral">neutral</option>
+            <select class="aurora-select" [(ngModel)]="cptFilterSentiment">
+              <option value="">Sentimiento (FinBERT): Todos</option>
+              <option value="bullish">Alcista</option>
+              <option value="neutral">Neutral</option>
+              <option value="bearish">Bajista</option>
             </select>
-            <select [(ngModel)]="cptFilterRsi" class="cpt-select">
-              <option value="">RSI: todos</option>
-              <option value="oversold">oversold</option>
-              <option value="neutral">neutral</option>
-              <option value="overbought">overbought</option>
+
+            <select class="aurora-select" [(ngModel)]="cptFilterRsi">
+              <option value="">Fuerza (RSI): Todos</option>
+              <option value="overbought">Sobrecompra</option>
+              <option value="neutral">Neutral</option>
+              <option value="oversold">Sobreventa</option>
             </select>
-            <select [(ngModel)]="cptFilterTrend" class="cpt-select">
-              <option value="">Tendencia: todos</option>
-              <option value="uptrend">uptrend</option>
-              <option value="downtrend">downtrend</option>
+
+            <select class="aurora-select" [(ngModel)]="cptFilterTrend">
+              <option value="">Tendencia: Todos</option>
+              <option value="uptrend">Alcista</option>
+              <option value="downtrend">Bajista</option>
             </select>
           </div>
 
@@ -229,32 +224,37 @@ import { ReportDateEntry } from '../../core/models/report.model';
             <table class="cpt-table">
               <thead>
                 <tr>
-                  <th>Sentimiento</th><th>RSI</th><th>Tendencia</th><th>Volatilidad</th>
-                  <th>P(subida)</th><th>P(bajada)</th><th>Señal implícita</th>
+                  <th>Sentimiento</th><th>Fuerza (RSI)</th><th>Tendencia</th><th>Volatilidad</th>
+                  <th>Confianza Alcista P(↑)</th><th>Confianza Bajista P(↓)</th><th>Señal Implícita</th>
                 </tr>
               </thead>
               <tbody>
                 @for (row of filteredCpt; track $index) {
-                  <tr [class.row-buy]="row.prob_up > 0.65"
-                      [class.row-sell]="row.prob_up < 0.35">
-                    <td><span class="ev-chip {{ row.sentiment }}">{{ row.sentiment }}</span></td>
-                    <td><span class="ev-chip {{ row.rsi }}">{{ row.rsi }}</span></td>
-                    <td><span class="ev-chip {{ row.trend }}">{{ row.trend }}</span></td>
-                    <td><span class="ev-chip vol-{{ row.volatility }}">{{ row.volatility }}</span></td>
+                  <tr>
+                    <td><span class="ev-chip {{ row.sentiment }}">{{ translateState(row.sentiment) }}</span></td>
+                    <td><span class="ev-chip {{ row.rsi }}">{{ translateState(row.rsi) }}</span></td>
+                    <td><span class="ev-chip {{ row.trend }}">{{ translateState(row.trend) }}</span></td>
+                    <td><span class="ev-chip vol-{{ row.volatility }}">{{ translateState(row.volatility) }}</span></td>
                     <td>
                       <div class="prob-bar-cell">
                         <div class="pb-fill"
                              [style.width.%]="row.prob_up * 100"
-                             [class.high]="row.prob_up > 0.65"
-                             [class.low]="row.prob_up < 0.35"></div>
-                        <span>{{ (row.prob_up * 100) | number:'1.0-0' }}%</span>
+                             [class.high]="row.prob_up >= 0.65"
+                             [class.mid]="row.prob_up > 0.35 && row.prob_up < 0.65"
+                             [class.low]="row.prob_up <= 0.35"></div>
+                        <span class="prob-pct-text" 
+                              [class.txt-green]="row.prob_up >= 0.65"
+                              [class.txt-yellow]="row.prob_up > 0.35 && row.prob_up < 0.65"
+                              [class.txt-purple]="row.prob_up <= 0.35">
+                          {{ (row.prob_up * 100) | number:'1.0-0' }}%
+                        </span>
                       </div>
                     </td>
                     <td class="muted">{{ ((1 - row.prob_up) * 100) | number:'1.0-0' }}%</td>
                     <td>
-                      @if (row.prob_up > 0.65) { <span class="signal-badge buy">BUY</span> }
-                      @else if (row.prob_up < 0.35) { <span class="signal-badge sell">SELL</span> }
-                      @else { <span class="signal-badge hold">HOLD</span> }
+                      @if (row.prob_up >= 0.65) { <span class="signal-badge buy">COMPRAR</span> }
+                      @else if (row.prob_up <= 0.35) { <span class="signal-badge sell">CASH</span> }
+                      @else { <span class="signal-badge hold">MANTENER</span> }
                     </td>
                   </tr>
                 }
@@ -263,280 +263,115 @@ import { ReportDateEntry } from '../../core/models/report.model';
           </div>
         </section>
 
-        <!-- Trazas por ticker -->
-        <section class="card">
-          <div class="card-head">
-            <div class="card-title">
-              <mat-icon>account_tree</mat-icon>
-              <span>Cadena de decisión por ETF ({{ tickerList.length }} tickers)</span>
-            </div>
-            <span class="card-sub">Valores raw → estados discretos → probabilidades → señal → razonamiento</span>
-          </div>
-
-          <div class="ticker-traces">
-            @for (ticker of tickerList; track ticker) {
-              <mat-expansion-panel class="trace-panel">
-                <mat-expansion-panel-header [collapsedHeight]="'68px'" [expandedHeight]="'68px'">
-                  <div class="tp-header">
-                    <span class="tp-ticker">{{ ticker }}</span>
-                    <span class="signal-badge {{ getSignal(ticker).toLowerCase() }}">{{ getSignal(ticker) }}</span>
-                    <div class="tp-prob">
-                      <div class="tp-bar">
-                        <div class="tp-fill"
-                             [style.width.%]="getProbUp(ticker) * 100"
-                             [class.buy-fill]="getProbUp(ticker) > 0.65"
-                             [class.sell-fill]="getProbUp(ticker) < 0.35"></div>
-                      </div>
-                      <span class="tp-pct">P&#8593;={{ (getProbUp(ticker) * 100) | number:'1.1-1' }}%</span>
-                    </div>
-                    <div class="tp-states">
-                      @for (state of getStates(ticker); track state.label) {
-                        <span class="ev-chip {{ state.cls }}" [matTooltip]="state.tooltip">{{ state.value }}</span>
-                      }
-                    </div>
-                  </div>
-                </mat-expansion-panel-header>
-
-                <!-- Detalle expandido: usamos *ngIf as para crear variable local (Angular 17) -->
-                <ng-container *ngIf="getTrace(ticker) as t">
-                  <div class="trace-detail">
-
-                    <!-- Razonamiento -->
-                    <div class="reasoning-box">
-                      <mat-icon>lightbulb</mat-icon>
-                      <span>{{ t.reasoning }}</span>
-                    </div>
-
-                    <div class="detail-grid">
-
-                      <!-- Valores crudos -->
-                      <div class="detail-box">
-                        <h5><mat-icon>numbers</mat-icon> Valores crudos</h5>
-                        <div class="kv-list">
-                          <div class="kv">
-                            <span>Precio cierre</span>
-                            <strong>{{ t.raw_values.close_price | number:'1.2-2' }}</strong>
-                          </div>
-                          <div class="kv">
-                            <span>RSI 14</span>
-                            <strong [class.kv-green]="t.raw_values.rsi_14 < 30"
-                                    [class.kv-red]="t.raw_values.rsi_14 > 70">
-                              {{ t.raw_values.rsi_14 | number:'1.1-1' }}
-                            </strong>
-                          </div>
-                          <div class="kv">
-                            <span>SMA 20</span>
-                            <strong>{{ t.raw_values.sma_20 | number:'1.2-2' }}</strong>
-                          </div>
-                          <div class="kv">
-                            <span>SMA 50</span>
-                            <strong>{{ t.raw_values.sma_50 | number:'1.2-2' }}</strong>
-                          </div>
-                          <div class="kv">
-                            <span>SMA spread</span>
-                            <strong [class.kv-green]="(t.raw_values.sma_spread || 0) > 0"
-                                    [class.kv-red]="(t.raw_values.sma_spread || 0) < 0">
-                              {{ (t.raw_values.sma_spread || 0) | number:'1.2-2' }}
-                            </strong>
-                          </div>
-                          <div class="kv">
-                            <span>BB width ratio</span>
-                            <strong [class.kv-orange]="t.raw_values.bb_width_ratio > 0.05">
-                              {{ (t.raw_values.bb_width_ratio * 100) | number:'1.2-2' }}%
-                            </strong>
-                          </div>
-                        </div>
-                      </div>
-
-                      <!-- Discretización -->
-                      <div class="detail-box">
-                        <h5><mat-icon>compress</mat-icon> Discretización</h5>
-                        <div class="disc-chain">
-                          <div class="dc-step">
-                            <span class="dc-node">Sentimiento</span>
-                            <span class="dc-raw">{{ t.discretization.sentiment_raw }} ({{ (t.discretization.sentiment_conf * 100) | number:'1.0-0' }}%)</span>
-                            <mat-icon class="dc-arrow">arrow_forward</mat-icon>
-                            <span class="ev-chip {{ t.discretization.sentiment_state }}">{{ t.discretization.sentiment_state }}</span>
-                          </div>
-                          <div class="dc-step">
-                            <span class="dc-node">RSI</span>
-                            <span class="dc-raw">{{ t.raw_values.rsi_14 | number:'1.1-1' }}</span>
-                            <mat-icon class="dc-arrow">arrow_forward</mat-icon>
-                            <span class="ev-chip {{ t.discretization.rsi_state }}">{{ t.discretization.rsi_state }}</span>
-                          </div>
-                          <div class="dc-step">
-                            <span class="dc-node">Tendencia</span>
-                            <span class="dc-raw">SMA20={{ t.raw_values.sma_20 | number:'1.0-0' }} vs SMA50={{ t.raw_values.sma_50 | number:'1.0-0' }}</span>
-                            <mat-icon class="dc-arrow">arrow_forward</mat-icon>
-                            <span class="ev-chip {{ t.discretization.trend_state }}">{{ t.discretization.trend_state }}</span>
-                          </div>
-                          <div class="dc-step">
-                            <span class="dc-node">Volatilidad</span>
-                            <span class="dc-raw">{{ (t.raw_values.bb_width_ratio * 100) | number:'1.2-2' }}% (umbral 5%)</span>
-                            <mat-icon class="dc-arrow">arrow_forward</mat-icon>
-                            <span class="ev-chip vol-{{ t.discretization.volatility_state }}">{{ t.discretization.volatility_state }}</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <!-- Sentimiento multi-headline -->
-                      <div class="detail-box">
-                        <h5><mat-icon>article</mat-icon> Sentimiento FinBERT ({{ t.sentiment_detail.total_headlines }} titulares)</h5>
-                        <div class="sentiment-dist">
-                          @for (entry of getSentimentDist(t.sentiment_detail); track entry.key) {
-                            <div class="sd-row">
-                              <span class="sd-label ev-chip {{ entry.key }}">{{ entry.key }}</span>
-                              <div class="sd-bar-wrap">
-                                <div class="sd-bar {{ entry.key }}" [style.width.%]="entry.pct"></div>
-                              </div>
-                              <span class="sd-num">{{ entry.count }} ({{ entry.pct }}%)</span>
-                            </div>
-                          }
-                        </div>
-                        @if (t.sentiment_detail.headlines_sample?.length) {
-                          <div class="headlines-list">
-                            @for (h of t.sentiment_detail.headlines_sample?.slice(0, 5); track $index) {
-                              <div class="hl-row">
-                                <span class="ev-chip {{ h.sentiment }} small">{{ h.sentiment }}</span>
-                                <span class="hl-text">{{ h.headline }}</span>
-                                <span class="hl-conf">{{ (h.confidence * 100) | number:'1.0-0' }}%</span>
-                              </div>
-                            }
-                          </div>
-                        }
-                        <div class="limitation-note">
-                          <mat-icon>warning_amber</mat-icon>
-                          {{ t.sentiment_detail.limitation }}
-                        </div>
-                      </div>
-
-                    </div>
-                  </div>
-                </ng-container>
-
-              </mat-expansion-panel>
-            }
-          </div>
-        </section>
-
       }
     </div>
   `,
   styles: [`
-    .page { max-width: 1400px; margin: 0 auto; }
+    /* shared page chrome */
+    .page { max-width: var(--content-max); margin: 0 auto; padding-bottom: 40px;}
+    .page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; flex-wrap: wrap; margin-bottom: 22px; }
+    .page-eyebrow { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: rgba(59, 130, 246, .12); color: var(--brand-600); border-radius: var(--r-pill); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 10px; mat-icon { font-size: 14px; height: 14px; width: 14px; } }
+    .page-title { font-size: 26px; font-weight: 700; color: var(--slate-900); letter-spacing: -.02em; }
+    .page-sub { color: var(--slate-500); font-size: 13px; margin-top: 6px; max-width: 760px; }
 
-    .page-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
-    .page-eyebrow { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--brand-400, #60a5fa); letter-spacing: .08em; text-transform: uppercase; margin-bottom: 4px; mat-icon { font-size: 14px; height: 14px; width: 14px; } }
-    .page-title { font-size: 22px; font-weight: 700; color: var(--fg, #fff); margin: 0 0 4px; }
-    .page-sub { font-size: 13px; color: var(--fg-muted, #888); margin: 0; max-width: 600px; }
-    .date-input { min-width: 160px; }
-    .no-trace { color: #888; font-size: 11px; margin-left: 4px; }
-    .loader { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 80px; color: var(--fg-muted, #888); }
-    .empty-state { text-align: center; padding: 60px; color: var(--fg-muted, #888); mat-icon { font-size: 48px; height: 48px; width: 48px; display: block; margin: 0 auto 12px; } h3 { margin: 0 0 8px; font-size: 18px; } }
+    /* Filtros Personalizados nativos */
+    .page-actions { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-end; }
+    .filter-group { display: flex; flex-direction: column; gap: 4px; }
+    .filter-group label { font-size: 11px; font-weight: 600; color: var(--slate-500); text-transform: uppercase; letter-spacing: 0.05em; }
+    .aurora-select {
+      height: 40px; appearance: none; background-color: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-sm); 
+      padding: 0 32px 0 14px; font-family: var(--font-sans); font-size: 13px; font-weight: 600; color: var(--slate-700); cursor: pointer; min-width: 180px; 
+      background-image: url('data:image/svg+xml;charset=US-ASCII,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%2364748B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>'); 
+      background-repeat: no-repeat; background-position: right 8px center; background-size: 16px; transition: all 0.2s ease; 
+    }
+    .aurora-select:hover { border-color: var(--brand-400); }
+    .aurora-select:focus { outline: none; border-color: var(--brand-600); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); }
 
-    .exec-banner { display: flex; align-items: center; gap: 16px; background: rgba(34,197,94,.06); border-radius: 12px; padding: 16px 20px; margin-bottom: 20px; border-left: 4px solid #22c55e; }
-    .exec-icon mat-icon { font-size: 28px; color: #22c55e; }
+    .loader { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 80px 16px; color: var(--slate-500); }
+    .empty-state { text-align: center; padding: 60px; color: var(--slate-500); mat-icon { font-size: 48px; height: 48px; width: 48px; display: block; margin: 0 auto 12px; opacity: 0.5;} h3 { margin: 0 0 8px; font-size: 18px; color: var(--slate-700);} }
+
+    /* Glosario Integrado */
+    .glossary-accordion { display: block; margin-bottom: 24px; }
+    .glossary-panel { background: rgba(59, 130, 246, 0.03) !important; border: 1px solid rgba(59, 130, 246, 0.2) !important; border-radius: 8px !important; box-shadow: none !important; }
+    .glossary-panel mat-panel-title { color: var(--brand-600); font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .glossary-panel mat-icon { font-size: 18px; height: 18px; width: 18px; color: var(--brand-600); }
+    
+    .glossary-content { padding-top: 10px; display: flex; flex-wrap: wrap; gap: 16px;}
+    .g-col { flex: 1 1 200px; font-size: 12.5px; color: var(--slate-700); line-height: 1.5; }
+    .g-col strong { color: var(--slate-900); display: block; margin-bottom: 4px; }
+    .full-width { flex: 1 1 100%; }
+
+    /* Decisiones implícitas integradas */
+    .limitation-box { background: rgba(245, 158, 11, 0.05); border: 1px dashed rgba(245, 158, 11, 0.3); border-radius: var(--r-sm); padding: 14px;}
+    .limitation-box strong { color: var(--warn-700); display: flex; align-items: center; gap: 6px; mat-icon {font-size: 18px; height: 18px; width: 18px;}}
+    .limit-list { margin: 8px 0 0 0; padding-left: 20px; font-size: 12.5px;}
+    .limit-list li { margin-bottom: 4px;}
+
+    /* Banner Ejecución */
+    .exec-banner { display: flex; align-items: center; gap: 16px; background: var(--success-50); border-radius: var(--r-md); padding: 16px 20px; margin-bottom: 24px; border-left: 4px solid var(--success-500); }
+    .exec-icon mat-icon { font-size: 28px; height: 28px; width: 28px; color: var(--success-600); }
     .exec-body { flex: 1; }
-    .exec-title { font-weight: 600; font-size: 14px; }
-    .exec-meta { font-size: 12px; color: var(--fg-muted, #888); margin-top: 2px; }
+    .exec-title { font-weight: 700; font-size: 14px; color: var(--slate-900); font-family: var(--font-mono);}
+    .exec-meta { font-size: 12px; color: var(--slate-600); margin-top: 4px; }
     .exec-stats { display: flex; gap: 8px; }
-    .es { padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; &.ok { background: rgba(34,197,94,.12); color: #86efac; } &.warn { background: rgba(245,158,11,.12); color: #fcd34d; } }
+    .es { padding: 4px 12px; border-radius: var(--r-pill); font-size: 12px; font-weight: 700; &.ok { background: var(--success-100); color: var(--success-700); } }
 
-    .card { background: var(--surface, #1f2937); border-radius: 12px; padding: 20px; margin-bottom: 16px; border: 1px solid rgba(255,255,255,.06); }
-    .card-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; flex-wrap: wrap; gap: 8px; }
-    .card-title { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; color: var(--fg, #fff); mat-icon { font-size: 18px; height: 18px; width: 18px; } }
-    .warn-title { color: #fcd34d !important; mat-icon { color: #fcd34d !important; } }
-    .card-sub { font-size: 12px; color: var(--fg-muted, #888); }
-
-    .limit-list { display: flex; flex-direction: column; gap: 8px; }
-    .limit-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; background: rgba(245,158,11,.06); border-radius: 8px; border-left: 3px solid #f59e0b; font-size: 13px; color: #fde68a; }
-    .lim-icon { color: #f59e0b; font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+    /* Tarjetas y Rejillas */
+    .card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-sm); padding: 18px; margin-bottom: 24px; }
+    .card-head { display: flex; flex-direction: column; justify-content: flex-start; margin-bottom: 18px; }
+    .card-title { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; color: var(--slate-900); mat-icon { font-size: 18px; height: 18px; width: 18px; color: var(--brand-600); } }
+    .card-sub { font-size: 12px; color: var(--slate-500); margin-left: 26px;}
 
     .config-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
-    .config-box { background: rgba(255,255,255,.03); border-radius: 10px; padding: 16px; }
-    .config-box-title { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--brand-400, #60a5fa); margin: 0 0 12px; mat-icon { font-size: 16px; } }
-    .config-rows { display: flex; flex-direction: column; gap: 8px; }
-    .cr { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
-    .cr-label { color: var(--fg-muted, #888); }
-    .cr-val { font-weight: 600; color: var(--fg, #fff); }
-    .badge-blue { color: #60a5fa; } .badge-red { color: #f87171; } .badge-orange { color: #fb923c; }
+    .config-box { background: var(--slate-50); border-radius: var(--r-md); padding: 16px; border: 1px solid var(--border);}
+    .config-box-title { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--brand-700); margin: 0 0 14px; text-transform: uppercase; letter-spacing: 0.03em; mat-icon { font-size: 16px; height: 16px; width: 16px;} }
+    
+    .config-rows { display: flex; flex-direction: column; gap: 10px; }
+    .cr { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; border-bottom: 1px dashed var(--slate-200); padding-bottom: 6px;}
+    .cr:last-child { border-bottom: none; padding-bottom: 0;}
+    .cr-label { color: var(--slate-600); font-weight: 500;}
+    .cr-val { font-weight: 700; color: var(--slate-900); }
+    .badge-blue { color: var(--brand-600); } .badge-red { color: var(--danger-600); } .badge-green { color: var(--success-600); } .badge-orange { color: var(--warn-600); }
 
-    .prior-node { margin-bottom: 12px; }
-    .pn-name { font-size: 12px; font-weight: 600; color: var(--fg-muted, #aaa); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; display: block; }
-    .pn-bars { display: flex; flex-direction: column; gap: 4px; }
+    /* Priors */
+    .prior-node { margin-bottom: 16px; }
+    .prior-node:last-child { margin-bottom: 0;}
+    .pn-name { font-size: 11px; font-weight: 700; color: var(--slate-500); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; display: block; }
+    .pn-bars { display: flex; flex-direction: column; gap: 6px; }
     .pn-bar-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-    .pn-state { width: 80px; color: var(--fg-muted, #888); }
-    .pn-bar-wrap { flex: 1; height: 6px; background: rgba(255,255,255,.08); border-radius: 3px; overflow: hidden; }
-    .pn-bar { height: 100%; background: #60a5fa; border-radius: 3px; &.green { background: #22c55e; } &.red { background: #ef4444; } }
-    .pn-pct { width: 32px; text-align: right; font-weight: 600; color: var(--fg, #fff); }
+    .pn-state { width: 85px; color: var(--slate-700); font-weight: 600;}
+    .pn-bar-wrap { flex: 1; height: 6px; background: var(--slate-200); border-radius: 3px; overflow: hidden; }
+    .pn-bar { height: 100%; background: var(--slate-400); border-radius: 3px; &.green { background: var(--success-500); } &.red { background: var(--danger-500); } }
+    .pn-pct { width: 35px; text-align: right; font-weight: 700; color: var(--slate-900); }
 
-    .signal-badge { padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 700;
-      &.buy { background: rgba(34,197,94,.15); color: #86efac; }
-      &.sell { background: rgba(239,68,68,.15); color: #fca5a5; }
-      &.hold { background: rgba(245,158,11,.15); color: #fde68a; }
+    /* Señales CPT */
+    .signal-badge { padding: 4px 10px; border-radius: var(--r-pill); font-size: 11px; font-weight: 700; letter-spacing: 0.03em;
+      &.buy { background: var(--success-100); color: var(--success-700); }
+      &.sell { background: rgba(124, 58, 237, .15); color: #7C3AED; }
+      &.hold { background: var(--warn-100); color: var(--warn-700); }
     }
 
-    .cpt-filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-    .cpt-select { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12); color: var(--fg, #fff); border-radius: 6px; padding: 6px 10px; font-size: 13px; outline: none; cursor: pointer; }
-    .cpt-table-wrap { overflow-x: auto; }
-    .cpt-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .cpt-table th { background: rgba(255,255,255,.06); padding: 10px 12px; text-align: left; font-size: 11px; color: var(--fg-muted, #888); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
-    .cpt-table td { padding: 8px 12px; border-top: 1px solid rgba(255,255,255,.04); color: var(--fg, #fff); }
-    .cpt-table tr.row-buy { background: rgba(34,197,94,.04); }
-    .cpt-table tr.row-sell { background: rgba(239,68,68,.04); }
-    .prob-bar-cell { display: flex; align-items: center; gap: 8px; }
-    .pb-fill { height: 6px; background: #60a5fa; border-radius: 3px; min-width: 4px; &.high { background: #22c55e; } &.low { background: #ef4444; } }
-    .muted { color: var(--fg-muted, #888); }
+    /* Tabla CPT */
+    .cpt-filters { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+    .cpt-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--r-sm);}
+    .cpt-table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
+    .cpt-table th { background: var(--slate-50); padding: 12px 14px; font-size: 11px; color: var(--slate-500); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--border);}
+    .cpt-table td { padding: 10px 14px; border-bottom: 1px solid var(--slate-100); color: var(--slate-800); }
+    .cpt-table tr:hover { background: var(--slate-50); }
+    
+    .prob-bar-cell { display: flex; align-items: center; gap: 8px; min-width: 130px;}
+    .pb-fill { height: 6px; background: var(--warn-400); border-radius: 3px; flex: 1; &.high { background: linear-gradient(to right, var(--success-500), var(--success-600)); } &.mid { background: var(--warn-400); } &.low { background: linear-gradient(to right, #7C3AED, #5b21b6); } }
+    .prob-pct-text { font-weight: 700; min-width: 40px; text-align: right;}
+    .txt-green { color: var(--success-700); } .txt-yellow { color: var(--warn-700); } .txt-purple { color: #7C3AED; }
+    .muted { color: var(--slate-400); font-weight: 600;}
 
-    .ev-chip { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
-    .bullish, .oversold, .uptrend { background: rgba(34,197,94,.15); color: #86efac; }
-    .bearish, .overbought, .downtrend { background: rgba(239,68,68,.15); color: #fca5a5; }
-    .neutral { background: rgba(255,255,255,.08); color: #d1d5db; }
-    .vol-low { background: rgba(96,165,250,.12); color: #93c5fd; }
-    .vol-high { background: rgba(251,146,60,.12); color: #fdba74; }
-    .small { font-size: 10px; padding: 1px 6px; }
-
-    .ticker-traces { display: flex; flex-direction: column; gap: 6px; }
-    .trace-panel { background: rgba(255,255,255,.02) !important; border-radius: 10px !important; border: 1px solid rgba(255,255,255,.06) !important; }
-    .tp-header { display: flex; align-items: center; gap: 12px; flex: 1; flex-wrap: wrap; }
-    .tp-ticker { font-size: 16px; font-weight: 700; min-width: 50px; color: var(--fg, #fff); }
-    .tp-prob { display: flex; align-items: center; gap: 8px; min-width: 160px; }
-    .tp-bar { flex: 1; height: 6px; background: rgba(255,255,255,.08); border-radius: 3px; overflow: hidden; }
-    .tp-fill { height: 100%; background: #60a5fa; border-radius: 3px; &.buy-fill { background: #22c55e; } &.sell-fill { background: #ef4444; } }
-    .tp-pct { font-size: 12px; font-weight: 600; min-width: 60px; color: var(--fg, #fff); }
-    .tp-states { display: flex; gap: 4px; flex-wrap: wrap; }
-
-    .trace-detail { padding: 16px 4px 8px; }
-    .reasoning-box { display: flex; align-items: flex-start; gap: 10px; background: rgba(96,165,250,.06); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; font-size: 13px; color: #bfdbfe; border-left: 3px solid #60a5fa; mat-icon { color: #60a5fa; flex-shrink: 0; margin-top: 1px; } }
-    .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
-    .detail-box { background: rgba(255,255,255,.03); border-radius: 10px; padding: 14px;
-      h5 { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--brand-400, #60a5fa); margin: 0 0 12px; mat-icon { font-size: 16px; } }
-    }
-    .kv-list { display: flex; flex-direction: column; gap: 6px; }
-    .kv { display: flex; justify-content: space-between; font-size: 13px; span { color: var(--fg-muted, #888); } strong { font-weight: 600; color: var(--fg, #fff); } }
-    .kv-green { color: #86efac !important; } .kv-red { color: #fca5a5 !important; } .kv-orange { color: #fdba74 !important; }
-
-    .disc-chain { display: flex; flex-direction: column; gap: 8px; }
-    .dc-step { display: flex; align-items: center; gap: 8px; font-size: 12px; flex-wrap: wrap; }
-    .dc-node { font-weight: 600; color: var(--fg-muted, #aaa); min-width: 80px; }
-    .dc-raw { color: var(--fg-muted, #777); font-family: monospace; flex: 1; }
-    .dc-arrow { font-size: 16px; color: #555; }
-
-    .sentiment-dist { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
-    .sd-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-    .sd-label { min-width: 70px; }
-    .sd-bar-wrap { flex: 1; height: 6px; background: rgba(255,255,255,.08); border-radius: 3px; overflow: hidden; }
-    .sd-bar { height: 100%; border-radius: 3px; &.bullish { background: #22c55e; } &.bearish { background: #ef4444; } &.neutral { background: #6b7280; } }
-    .sd-num { min-width: 60px; text-align: right; color: var(--fg-muted, #888); }
-
-    .headlines-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
-    .hl-row { display: flex; align-items: flex-start; gap: 8px; font-size: 11px; padding: 4px 0; }
-    .hl-text { flex: 1; color: var(--fg-muted, #aaa); line-height: 1.4; }
-    .hl-conf { color: var(--fg-muted, #888); white-space: nowrap; }
-
-    .limitation-note { display: flex; align-items: flex-start; gap: 6px; font-size: 11px; color: #fde68a; background: rgba(245,158,11,.06); border-radius: 6px; padding: 8px 10px;
-      mat-icon { font-size: 14px; color: #f59e0b; flex-shrink: 0; margin-top: 1px; }
-    }
+    /* Chips Evidencia */
+    .ev-chip { display: inline-flex; align-items: center; gap: 3px; padding: 3px 8px; border-radius: var(--r-pill); font-size: 11px; font-weight: 600; text-transform: capitalize;}
+    .bullish, .oversold, .uptrend { background: var(--success-100); color: var(--success-700); }
+    .bearish, .overbought, .downtrend { background: var(--danger-100); color: var(--danger-700); }
+    .neutral { background: var(--slate-100); color: var(--slate-600); }
+    .vol-low { background: var(--brand-100); color: var(--brand-700); }
+    .vol-high { background: var(--warn-100); color: var(--warn-700); }
   `],
 })
 export class AuditComponent implements OnInit {
@@ -546,7 +381,7 @@ export class AuditComponent implements OnInit {
   loading       = true;
   trace: BayesianTrace | null = null;
   model: ModelConfig | null   = null;
-  availableDates: (ReportDateEntry & { has_trace?: boolean })[] = [];
+  availableDates: ReportDateEntry[] = [];
   selectedDate  = '';
 
   cptRows:            any[] = [];
@@ -557,7 +392,6 @@ export class AuditComponent implements OnInit {
   limitations: string[] = [];
   priorNodes: { name: string; states: { key: string; value: number }[] }[] = [];
 
-  get tickerList()  { return Object.keys(this.trace?.tickers ?? {}); }
   get filteredCpt() {
     return this.cptRows.filter(r =>
       (!this.cptFilterSentiment || r.sentiment === this.cptFilterSentiment) &&
@@ -569,7 +403,7 @@ export class AuditComponent implements OnInit {
   ngOnInit() {
     this.reportSvc.listAvailableDates().pipe(
       switchMap(dates => {
-        this.availableDates = dates as any[];
+        this.availableDates = dates;
         if (!dates.length) { this.loading = false; return []; }
         this.selectedDate = dates[0].date;
         return this.traceSvc.getTrace(this.selectedDate);
@@ -592,9 +426,10 @@ export class AuditComponent implements OnInit {
   private processTrace(t: BayesianTrace) {
     this.trace = t;
     this.model = t.model_config;
-    this.limitations = t.model_config?.known_limitations ?? [];
+    // Eliminado el operador de encadenamiento opcional si sabemos que viene.
+    this.limitations = t.model_config.known_limitations || [];
 
-    if (t.model_config?.priors) {
+    if (t.model_config.priors) {
       this.priorNodes = Object.entries(t.model_config.priors).map(([name, vals]) => ({
         name,
         states: Object.entries(vals)
@@ -603,44 +438,30 @@ export class AuditComponent implements OnInit {
       }));
     }
 
-    if (t.model_config?.cpt_market_direction?.values_P_up) {
+    if (t.model_config.cpt_market_direction.values_P_up) {
       this.cptRows = this.traceSvc.parseCptMatrix(t.model_config.cpt_market_direction.values_P_up);
     }
   }
 
-  getTrace(ticker: string): TickerTrace | null {
-    return this.trace?.tickers?.[ticker] ?? null;
+  // Traducción estricta para la UI
+  translateState(val: string): string {
+    const dict: Record<string, string> = {
+      bullish: 'Alcista', bearish: 'Bajista', neutral: 'Neutral',
+      oversold: 'Sobreventa', overbought: 'Sobrecompra',
+      uptrend: 'Alcista', downtrend: 'Bajista',
+      low: 'Baja', high: 'Alta'
+    };
+    return dict[val] || val;
   }
 
-  getSignal(ticker: string): string {
-    return this.trace?.tickers?.[ticker]?.inference?.signal ?? 'HOLD';
-  }
-
-  getProbUp(ticker: string): number {
-    return this.trace?.tickers?.[ticker]?.inference?.prob_up ?? 0.5;
-  }
-
-  getStates(ticker: string): { label: string; value: string; cls: string; tooltip: string }[] {
-    const d = this.trace?.tickers?.[ticker]?.discretization;
-    if (!d) return [];
-    const rv = this.trace?.tickers?.[ticker]?.raw_values;
-    return [
-      { label: 'Sentimiento', value: d.sentiment_state, cls: d.sentiment_state,
-        tooltip: `FinBERT: ${d.sentiment_raw} (${Math.round(d.sentiment_conf * 100)}%)` },
-      { label: 'RSI', value: d.rsi_state, cls: d.rsi_state,
-        tooltip: `RSI 14 = ${(rv?.rsi_14 ?? 0).toFixed(1)}` },
-      { label: 'Tendencia', value: d.trend_state, cls: d.trend_state,
-        tooltip: 'SMA20 vs SMA50' },
-      { label: 'Volatilidad', value: d.volatility_state, cls: `vol-${d.volatility_state}`,
-        tooltip: `BB width = ${((rv?.bb_width_ratio ?? 0) * 100).toFixed(2)}%` },
-    ];
-  }
-
-  getSentimentDist(sd: SentimentDetail): { key: string; count: number; pct: number }[] {
-    if (!sd?.distribution) return [];
-    return Object.entries(sd.distribution).map(([key, v]) => ({
-      key, count: v.count, pct: v.pct,
-    }));
+  translateNode(val: string): string {
+    const dict: Record<string, string> = {
+      Sentiment: 'Sentimiento FinBERT',
+      RSI: 'Fuerza (RSI)',
+      Trend: 'Tendencia General',
+      Volatility: 'Volatilidad'
+    };
+    return dict[val] || val;
   }
 
   isPositiveState(state: string): boolean {
