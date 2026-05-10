@@ -179,15 +179,36 @@ interface BatchSummary {
                 <span>Estado de las Ejecuciones</span>
               </div>
             </div>
-            <div class="chart-container-pie">
-              <ngx-charts-pie-chart
-                [results]="statusPieChart"
-                [legend]="true"
-                [labels]="false"
-                [doughnut]="true"
-                [arcWidth]="0.35"
-                [scheme]="statusScheme">
-              </ngx-charts-pie-chart>
+            
+            <div class="donut-container">
+              <div class="donut-chart-wrapper">
+                <ngx-charts-pie-chart
+                  [results]="statusPieChart"
+                  [legend]="false"
+                  [labels]="false"
+                  [doughnut]="true"
+                  [arcWidth]="0.35"
+                  [customColors]="customStatusColors"
+                  [view]="[220, 220]">
+                </ngx-charts-pie-chart>
+                <div class="donut-center">
+                  <div class="dc-num">{{ batches.length }}</div>
+                  <div class="dc-lbl">Totales</div>
+                </div>
+              </div>
+              
+              <div class="custom-legend">
+                <div class="cl-item">
+                  <span class="cl-color" style="background-color: #22C55E;"></span>
+                  <span class="cl-label">EXITOSAS</span>
+                  <span class="cl-value">{{ completedCount }}</span>
+                </div>
+                <div class="cl-item">
+                  <span class="cl-color" style="background-color: #EF4444;"></span>
+                  <span class="cl-label">FALLIDAS</span>
+                  <span class="cl-value">{{ failedCount }}</span>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -350,7 +371,7 @@ interface BatchSummary {
     .g-col strong { color: var(--slate-900); display: block; margin-bottom: 4px; }
 
     /* Layout columnar del flujo de Arquitectura */
-    .flow-container { display: flex; align-items: flex-start; gap: 12px; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 24px; }
+    .flow-container { display: flex; align-items: flex-start; gap: 12px; flex-wrap: nowrap; overflow-x: auto; padding-top: 14px; padding-bottom: 24px; }
     .f-step { flex: 1; min-width: 160px; display: flex; flex-direction: column; gap: 8px; }
     .f-arrow { margin-top: 15px; font-size: 24px; font-weight: bold; color: var(--slate-400); }
     
@@ -393,15 +414,19 @@ interface BatchSummary {
     /* Contenedores Gráficos */
     .chart-container-tall { width: 100%; height: 260px; display: flex; align-items: center; justify-content: center; }
     .chart-container-medium { width: 100%; height: 220px; display: flex; align-items: center; justify-content: center; }
-    
-    /* Contenedor especial para la Tarta con la leyenda a la derecha limpia */
-    .chart-container-pie { width: 100%; height: 260px; display: flex; align-items: center; justify-content: flex-start; }
-    
-    /* Ajustes para limpiar el fondo gris oscuro nativo de la leyenda ngx-charts */
-    .ngx-charts .legend-labels { background: transparent !important; }
-    .ngx-charts .chart-legend .legend-wrap { background: transparent !important; box-shadow: none !important; }
-    .ngx-charts .legend-title-text { display: none; }
-    .chart-legend .legend-label { font-size: 12px !important; color: var(--slate-700) !important; font-weight: 600; margin-bottom: 6px;}
+
+    /* Donut y Leyenda Personalizada (Igual que Portfolio) */
+    .donut-container { display: flex; align-items: center; justify-content: center; gap: 20px; height: 260px;}
+    .donut-chart-wrapper { position: relative; width: 220px; height: 220px; }
+    .donut-center { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+    .dc-num { font-size: 32px; font-weight: 700; color: var(--slate-900); line-height: 1; }
+    .dc-lbl { font-size: 12px; color: var(--slate-500); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
+
+    .custom-legend { display: flex; flex-direction: column; gap: 12px; min-width: 100px; }
+    .cl-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+    .cl-color { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+    .cl-label { flex: 1; font-weight: 600; color: var(--slate-700); }
+    .cl-value { font-weight: 700; color: var(--slate-900); font-size: 15px; }
 
     /* Timeline */
     .timeline-card { padding: 18px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-sm);}
@@ -451,12 +476,16 @@ export class PipelineComponent implements OnInit {
   signalsChart: ChartDataPoint[] = [];
 
   // Paletas de color
-  statusScheme: any   = { domain: ['#22C55E', '#EF4444', '#F59E0B'] }; // Verde, Rojo, Amarillo
   coverageScheme: any = { domain: ['#06B6D4'] }; // Cyan
   headlinesScheme: any = { domain: ['#8B5CF6'] }; // Violeta
   signalsScheme: any = { domain: ['#3B82F6'] }; // Azul
 
-  // KPI Logic (Trata STARTED como éxito ya que implica que se generó el report.json)
+  customStatusColors = (name: string) => {
+    if (name === 'Éxito') return '#22C55E';
+    return '#EF4444'; // Error
+  };
+
+  // KPI Logic
   get completedCount() { return this.batches.filter(b => b.status === 'COMPLETED' || b.status === 'STARTED').length; }
   get failedCount()    { return this.batches.filter(b => b.status === 'FAILED').length; }
   get avgCoverage()    {
@@ -571,13 +600,33 @@ export class PipelineComponent implements OnInit {
       'model_version': 'Versión del Modelo',
       'tickers_skipped': 'ETFs Omitidos',
       'signals_generated': 'Decisiones Generadas',
-      'tickers_with_sentiment': 'Cruces NLP Exitósos'
+      'tickers_with_sentiment': 'Cruces NLP Exitósos',
+      'tickers_reported': 'Activos Reportados',
+      'total_closed_trades': 'Op. Completadas'
     };
     return dict[key] || key.replace(/_/g, ' ');
   }
 
+  // Fuerza el orden de los logs a λ1, λ2, λ3, λ4, λ5
   getStages(kpis: Record<string, any>) {
-    return Object.entries(kpis).map(([key, value]) => ({ key, value }));
+    if (!kpis) return [];
+    const orderedKeys = ['ingestion', 'sentiment', 'indicators', 'bayesian', 'report'];
+    const result = [];
+    
+    for (const key of orderedKeys) {
+      if (kpis[key]) {
+        result.push({ key, value: kpis[key] });
+      }
+    }
+    
+    // Por si en el futuro se añade alguna Lambda extra a la base de datos
+    for (const key of Object.keys(kpis)) {
+      if (!orderedKeys.includes(key)) {
+        result.push({ key, value: kpis[key] });
+      }
+    }
+    
+    return result;
   }
 
   objectEntries(obj: Record<string, any>): [string, any][] {
