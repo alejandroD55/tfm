@@ -89,9 +89,9 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
                 <div class="f-text">
                   <strong>Análisis Lingüístico (NLP):</strong> FinBERT lee titulares financieros y decide si el tono global del día es:<br>
                   <ul>
-                    <li><span class="dot" style="background:#22C55E"></span> <strong>Positivo</strong></li>
-                    <li><span class="dot" style="background:#EF4444"></span> <strong>Negativo</strong></li>
+                    <li><span class="dot" style="background:#22C55E"></span> <strong>Alcista</strong></li>
                     <li><span class="dot" style="background:#94A3B8"></span> <strong>Neutral</strong></li>
+                    <li><span class="dot" style="background:#EF4444"></span> <strong>Bajista</strong></li>
                   </ul>
                 </div>
               </div>
