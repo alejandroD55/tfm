@@ -1,0 +1,77 @@
+<div class="sb">
+
+  <!-- Brand -->
+  <div class="sb-brand">
+    <div class="sb-brand-mark">
+      <div class="sb-brand-glow"></div>
+      <span class="sb-brand-letter">F×B</span>
+    </div>
+    <div class="sb-brand-text">
+      <div class="sb-brand-title">Aurora</div>
+      <div class="sb-brand-sub">FinBERT × Bayesian</div>
+    </div>
+  </div>
+
+  <!-- Status pill -->
+  <div class="sb-status">
+    <span class="sb-led"></span>
+    <span class="sb-status-text">Pipeline operativo</span>
+  </div>
+
+  <!-- Nav: Análisis -->
+  <div class="sb-section">
+    <div class="sb-section-label">Análisis</div>
+    <nav class="sb-nav">
+      @for (item of mainNav; track item.route) {
+        <a class="sb-link"
+           [routerLink]="item.route"
+           routerLinkActive="active"
+           [matTooltip]="item.description"
+           matTooltipPosition="right">
+          <mat-icon class="sb-link-icon">{{ item.icon }}</mat-icon>
+          <span class="sb-link-label">{{ item.label }}</span>
+          @if (item.badge) {
+            <span class="sb-badge">{{ item.badge }}</span>
+          }
+          <span class="sb-link-arrow">
+            <mat-icon>chevron_right</mat-icon>
+          </span>
+        </a>
+      }
+    </nav>
+  </div>
+
+  <div class="sb-divider"></div>
+
+  <!-- Nav: Infraestructura -->
+  <div class="sb-section">
+    <div class="sb-section-label">Infraestructura</div>
+    <nav class="sb-nav">
+      @for (item of infraNav; track item.route) {
+        <a class="sb-link"
+           [routerLink]="item.route"
+           routerLinkActive="active"
+           [matTooltip]="item.description"
+           matTooltipPosition="right">
+          <mat-icon class="sb-link-icon">{{ item.icon }}</mat-icon>
+          <span class="sb-link-label">{{ item.label }}</span>
+          <span class="sb-link-arrow">
+            <mat-icon>chevron_right</mat-icon>
+          </span>
+        </a>
+      }
+    </nav>
+  </div>
+
+  <!-- Footer -->
+  <div class="sb-footer">
+    <div class="sb-foot-row">
+      <mat-icon>verified</mat-icon>
+      <div>
+        <div class="sb-foot-title">TFM Trading System</div>
+        <div class="sb-foot-sub">v1.0 · AWS Lambda + EKS</div>
+      </div>
+    </div>
+  </div>
+
+</div>

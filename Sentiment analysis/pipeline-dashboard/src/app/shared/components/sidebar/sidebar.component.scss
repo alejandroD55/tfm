@@ -1,0 +1,327 @@
+/* ─────────────────────────────────────────────────────────────────────
+   Sidebar — Aurora Trading Dashboard
+   El .sb ocupa el 100% de su contenedor (.aurora-sidebar) que a su vez
+   hereda los 100vh del shell flex. Nunca hay scroll en el sidebar.
+   ───────────────────────────────────────────────────────────────────── */
+
+.sb {
+  display: flex;
+  flex-direction: column;
+  height: 100%;       /* hereda los 100vh del padre */
+  padding: 20px 14px 16px;
+  gap: 14px;
+  color: var(--side-fg);
+  overflow: hidden;   /* el contenido no desborda hacia abajo */
+}
+
+/* ─── Brand ──────────────────────────────────────────────────── */
+
+.sb-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px 4px;
+  flex-shrink: 0;
+}
+
+.sb-brand-mark {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #2563eb 0%, #06b6d4 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow:
+    0 6px 14px rgba(37, 99, 235, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.sb-brand-glow {
+  position: absolute;
+  inset: -2px;
+  border-radius: 14px;
+  background: conic-gradient(
+    from 220deg,
+    rgba(37, 99, 235, 0.6),
+    rgba(6, 182, 212, 0.6),
+    rgba(124, 58, 237, 0.4),
+    rgba(37, 99, 235, 0.6)
+  );
+  filter: blur(10px);
+  opacity: 0.55;
+  z-index: -1;
+}
+
+.sb-brand-letter {
+  font-weight: 800;
+  color: #fff;
+  font-size: 16px;
+  letter-spacing: -0.02em;
+}
+
+.sb-brand-text {
+  line-height: 1.15;
+  overflow: hidden;
+}
+
+.sb-brand-title {
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.sb-brand-sub {
+  font-size: 11px;
+  color: var(--side-fg-dim);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* ─── Status pill ────────────────────────────────────────────── */
+
+.sb-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  margin: 0 4px;
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  color: #86efac;
+  border-radius: var(--r-pill);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  width: fit-content;
+  flex-shrink: 0;
+}
+
+.sb-led {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success-500);
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25);
+  animation: sb-pulse 2.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes sb-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25); }
+  50%      { box-shadow: 0 0 0 6px rgba(34, 197, 94, 0.10); }
+}
+
+/* ─── Sections y nav ─────────────────────────────────────────── */
+
+.sb-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.sb-section-label {
+  padding: 4px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--side-fg-muted);
+  white-space: nowrap;
+}
+
+.sb-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sb-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  color: var(--side-fg-dim);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s;
+  text-decoration: none;
+
+  &::before {
+    content: '';
+    position: absolute;
+    left: -14px;
+    top: 8px;
+    bottom: 8px;
+    width: 3px;
+    background: transparent;
+    border-radius: 0 3px 3px 0;
+    transition: background 0.18s;
+  }
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.04);
+    color: #fff;
+  }
+
+  &.active {
+    background: var(--side-active);
+    color: #fff;
+
+    &::before {
+      background: var(--side-active-bar);
+    }
+  }
+}
+
+.sb-link-icon {
+  color: inherit;
+  font-size: 20px;
+  height: 20px;
+  width: 20px;
+  flex-shrink: 0;
+}
+
+.sb-link-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sb-link-arrow {
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity 0.18s, transform 0.18s;
+  flex-shrink: 0;
+
+  mat-icon {
+    font-size: 16px;
+    height: 16px;
+    width: 16px;
+    color: inherit;
+  }
+}
+
+.sb-link.active .sb-link-arrow,
+.sb-link:hover .sb-link-arrow {
+  opacity: 0.8;
+  transform: translateX(0);
+}
+
+.sb-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  background: var(--brand-600);
+  color: #fff;
+  border-radius: var(--r-pill);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ─── Divider ────────────────────────────────────────────────── */
+
+.sb-divider {
+  height: 1px;
+  flex-shrink: 0;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(255, 255, 255, 0.08),
+    transparent
+  );
+  margin: 4px;
+}
+
+/* ─── Footer (pegado al fondo del flex-col) ──────────────────── */
+
+.sb-footer {
+  margin-top: auto;  /* empuja el footer al fondo del flex-col */
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+
+.sb-foot-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+
+  mat-icon {
+    color: var(--brand-400);
+    font-size: 22px;
+    height: 22px;
+    width: 22px;
+    flex-shrink: 0;
+  }
+}
+
+.sb-foot-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.78);
+  white-space: nowrap;
+}
+
+.sb-foot-sub {
+  font-size: 10px;
+  color: var(--side-fg-muted);
+  margin-top: 1px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* ─── Modo compacto (sidebar de 80px) ────────────────────────── */
+
+@media (max-width: 1100px) {
+  .sb {
+    padding: 16px 8px;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .sb-brand-text,
+  .sb-section-label,
+  .sb-link-label,
+  .sb-link-arrow,
+  .sb-badge,
+  .sb-status-text,
+  .sb-foot-title,
+  .sb-foot-sub {
+    display: none;
+  }
+
+  .sb-status {
+    padding: 8px;
+    margin: 0;
+  }
+
+  .sb-link {
+    justify-content: center;
+    padding: 10px;
+
+    &::before {
+      display: none;
+    }
+  }
+
+  .sb-foot-row {
+    justify-content: center;
+
+    mat-icon {
+      margin: 0;
+    }
+  }
+}

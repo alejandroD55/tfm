@@ -1,133 +1,216 @@
-/* ─── Aurora shell layout ──────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────────────
+   Aurora Shell — Layout principal
+   El truco: la shell es height:100vh + overflow:hidden.
+   Solo .aurora-content tiene overflow-y:auto → único scroll de la app.
+   Ni el sidebar ni el topbar necesitan position:sticky porque sus padres
+   ya están acotados a la altura del viewport.
+   ───────────────────────────────────────────────────────────────────── */
 
+/* ─── Shell (flex row, altura fija al viewport) ────────────────── */
 .aurora-shell {
-  display: grid;
-  grid-template-columns: var(--side-w) 1fr;
-  min-height: 100vh;
+  display: flex;
+  flex-direction: row;
+  height: 100vh;          /* fijo, nunca crece más allá del viewport     */
+  overflow: hidden;       /* evita cualquier scroll en el contenedor raíz */
   background: var(--bg-canvas);
 }
 
+/* ─── Sidebar (columna izquierda, alto completo) ───────────────── */
 .aurora-sidebar {
-  position: sticky;
-  top: 0;
-  height: 100vh;
+  flex: 0 0 var(--side-w);
+  width: var(--side-w);
+  height: 100%;           /* hereda los 100vh del padre                  */
   background: var(--side-bg);
   border-right: 1px solid rgba(255, 255, 255, .04);
-  overflow: hidden;
+  overflow: hidden;       /* el contenido interno no desborda             */
   z-index: 20;
+  /* No necesita position:sticky porque el padre ya tiene overflow:hidden */
 }
 
+/* ─── Columna principal (flex col, ocupa el resto) ─────────────── */
 .aurora-main {
+  flex: 1 1 0;            /* crece para llenar el espacio restante        */
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
-/* ─── Topbar ───────────────────────────────────────────────────── */
-
+/* ─── Topbar (fila fija, no necesita sticky) ───────────────────── */
 .aurora-topbar {
-  position: sticky;
-  top: 0;
-  z-index: 10;
+  flex: 0 0 var(--topbar-h);
   height: var(--topbar-h);
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 16px;
   padding: 0 28px;
   background: var(--bg-elevated);
   border-bottom: 1px solid var(--border);
   backdrop-filter: saturate(180%) blur(8px);
+  z-index: 10;
+  /* Al estar en un flex-col con overflow:hidden, ya "queda fijo" arriba */
 }
 
-.topbar-left   { display: flex; align-items: center; }
-.topbar-center { display: flex; justify-content: center; }
-.topbar-right  { display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
+.topbar-left   { display: flex; align-items: center; flex: 1; }
+.topbar-center { display: flex; justify-content: center; flex: 0 0 auto; }
+.topbar-right  { display: flex; align-items: center; gap: 10px; justify-content: flex-end; flex: 1; }
 
+/* ─── Brand mini (topbar) ──────────────────────────────────────── */
 .brand-mini {
-  display: flex; align-items: center; gap: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 6px 14px 6px 6px;
   border-radius: var(--r-pill);
   background: linear-gradient(135deg, rgba(37, 99, 235, .08), rgba(6, 182, 212, .08));
   border: 1px solid var(--border);
 }
+
 .brand-dot {
-  width: 22px; height: 22px; border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
   background: conic-gradient(from 220deg, #2563EB, #06B6D4, #22C55E, #2563EB);
   box-shadow: 0 0 0 2px var(--bg-elevated), 0 2px 6px rgba(37, 99, 235, .3);
-}
-.brand-name {
-  font-weight: 700; font-size: 14px;
-  letter-spacing: .02em; color: var(--slate-900);
-}
-.brand-tag {
-  font-size: 11px; color: var(--slate-500); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
-  border-left: 1px solid var(--border);
-  padding-left: 10px; margin-left: 4px;
+  flex-shrink: 0;
 }
 
+.brand-name {
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: .02em;
+  color: var(--slate-900);
+  white-space: nowrap;
+}
+
+.brand-tag {
+  font-size: 11px;
+  color: var(--slate-500);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  border-left: 1px solid var(--border);
+  padding-left: 10px;
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
+/* ─── Market pill ──────────────────────────────────────────────── */
 .market-pill {
-  display: inline-flex; align-items: center; gap: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   padding: 6px 14px;
   background: var(--slate-50);
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
-  font-size: 12px; font-weight: 500; color: var(--slate-600);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--slate-600);
+  white-space: nowrap;
 }
+
 .market-led {
-  width: 8px; height: 8px; border-radius: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
   background: var(--slate-300);
+  flex-shrink: 0;
 }
+
 .market-led.on {
   background: var(--success-500);
   box-shadow: 0 0 0 3px rgba(34, 197, 94, .2);
   animation: pulse-led 2s ease-in-out infinite;
 }
-@keyframes pulse-led {
-  0%,100% { box-shadow: 0 0 0 3px rgba(34, 197, 94, .2); }
-  50%     { box-shadow: 0 0 0 6px rgba(34, 197, 94, .08); }
-}
-.market-sep { color: var(--slate-300); }
-.market-now { font-variant-numeric: tabular-nums; color: var(--slate-700); font-weight: 600;}
 
+@keyframes pulse-led {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(34, 197, 94, .20); }
+  50%      { box-shadow: 0 0 0 6px rgba(34, 197, 94, .08); }
+}
+
+.market-sep { color: var(--slate-300); }
+
+.market-now {
+  font-variant-numeric: tabular-nums;
+  color: var(--slate-700);
+  font-weight: 600;
+}
+
+/* ─── User chip ────────────────────────────────────────────────── */
 .user-chip {
-  display: flex; align-items: center; gap: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 4px 12px 4px 4px;
   border-radius: var(--r-pill);
   cursor: pointer;
-  background: var(--slate-50); border: 1px solid var(--border);
-  transition: all .15s;
+  background: var(--slate-50);
+  border: 1px solid var(--border);
+  transition: background .15s, border-color .15s;
+  white-space: nowrap;
 }
-.user-chip:hover { background: rgba(37, 99, 235, .05); border-color: var(--brand-300); }
+
+.user-chip:hover {
+  background: rgba(37, 99, 235, .05);
+  border-color: var(--brand-300);
+}
+
 .user-avatar {
-  width: 34px; height: 34px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   background: linear-gradient(135deg, var(--brand-600), var(--accent-cyan));
   color: #fff;
-  display: inline-flex; align-items: center; justify-content: center;
-  font-weight: 700; font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
   letter-spacing: .02em;
   box-shadow: 0 2px 6px rgba(37, 99, 235, .35);
+  flex-shrink: 0;
 }
-.user-meta { display: flex; flex-direction: column; line-height: 1.2; }
-.user-name { font-size: 13px; font-weight: 700; color: var(--slate-900); }
-.user-role { font-size: 10px; color: var(--slate-500); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;}
 
-/* ─── Content ─────────────────────────────────────────────────── */
+.user-meta {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
 
+.user-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--slate-900);
+}
+
+.user-role {
+  font-size: 10px;
+  color: var(--slate-500);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+/* ─── Área de contenido (único scroll de la app) ───────────────── */
 .aurora-content {
-  flex: 1;
+  flex: 1 1 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 28px 32px 48px;
-  max-width: 100%;
+  /* Aquí y solo aquí hay scroll                                     */
 }
 
+/* ─── Responsive ───────────────────────────────────────────────── */
 @media (max-width: 1100px) {
-  .aurora-shell { grid-template-columns: 80px 1fr; }
-  .brand-tag { display: none; }
+  .aurora-sidebar { flex: 0 0 80px; width: 80px; }
+  .brand-tag      { display: none; }
 }
+
 @media (max-width: 720px) {
-  .aurora-shell { grid-template-columns: 1fr; }
-  .aurora-sidebar { position: fixed; transform: translateX(-100%); }
-  .aurora-content { padding: 16px; }
-  .topbar-center { display: none; }
+  .aurora-sidebar  { display: none; }   /* oculto en móvil            */
+  .aurora-content  { padding: 16px; }
+  .topbar-center   { display: none; }
 }
