@@ -234,12 +234,24 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
   styles: [`
     .page { max-width: var(--content-max); margin: 0 auto; padding-bottom: 30px; }
     .page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; flex-wrap: wrap; margin-bottom: 22px; }
-    .page-eyebrow { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: rgba(6, 182, 212, .12); color: var(--accent-cyan); border-radius: var(--r-pill); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 10px; }
-    .page-eyebrow mat-icon { font-size: 14px; height: 14px; width: 14px; }
+    .page-eyebrow { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: rgba(6, 182, 212, .12); color: var(--accent-cyan); border-radius: var(--r-pill); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 10px; mat-icon { font-size: 14px; height: 14px; width: 14px; } }
     .page-title { font-size: 26px; font-weight: 700; color: var(--slate-900); letter-spacing: -.02em; }
-    .page-sub { color: var(--slate-500); font-size: 13px; margin-top: 6px; }
+    .page-sub { color: var(--slate-500); font-size: 13px; margin-top: 6px; max-width: 760px; }
+    
+    /* Filtros Personalizados nativos */
+    .page-actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+    .filter-group { display: flex; flex-direction: column; gap: 6px; }
+    .filter-group label { font-size: 11px; font-weight: 600; color: var(--slate-500); text-transform: uppercase; letter-spacing: 0.05em; }
+    .aurora-select {
+      height: 40px; appearance: none; background-color: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-sm); 
+      padding: 0 32px 0 14px; font-family: var(--font-sans); font-size: 13px; font-weight: 600; color: var(--slate-700); cursor: pointer; min-width: 180px; 
+      background-image: url('data:image/svg+xml;charset=US-ASCII,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%2364748B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>'); 
+      background-repeat: no-repeat; background-position: right 8px center; background-size: 16px; transition: all 0.2s ease; 
+    }
+    .aurora-select:hover { border-color: var(--brand-400); }
+    .aurora-select:focus { outline: none; border-color: var(--brand-600); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); }
 
-    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: var(--r-sm); border: 1px solid var(--border); font-size: 13px; font-weight: 600; cursor: pointer; background: var(--bg-elevated); color: var(--slate-700); }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 40px; padding: 0 16px; border-radius: var(--r-sm); border: 1px solid var(--border); font-size: 13px; font-weight: 600; cursor: pointer; background: var(--bg-elevated); color: var(--slate-700); transition: all .15s; }
     .btn:hover { border-color: var(--brand-300); color: var(--brand-600); background: var(--slate-50); }
 
     /* Glosario */
@@ -291,8 +303,6 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
     .card-title mat-icon { font-size: 18px; height: 18px; width: 18px; color: var(--brand-600); }
     .card-sub { font-size: 11px; color: var(--slate-500); }
     .chart-card { padding: 18px 16px 12px; }
-    
-    /* El truco responsive para los gráficos de barras */
     .chart-host { width: 100%; height: 240px; overflow: hidden; }
 
     /* Donut y Leyenda Personalizada */
@@ -314,7 +324,7 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
     .thresholds span { font-size: 11px; padding: 4px 12px; border-radius: var(--r-pill); font-weight: 700; letter-spacing: 0.03em; }
     .th-buy  { background: var(--success-100); color: var(--success-700); }
     .th-hold { background: var(--warn-100); color: var(--warn-700); }
-    .th-sell { background: rgba(124, 58, 237, .15); color: #7C3AED; }
+    .th-sell { background: rgba(124, 58, 237, .15); color: #7C3AED; } /* Violeta Cortos */
 
     .loader { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 80px 16px; color: var(--slate-500); }
     .empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 80px 16px; color: var(--slate-400); }
@@ -336,23 +346,20 @@ export class DashboardComponent implements OnInit {
   
   avgBenchmark: number = 0; 
 
-  // Función para forzar los colores de la Tarta
   customSignalColors = (name: string) => {
     if (name === 'COMPRAR') return '#22C55E';
     if (name === 'CASH') return '#7C3AED';
-    return '#F59E0B'; // MANTENER
+    return '#F59E0B'; 
   };
 
-  // Función dinámica para colorear las barras de probabilidad según el valor
   customProbColors = (name: string) => {
     const item = this.probUpChart.find(d => d.name === name);
     if (!item) return '#3B82F6';
-    if (item.value >= 65) return '#22C55E'; // BUY (Verde)
-    if (item.value <= 35) return '#7C3AED'; // SELL/CASH (Violeta)
-    return '#F59E0B'; // HOLD (Amarillo)
+    if (item.value >= 65) return '#22C55E'; 
+    if (item.value <= 35) return '#7C3AED'; 
+    return '#F59E0B'; 
   };
 
-  // Función dinámica para colorear la tasa de acierto (Azul corporativo si > 50%, rojo si no)
   customWinRateColors = (name: string) => {
     const item = this.winRateChart.find(d => d.name === name);
     if (!item) return '#3B82F6';
@@ -393,25 +400,21 @@ export class DashboardComponent implements OnInit {
     this.report = report;
     this.tickerViews = this.reportSvc.buildTickerViews(report).sort((a, b) => b.prob_up - a.prob_up);
     
-    // Calcular Media de Mercado
     const sumBH = this.tickerViews.reduce((acc, curr) => acc + curr.buy_hold_return, 0);
     this.avgBenchmark = this.tickerViews.length > 0 ? (sumBH / this.tickerViews.length) : 0;
 
-    // Tarta de Decisiones
     this.signalPieChart = [
       { name: 'COMPRAR', value: this.buyCount },
       { name: 'CASH', value: this.sellCount },
       { name: 'MANTENER', value: this.holdCount }
     ].filter(item => item.value > 0);
 
-    // Gráfico de Probabilidades
     this.probUpChart = this.reportSvc.probUpChart(this.tickerViews);
 
-    // Nuevo Gráfico: Tasa de Acierto (Win Rate)
     this.winRateChart = this.tickerViews.map(t => ({
       name: t.ticker,
       value: t.win_rate * 100
-    })).sort((a, b) => b.value - a.value); // Ordenado de mejor a peor
+    })).sort((a, b) => b.value - a.value);
   }
 
   qualityLabel(s: number) {

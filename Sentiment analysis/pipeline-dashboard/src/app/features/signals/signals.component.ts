@@ -216,7 +216,7 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
 
         <div class="card table-card">
           <table mat-table [dataSource]="dataSource" multiTemplateDataRows matSort class="aurora-table">
-          
+
             <ng-container matColumnDef="ticker">
               <th mat-header-cell *matHeaderCellDef mat-sort-header>Activo</th>
               <td mat-cell *matCellDef="let row">
@@ -645,7 +645,7 @@ export class SignalsComponent implements OnInit, AfterViewInit {
   expandedRows = new Set<string>();
 
   // Columnas actualizadas
-  displayedColumns = ['signal', 'ticker', 'prob_up', 'evidence', 'trades', 'winrate', 'return', 'alpha', 'expand'];
+  displayedColumns = ['ticker', 'signal', 'prob_up', 'evidence', 'trades', 'winrate', 'return', 'alpha', 'expand'];
   dataSource = new MatTableDataSource<TickerView>();
 
   // Gráficos Donut

@@ -163,7 +163,7 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
               [xAxis]="true" [yAxis]="true" [showGridLines]="true"
               [scheme]="compareScheme"
               yAxisLabel="Rentabilidad Anual (%)" [showYAxisLabel]="true"
-              [showDataLabel]="true" [groupPadding]="14" [roundEdges]="true">
+              [showDataLabel]="true" [groupPadding]="4" [barPadding]="2" [roundEdges]="true">
             </ngx-charts-bar-vertical-2d>
           </div>
         </section>
