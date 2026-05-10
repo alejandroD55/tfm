@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatSelectModule } from '@angular/material/select';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatExpansionModule } from '@angular/material/expansion';
 import { MatChipsModule } from '@angular/material/chips';
@@ -197,7 +198,7 @@ import { ReportDateEntry } from '../../core/models/report.model';
               <thead>
                 <tr>
                   <th>Sentimiento</th><th>Fuerza (RSI)</th><th>Tendencia</th><th>Volatilidad</th>
-                  <th>Confianza Alcista P(↑)</th><th>Confianza Bajista P(↓)</th><th>Señal Implícita</th>
+                  <th>Confianza Alcista P(↑)</th><th>Señal Implícita</th>
                 </tr>
               </thead>
               <tbody>
@@ -222,7 +223,6 @@ import { ReportDateEntry } from '../../core/models/report.model';
                         </span>
                       </div>
                     </td>
-                    <td class="muted">{{ ((1 - row.prob_up) * 100) | number:'1.0-0' }}%</td>
                     <td>
                       @if (row.prob_up >= 0.65) { <span class="signal-badge buy">COMPRAR</span> }
                       @else if (row.prob_up <= 0.35) { <span class="signal-badge sell">CASH</span> }
@@ -269,7 +269,7 @@ import { ReportDateEntry } from '../../core/models/report.model';
     .glossary-panel mat-icon { font-size: 18px; height: 18px; width: 18px; color: var(--brand-600); }
     
     .glossary-content { padding-top: 10px; display: flex; flex-wrap: wrap; gap: 16px;}
-    .g-col { flex: 1 1 200px; font-size: 12.5px; color: var(--slate-700); line-height: 1.5; margin-bottom: 12px; } /* Añadido margen inferior para evitar recorte */
+    .g-col { flex: 1 1 200px; font-size: 12.5px; color: var(--slate-700); line-height: 1.5; margin-bottom: 12px; }
     .g-col strong { color: var(--slate-900); display: block; margin-bottom: 4px; }
     .full-width { flex: 1 1 100%; }
 
@@ -278,6 +278,15 @@ import { ReportDateEntry } from '../../core/models/report.model';
     .limitation-box strong { color: var(--warn-700); display: flex; align-items: center; gap: 6px; mat-icon {font-size: 18px; height: 18px; width: 18px;}}
     .limit-list { margin: 8px 0 0 0; padding-left: 20px; font-size: 12.5px;}
     .limit-list li { margin-bottom: 4px;}
+
+    /* Banner Ejecución */
+    .exec-banner { display: flex; align-items: center; gap: 16px; background: var(--success-50); border-radius: var(--r-md); padding: 16px 20px; margin-bottom: 24px; border-left: 4px solid var(--success-500); }
+    .exec-icon mat-icon { font-size: 28px; height: 28px; width: 28px; color: var(--success-600); }
+    .exec-body { flex: 1; }
+    .exec-title { font-weight: 700; font-size: 14px; color: var(--slate-900); font-family: var(--font-mono);}
+    .exec-meta { font-size: 12px; color: var(--slate-600); margin-top: 4px; }
+    .exec-stats { display: flex; gap: 8px; }
+    .es { padding: 4px 12px; border-radius: var(--r-pill); font-size: 12px; font-weight: 700; &.ok { background: var(--success-100); color: var(--success-700); } }
 
     /* Tarjetas y Rejillas */
     .card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-sm); padding: 18px; margin-bottom: 24px; }
@@ -324,14 +333,17 @@ import { ReportDateEntry } from '../../core/models/report.model';
     
     .prob-bar-cell { display: flex; align-items: center; gap: 8px; min-width: 130px;}
     
-    /* El truco del !important para forzar el color amarillo en "Mantener" */
-    .pb-fill { height: 6px; background: var(--slate-300); border-radius: 3px; flex: 1; }
-    .pb-fill.high { background: linear-gradient(to right, var(--success-500), var(--success-600)) !important; } 
-    .pb-fill.mid { background: var(--warn-400) !important; } 
-    .pb-fill.low { background: linear-gradient(to right, #7C3AED, #5b21b6) !important; } 
+    /* SOLUCIÓN: Colores Forzados con Hexadecimales */
+    .pb-fill { height: 6px; background: #cbd5e1; border-radius: 3px; flex: 1; transition: background-color 0.3s;}
+    .pb-fill.high { background: #22c55e !important; } 
+    .pb-fill.mid { background: #f59e0b !important; } 
+    .pb-fill.low { background: #8b5cf6 !important; } 
     
     .prob-pct-text { font-weight: 700; min-width: 40px; text-align: right;}
-    .txt-green { color: var(--success-700); } .txt-yellow { color: var(--warn-700); } .txt-purple { color: #7C3AED; }
+    .txt-green { color: #15803d !important; } 
+    .txt-yellow { color: #b45309 !important; } 
+    .txt-purple { color: #6d28d9 !important; }
+    
     .muted { color: var(--slate-400); font-weight: 600;}
 
     /* Chips Evidencia */

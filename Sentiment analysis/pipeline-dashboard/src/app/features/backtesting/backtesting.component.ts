@@ -160,10 +160,10 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
           <div class="chart-host">
             <ngx-charts-bar-vertical-2d
               [results]="returnChart"
-              [xAxis]="true" [yAxis]="true" [showGridLines]="false"
+              [xAxis]="true" [yAxis]="true" [showGridLines]="true"
               [scheme]="compareScheme"
               yAxisLabel="Rentabilidad Anual (%)" [showYAxisLabel]="true"
-              [showDataLabel]="true" [groupPadding]="4" [barPadding]="2" [roundEdges]="false">
+              [showDataLabel]="true" [groupPadding]="16" [barPadding]="8" [roundEdges]="true">
             </ngx-charts-bar-vertical-2d>
           </div>
         </section>
@@ -405,8 +405,11 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
     .chart-host-small { width: 100%; height: 220px; overflow: hidden; }
     .chart-card { padding: 18px 16px 12px; }
 
-    /* Ocultar las bandas grises/blancas de fondo en el gráfico agrupado */
-    .ngx-charts .grid-panel rect { display: none !important; }
+    /* EL TRUCO PARA OCULTAR EL FONDO GRIS NATIVO USANDO ::ng-deep */
+    ::ng-deep .ngx-charts .grid-panel rect { 
+      display: none !important; 
+      fill: transparent !important; 
+    }
 
     .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
     .row-2 .card { margin-bottom: 0; }
