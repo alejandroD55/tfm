@@ -210,10 +210,17 @@ import { ReportDateEntry } from '../../core/models/report.model';
                     <td><span class="ev-chip vol-{{ row.volatility }}">{{ translateState(row.volatility) }}</span></td>
                     <td>
                       <div class="prob-bar-cell">
-                        <div class="pb-fill"
-                             [style.width.%]="row.prob_up * 100"
-                             [ngClass]="getProbClass(row.prob_up)"></div>
-                        <span class="prob-pct-text" [ngClass]="getTextClass(row.prob_up)">
+                        <div class="pb-wrap">
+                          <div class="pb-fill"
+                               [style.width.%]="row.prob_up * 100"
+                               [class.high]="row.prob_up >= 0.65"
+                               [class.mid]="row.prob_up > 0.35 && row.prob_up < 0.65"
+                               [class.low]="row.prob_up <= 0.35"></div>
+                        </div>
+                        <span class="prob-pct-text" 
+                              [class.txt-green]="row.prob_up >= 0.65"
+                              [class.txt-yellow]="row.prob_up > 0.35 && row.prob_up < 0.65"
+                              [class.txt-purple]="row.prob_up <= 0.35">
                           {{ (row.prob_up * 100) | number:'1.0-0' }}%
                         </span>
                       </div>
@@ -234,13 +241,17 @@ import { ReportDateEntry } from '../../core/models/report.model';
     </div>
   `,
   styles: [`
+    /* shared page chrome */
     .page { max-width: var(--content-max); margin: 0 auto; padding-bottom: 40px;}
     .page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; flex-wrap: wrap; margin-bottom: 22px; }
     .page-eyebrow { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: rgba(59, 130, 246, .12); color: var(--brand-600); border-radius: var(--r-pill); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 10px; mat-icon { font-size: 14px; height: 14px; width: 14px; } }
     .page-title { font-size: 26px; font-weight: 700; color: var(--slate-900); letter-spacing: -.02em; }
     .page-sub { color: var(--slate-500); font-size: 13px; margin-top: 6px; max-width: 760px; }
 
-    .cpt-filters { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+    /* Filtros Personalizados nativos */
+    .page-actions { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-end; }
+    .filter-group { display: flex; flex-direction: column; gap: 4px; }
+    .filter-group label { font-size: 11px; font-weight: 600; color: var(--slate-500); text-transform: uppercase; letter-spacing: 0.05em; }
     .aurora-select {
       height: 40px; appearance: none; background-color: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-sm); 
       padding: 0 32px 0 14px; font-family: var(--font-sans); font-size: 13px; font-weight: 600; color: var(--slate-700); cursor: pointer; min-width: 180px; 
@@ -253,6 +264,7 @@ import { ReportDateEntry } from '../../core/models/report.model';
     .loader { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 80px 16px; color: var(--slate-500); }
     .empty-state { text-align: center; padding: 60px; color: var(--slate-500); mat-icon { font-size: 48px; height: 48px; width: 48px; display: block; margin: 0 auto 12px; opacity: 0.5;} h3 { margin: 0 0 8px; font-size: 18px; color: var(--slate-700);} }
 
+    /* Glosario Integrado */
     .glossary-accordion { display: block; margin-bottom: 24px; }
     .glossary-panel { background: rgba(59, 130, 246, 0.03) !important; border: 1px solid rgba(59, 130, 246, 0.2) !important; border-radius: 8px !important; box-shadow: none !important; }
     .glossary-panel mat-panel-title { color: var(--brand-600); font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
@@ -263,11 +275,22 @@ import { ReportDateEntry } from '../../core/models/report.model';
     .g-col strong { color: var(--slate-900); display: block; margin-bottom: 4px; }
     .full-width { flex: 1 1 100%; }
 
+    /* Decisiones implícitas integradas */
     .limitation-box { background: rgba(245, 158, 11, 0.05); border: 1px dashed rgba(245, 158, 11, 0.3); border-radius: var(--r-sm); padding: 14px;}
     .limitation-box strong { color: var(--warn-700); display: flex; align-items: center; gap: 6px; mat-icon {font-size: 18px; height: 18px; width: 18px;}}
     .limit-list { margin: 8px 0 0 0; padding-left: 20px; font-size: 12.5px;}
     .limit-list li { margin-bottom: 4px;}
 
+    /* Banner Ejecución */
+    .exec-banner { display: flex; align-items: center; gap: 16px; background: var(--success-50); border-radius: var(--r-md); padding: 16px 20px; margin-bottom: 24px; border-left: 4px solid var(--success-500); }
+    .exec-icon mat-icon { font-size: 28px; height: 28px; width: 28px; color: var(--success-600); }
+    .exec-body { flex: 1; }
+    .exec-title { font-weight: 700; font-size: 14px; color: var(--slate-900); font-family: var(--font-mono);}
+    .exec-meta { font-size: 12px; color: var(--slate-600); margin-top: 4px; }
+    .exec-stats { display: flex; gap: 8px; }
+    .es { padding: 4px 12px; border-radius: var(--r-pill); font-size: 12px; font-weight: 700; &.ok { background: var(--success-100); color: var(--success-700); } }
+
+    /* Tarjetas y Rejillas */
     .card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-sm); padding: 18px; margin-bottom: 24px; }
     .card-head { display: flex; flex-direction: column; justify-content: flex-start; margin-bottom: 18px; }
     .card-title { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; color: var(--slate-900); mat-icon { font-size: 18px; height: 18px; width: 18px; color: var(--brand-600); } }
@@ -284,6 +307,7 @@ import { ReportDateEntry } from '../../core/models/report.model';
     .cr-val { font-weight: 700; color: var(--slate-900); }
     .badge-blue { color: var(--brand-600); } .badge-red { color: var(--danger-600); } .badge-green { color: var(--success-600); } .badge-orange { color: var(--warn-600); }
 
+    /* Priors */
     .prior-node { margin-bottom: 16px; }
     .prior-node:last-child { margin-bottom: 0;}
     .pn-name { font-size: 11px; font-weight: 700; color: var(--slate-500); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; display: block; }
@@ -294,22 +318,26 @@ import { ReportDateEntry } from '../../core/models/report.model';
     .pn-bar { height: 100%; background: var(--slate-400); border-radius: 3px; &.green { background: var(--success-500); } &.red { background: var(--danger-500); } }
     .pn-pct { width: 35px; text-align: right; font-weight: 700; color: var(--slate-900); }
 
+    /* Señales CPT */
     .signal-badge { padding: 4px 10px; border-radius: var(--r-pill); font-size: 11px; font-weight: 700; letter-spacing: 0.03em;
       &.buy { background: var(--success-100); color: var(--success-700); }
       &.sell { background: rgba(124, 58, 237, .15); color: #7C3AED; }
       &.hold { background: var(--warn-100); color: var(--warn-700); }
     }
 
+    /* Tabla CPT */
+    .cpt-filters { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
     .cpt-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--r-sm);}
     .cpt-table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
     .cpt-table th { background: var(--slate-50); padding: 12px 14px; font-size: 11px; color: var(--slate-500); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--border);}
     .cpt-table td { padding: 10px 14px; border-bottom: 1px solid var(--slate-100); color: var(--slate-800); }
     .cpt-table tr:hover { background: var(--slate-50); }
     
-    .prob-bar-cell { display: flex; align-items: center; gap: 8px; min-width: 130px;}
+    .prob-bar-cell { display: flex; align-items: center; gap: 8px;}
     
-    /* SOLUCIÓN: Colores Forzados con Hexadecimales y Lógica Pura */
-    .pb-fill { height: 6px; border-radius: 3px; flex: 1; transition: background-color 0.3s; }
+    /* SOLUCIÓN AL RENDERIZADO DE LAS BARRAS EN LA TABLA CPT */
+    .pb-wrap { width: 120px; height: 6px; background: var(--slate-200); border-radius: 3px; overflow: hidden; display: flex;}
+    .pb-fill { height: 100%; transition: width 0.5s ease-in-out;}
     .pb-fill.high { background: #22c55e !important; } 
     .pb-fill.mid { background: #f59e0b !important; } 
     .pb-fill.low { background: #8b5cf6 !important; } 
@@ -318,9 +346,8 @@ import { ReportDateEntry } from '../../core/models/report.model';
     .txt-green { color: #15803d !important; } 
     .txt-yellow { color: #b45309 !important; } 
     .txt-purple { color: #6d28d9 !important; }
-    
-    .muted { color: var(--slate-400); font-weight: 600;}
 
+    /* Chips Evidencia */
     .ev-chip { display: inline-flex; align-items: center; gap: 3px; padding: 3px 8px; border-radius: var(--r-pill); font-size: 11px; font-weight: 600; text-transform: capitalize;}
     .bullish, .oversold, .uptrend { background: var(--success-100); color: var(--success-700); }
     .bearish, .overbought, .downtrend { background: var(--danger-100); color: var(--danger-700); }
@@ -337,7 +364,7 @@ export class AuditComponent implements OnInit {
   trace: BayesianTrace | null = null;
   model: ModelConfig | null   = null;
   availableDates: ReportDateEntry[] = [];
-  selectedDate  = ''; 
+  selectedDate  = ''; // Lo dejamos solo para descargar internamente el último archivo, no se muestra
 
   cptRows:            any[] = [];
   cptFilterSentiment  = '';
@@ -360,6 +387,7 @@ export class AuditComponent implements OnInit {
       switchMap(dates => {
         this.availableDates = dates;
         if (!dates.length) { this.loading = false; return []; }
+        // Forzamos que siempre coja la última versión disponible
         this.selectedDate = dates[0].date;
         return this.traceSvc.getTrace(this.selectedDate);
       })
@@ -397,19 +425,7 @@ export class AuditComponent implements OnInit {
     }
   }
 
-  // Lógica segura de clases para el CSS
-  getProbClass(prob: number): string {
-    if (prob >= 0.65) return 'high';
-    if (prob <= 0.35) return 'low';
-    return 'mid';
-  }
-
-  getTextClass(prob: number): string {
-    if (prob >= 0.65) return 'txt-green';
-    if (prob <= 0.35) return 'txt-purple';
-    return 'txt-yellow';
-  }
-
+  // Traducción estricta para la UI
   translateState(val: string): string {
     const dict: Record<string, string> = {
       bullish: 'Alcista', bearish: 'Bajista', neutral: 'Neutral',
