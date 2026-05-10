@@ -160,10 +160,10 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
           <div class="chart-host">
             <ngx-charts-bar-vertical-2d
               [results]="returnChart"
-              [xAxis]="true" [yAxis]="true" [showGridLines]="true"
+              [xAxis]="true" [yAxis]="true" [showGridLines]="false"
               [scheme]="compareScheme"
               yAxisLabel="Rentabilidad Anual (%)" [showYAxisLabel]="true"
-              [showDataLabel]="true" [groupPadding]="16" [barPadding]="8" [roundEdges]="true">
+              [showDataLabel]="true" [groupPadding]="16" [barPadding]="8" [roundEdges]="false">
             </ngx-charts-bar-vertical-2d>
           </div>
         </section>
@@ -356,7 +356,6 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
     .page-title { font-size: 26px; font-weight: 700; color: var(--slate-900); letter-spacing: -.02em; }
     .page-sub { color: var(--slate-500); font-size: 13px; margin-top: 6px; max-width: 760px; }
     
-    /* Filtros Personalizados nativos */
     .page-actions { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
     .filter-group { display: flex; flex-direction: column; gap: 4px; }
     .filter-group label { font-size: 11px; font-weight: 600; color: var(--slate-500); text-transform: uppercase; letter-spacing: 0.05em; }
@@ -364,7 +363,6 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
     .aurora-select:hover { border-color: var(--brand-400); }
     .aurora-select:focus { outline: none; border-color: var(--brand-600); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); }
 
-    /* Glosario */
     .glossary-accordion { display: block; margin-bottom: 24px; }
     .glossary-panel { background: rgba(20, 184, 166, 0.05) !important; border: 1px solid rgba(20, 184, 166, 0.2) !important; border-radius: 8px !important; box-shadow: none !important; }
     .glossary-panel mat-panel-title { color: var(--accent-teal); font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
@@ -374,7 +372,6 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
 
     .loader { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 80px 16px; color: var(--slate-500); }
 
-    /* KPI grid */
     .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 24px; }
     .kpi { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); padding: 18px; box-shadow: var(--shadow-sm); transition: transform .15s; }
     .kpi:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); border-color: var(--accent-teal); cursor: help; }
@@ -392,7 +389,6 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
     .quality { font-size: 11px; font-weight: 700; padding: 2px 8px; background: var(--slate-100); color: var(--slate-500); border-radius: var(--r-pill); }
     .quality.good { background: var(--success-100); color: var(--success-700); }
 
-    /* Cards / charts */
     .card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-sm); padding: 18px; margin-bottom: 24px; }
     .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
     .card-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--slate-900); mat-icon { font-size: 18px; height: 18px; width: 18px; color: var(--accent-teal); } }
@@ -400,15 +396,14 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
     .legend { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight:600; color: var(--slate-600); }
     .leg-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-right: 4px; }
     
-    /* Gráficos elásticos */
     .chart-host { width: 100%; height: 260px; overflow: hidden; }
     .chart-host-small { width: 100%; height: 220px; overflow: hidden; }
     .chart-card { padding: 18px 16px 12px; }
 
-    /* EL TRUCO PARA OCULTAR EL FONDO GRIS NATIVO USANDO ::ng-deep */
-    ::ng-deep .ngx-charts .grid-panel rect { 
-      display: none !important; 
-      fill: transparent !important; 
+    /* EL TRUCO PARA ELIMINAR EL RUIDO VISUAL DEL GRÁFICO AGRUPADO */
+    ::ng-deep .ngx-charts g.grid-panel rect {
+      fill: transparent !important;
+      display: none !important;
     }
 
     .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
@@ -419,7 +414,6 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
     .hint-info { background: var(--brand-100); color: var(--brand-700); mat-icon { color: var(--brand-600); } }
     .hint-warn { background: var(--warn-100);  color: var(--warn-700);  mat-icon { color: var(--warn-600); } }
 
-    /* Table */
     .table-card { padding: 18px 0 6px; }
     .table-card .card-head { padding: 0 18px; }
     .aurora-table { width: 100%; }
@@ -465,13 +459,11 @@ export class BacktestingComponent implements OnInit, AfterViewInit {
   compareScheme: any  = { domain: ['#2563EB', '#94A3B8'] }; // Azul corporativo (IA) vs Gris neutro (B&H)
   drawdownScheme: any = { domain: ['#EF4444'] }; // Rojo
   
-  // Coloreado dinámico para Alpha (Verde si gana al mercado, Rojo si pierde)
   customColorsAlpha = (name: string) => {
     const item = this.alphaChart.find(d => d.name === name);
     return (item && item.value >= 0) ? '#22C55E' : '#EF4444'; 
   };
 
-  // Coloreado dinámico para Sharpe (Verde/Azul si es positivo, Rojo si es negativo)
   customColorsSharpe = (name: string) => {
     const item = this.sharpeChart.find(d => d.name === name);
     return (item && item.value >= 0) ? '#06B6D4' : '#EF4444'; 
@@ -493,7 +485,6 @@ export class BacktestingComponent implements OnInit, AfterViewInit {
     });
   }
 
-  // Activa la ordenación de las columnas de la tabla
   ngAfterViewInit() {
     this.tableSource.sort = this.sort;
   }
@@ -511,12 +502,10 @@ export class BacktestingComponent implements OnInit, AfterViewInit {
     this.tickerViews = this.reportSvc.buildTickerViews(report);
     this.tableSource.data = this.tickerViews;
     
-    // Reconecta la ordenación
     if (this.sort) {
       this.tableSource.sort = this.sort;
     }
 
-    // MAPEO FORZADO PARA EL GRÁFICO AGRUPADO: Eje X = ETF, Eje Y = IA vs Mercado
     this.returnChart = this.tickerViews.map(t => ({
       name: t.ticker,
       series: [
