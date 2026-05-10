@@ -36,9 +36,36 @@
             "Effect": "Allow",
             "Action": [
                 "rds:DescribeDBInstances",
-                "rds:DescribeDBClusters"
+                "rds:DescribeDBClusters",
+                "rds-db:connect"
             ],
             "Resource": "*"
+        },
+        {
+            "Sid": "StepFunctionsAccess",
+            "Effect": "Allow",
+            "Action": [
+                "states:StartExecution",
+                "states:DescribeExecution",
+                "states:StopExecution",
+                "states:ListExecutions",
+                "states:GetExecutionHistory"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "LambdaInvokeAccess",
+            "Effect": "Allow",
+            "Action": [
+                "lambda:InvokeFunction"
+            ],
+            "Resource": [
+                "arn:aws:lambda:*:*:function:lambda_ingestion*",
+                "arn:aws:lambda:*:*:function:lambda_sentiment*",
+                "arn:aws:lambda:*:*:function:lambda_indicators*",
+                "arn:aws:lambda:*:*:function:lambda_bayesian*",
+                "arn:aws:lambda:*:*:function:lambda_report*"
+            ]
         },
         {
             "Sid": "ECRAccess",
@@ -63,7 +90,9 @@
             "Action": [
                 "logs:CreateLogGroup",
                 "logs:CreateLogStream",
-                "logs:PutLogEvents"
+                "logs:PutLogEvents",
+                "logs:FilterLogEvents",
+                "logs:GetLogEvents"
             ],
             "Resource": "arn:aws:logs:*:*:*"
         },

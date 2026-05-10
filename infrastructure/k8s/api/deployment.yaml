@@ -44,8 +44,14 @@ spec:
               value: "eu-north-1" # ← ajusta si es otra región
             - name: DATALAKE_BUCKET
               value: "tfm-unir-datalake"
+            - name: CONFIG_BUCKET
+              value: "tfm-unir-config"
             - name: PRESIGN_TTL_SEC
               value: "900"
+            # ARN de la State Machine de Step Functions
+            # Rellena con el ARN real tras crear la state machine
+            - name: STATE_MACHINE_ARN
+              value: "arn:aws:states:eu-north-1:ACCOUNT_ID:stateMachine:tfm-trading-pipeline"
             - name: DASHBOARD_API_KEY
               valueFrom:
                 secretKeyRef:

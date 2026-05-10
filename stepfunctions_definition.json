@@ -20,6 +20,7 @@
         }
       },
       "TimeoutSeconds": 300,
+      "ResultPath": "$.ingestion_result",
       "Retry": [
         {
           "ErrorEquals": [
@@ -34,6 +35,7 @@
     },
     "parallel_analysis": {
       "Type": "Parallel",
+      "ResultPath": "$.parallel_result",
       "Branches": [
         {
           "StartAt": "lambda_sentiment",
@@ -102,6 +104,7 @@
         }
       },
       "TimeoutSeconds": 300,
+      "ResultPath": "$.bayesian_result",
       "Retry": [
         {
           "ErrorEquals": [
@@ -133,6 +136,7 @@
         }
       },
       "TimeoutSeconds": 300,
+      "ResultPath": "$.report_result",
       "Retry": [
         {
           "ErrorEquals": [

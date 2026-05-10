@@ -210,18 +210,45 @@ def upsert_pipeline_kpi(connection, batch_date, stage, metrics):
 
 
 def handler(event, context):
-    """Main Lambda handler"""
+    """Main Lambda handler.
+
+    Acepta un parametro opcional 'ticker' (o 'tickers') en el evento para
+    ejecutar el pipeline solo para un subconjunto de ETFs.
+
+    Ejemplos de evento:
+      {}                          -> procesa todos los tickers del universo
+      {"ticker": "SPY"}           -> procesa solo SPY
+      {"tickers": ["SPY","QQQ"]}  -> procesa SPY y QQQ
+      {"batch_date": "2024-01-15","ticker": "SPY"}
+    """
     try:
         logger.info("Lambda ingestion started")
+        logger.info(f"Event received: {json.dumps(event or {})}")
 
         # Get configurations
         aurora_creds = get_secret('aurora/credentials')
         finnhub_key = get_secret('finnhub/api_key')['api_key']
 
-        # Read ETF configuration
-        tickers = read_etf_config()
-        logger.info(f"Processing {len(tickers)} tickers")
-        batch_date = resolve_batch_date(event)
+        # Read ETF configuration (universe completo)
+        all_tickers = read_etf_config()
+        batch_date  = resolve_batch_date(event)
+
+        # ── Filtrar por ticker si se especifica en el evento ──────────────────
+        event_ticker  = (event or {}).get('ticker')
+        event_tickers = (event or {}).get('tickers')
+
+        if event_ticker:
+            tickers = [event_ticker.upper()]
+            logger.info(f"Single-ticker mode: {tickers[0]}")
+        elif event_tickers:
+            tickers = [t.upper() for t in event_tickers]
+            logger.info(f"Multi-ticker mode: {tickers}")
+        else:
+            tickers = all_tickers
+            logger.info(f"Full-universe mode: {len(tickers)} tickers")
+        # ─────────────────────────────────────────────────────────────────────
+
+        logger.info(f"Processing {len(tickers)} tickers for batch_date={batch_date}")
 
         # Download OHLCV data
         ohlcv_data = download_ohlcv_data(tickers)

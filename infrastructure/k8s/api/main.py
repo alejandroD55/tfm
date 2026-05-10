@@ -5,9 +5,14 @@ Endpoints:
   GET /health
   GET /reports                    - Lista fechas disponibles
   GET /reports/{date}             - Report completo
-  GET /trace/{date}               - Traza bayesiana completa (nuevo)
-  GET /trace/{date}/{ticker}      - Traza por ticker (nuevo)
-  GET /model                      - Config del modelo bayesiano (nuevo)
+  GET /trace/{date}               - Traza bayesiana completa
+  GET /trace/{date}/{ticker}      - Traza por ticker
+  GET /model                      - Config del modelo bayesiano
+  GET /tickers                    - Lista ETFs del universo (nuevo)
+  GET /raw/{date}/news/{ticker}   - Noticias raw de Finnhub por ticker (nuevo)
+  GET /raw/{date}/ohlcv/{ticker}  - Datos OHLCV por ticker (nuevo)
+  POST /pipeline/run              - Lanza pipeline para ticker(s) (nuevo)
+  GET /pipeline/status            - Estado de una ejecucion Step Functions (nuevo)
   GET /sentiment/{date}/{ticker}  - Sentimiento detallado (nuevo)
   GET /indicators/{date}/{ticker} - Indicadores tecnicos (nuevo)
   GET /files
@@ -15,24 +20,33 @@ Endpoints:
   GET /stats
 """
 import os
+import csv
+import io
 import json
 import logging
+import base64
 from datetime import datetime, timezone
+from typing import Optional, List
 
 import boto3
 from botocore.exceptions import ClientError
 from fastapi import FastAPI, HTTPException, Query, Header
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("tfm-api")
 
 DATALAKE_BUCKET   = os.getenv("DATALAKE_BUCKET", "tfm-unir-datalake")
+CONFIG_BUCKET     = os.getenv("CONFIG_BUCKET", "tfm-unir-config")
 AWS_REGION        = os.getenv("AWS_REGION", "eu-north-1")
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "")
 PRESIGN_TTL       = int(os.getenv("PRESIGN_TTL_SEC", "900"))
+STATE_MACHINE_ARN = os.getenv("STATE_MACHINE_ARN", "")
 
-s3 = boto3.client("s3", region_name=AWS_REGION)
+s3  = boto3.client("s3",            region_name=AWS_REGION)
+sfn = boto3.client("stepfunctions", region_name=AWS_REGION)
+lmb = boto3.client("lambda",        region_name=AWS_REGION)
 
 app = FastAPI(
     title="TFM Dashboard API",
@@ -328,6 +342,204 @@ def presign(key: str = Query(...), ttl: int = Query(default=PRESIGN_TTL),
         return {"url": url, "expiresInSeconds": ttl}
     except Exception as e:
         logger.exception("presign error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Tickers ──────────────────────────────────────────────────────────────────
+
+@app.get("/tickers", tags=["Tickers"])
+def list_tickers(x_api_key: str = Header(default="")):
+    """Lista los ETFs del universo de inversion (tfm-unir-config/etf_universe.json)."""
+    check_api_key(x_api_key)
+    try:
+        resp = s3.get_object(Bucket=CONFIG_BUCKET, Key="etf_universe.json")
+        data = json.loads(resp["Body"].read().decode("utf-8"))
+        tickers = data.get("tickers", data) if isinstance(data, dict) else data
+        return {"tickers": tickers, "total": len(tickers)}
+    except Exception as e:
+        logger.exception("list_tickers error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Raw data: noticias y OHLCV ───────────────────────────────────────────────
+
+@app.get("/raw/{date}/news/{ticker}", tags=["Raw Data"])
+def get_news(date: str, ticker: str, x_api_key: str = Header(default="")):
+    """
+    Noticias raw de Finnhub para un ticker en una fecha concreta.
+    Fuente: s3://tfm-unir-datalake/raw/{date}/news.json
+    Incluye: headline, url, datetime, source para cada articulo.
+    """
+    check_api_key(x_api_key)
+    if not date or len(date) != 10:
+        raise HTTPException(status_code=400, detail="Formato de fecha: YYYY-MM-DD")
+    try:
+        resp     = s3.get_object(Bucket=DATALAKE_BUCKET, Key=f"raw/{date}/news.json")
+        all_news = json.loads(resp["Body"].read().decode("utf-8"))
+        ticker_u = ticker.upper()
+        articles = all_news.get(ticker_u, [])
+        return {
+            "date":     date,
+            "ticker":   ticker_u,
+            "articles": articles,
+            "total":    len(articles),
+            "all_tickers_in_file": list(all_news.keys()),
+        }
+    except ClientError as e:
+        if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
+            raise HTTPException(status_code=404, detail=f"No hay news.json para {date}")
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.exception("get_news error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/raw/{date}/ohlcv/{ticker}", tags=["Raw Data"])
+def get_ohlcv(
+    date: str, ticker: str,
+    limit: int = Query(default=90, ge=1, le=365, description="Max filas a devolver"),
+    x_api_key: str = Header(default=""),
+):
+    """
+    Datos OHLCV (Open/High/Low/Close/Volume) para un ticker en una fecha concreta.
+    Fuente: s3://tfm-unir-datalake/raw/{date}/ohlcv.csv
+    Devuelve hasta 'limit' filas (por defecto 90, los ultimos 90 dias).
+    """
+    check_api_key(x_api_key)
+    if not date or len(date) != 10:
+        raise HTTPException(status_code=400, detail="Formato de fecha: YYYY-MM-DD")
+    try:
+        resp    = s3.get_object(Bucket=DATALAKE_BUCKET, Key=f"raw/{date}/ohlcv.csv")
+        content = resp["Body"].read().decode("utf-8")
+
+        reader   = csv.DictReader(io.StringIO(content))
+        ticker_u = ticker.upper()
+        rows     = []
+        for row in reader:
+            row_ticker = row.get("Ticker", row.get("ticker", "")).upper()
+            if row_ticker == ticker_u:
+                # Normalizar columnas a minuscula
+                clean = {k.strip(): v for k, v in row.items()}
+                rows.append({
+                    "date":   clean.get("Date", clean.get("date", "")),
+                    "open":   float(clean.get("Open",   clean.get("open",   0) or 0)),
+                    "high":   float(clean.get("High",   clean.get("high",   0) or 0)),
+                    "low":    float(clean.get("Low",    clean.get("low",    0) or 0)),
+                    "close":  float(clean.get("Close",  clean.get("close",  0) or 0)),
+                    "volume": float(clean.get("Volume", clean.get("volume", 0) or 0)),
+                })
+
+        # Ordenar por fecha desc y limitar
+        rows.sort(key=lambda r: r["date"], reverse=True)
+        rows = rows[:limit]
+        rows.sort(key=lambda r: r["date"])  # devolver cronologico
+
+        if not rows:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Ticker '{ticker_u}' no encontrado en ohlcv.csv de {date}. "
+                       f"Verifica que el ticker existe en el universo ETF."
+            )
+
+        latest = rows[-1] if rows else {}
+        return {
+            "date":        date,
+            "ticker":      ticker_u,
+            "records":     len(rows),
+            "latest":      latest,
+            "data":        rows,
+        }
+    except HTTPException:
+        raise
+    except ClientError as e:
+        if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
+            raise HTTPException(status_code=404, detail=f"No hay ohlcv.csv para {date}")
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.exception("get_ohlcv error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Pipeline trigger ─────────────────────────────────────────────────────────
+
+class PipelineRunRequest(BaseModel):
+    ticker:     Optional[str]       = None   # ticker unico
+    tickers:    Optional[List[str]] = None   # lista de tickers
+    batch_date: Optional[str]       = None   # YYYY-MM-DD; hoy si omitido
+
+
+@app.post("/pipeline/run", tags=["Pipeline"])
+def run_pipeline(body: PipelineRunRequest, x_api_key: str = Header(default="")):
+    """
+    Lanza el pipeline de Step Functions para uno o varios tickers.
+    Si no se especifica ticker, ejecuta el pipeline completo (todos los ETFs).
+
+    Requiere STATE_MACHINE_ARN configurado como variable de entorno en el pod.
+    El pipeline acepta el parametro 'ticker' en el evento para filtrar.
+    """
+    check_api_key(x_api_key)
+
+    if not STATE_MACHINE_ARN:
+        raise HTTPException(
+            status_code=503,
+            detail="STATE_MACHINE_ARN no configurado. Contacta al administrador."
+        )
+
+    payload: dict = {}
+    if body.batch_date:
+        payload["batch_date"] = body.batch_date
+    if body.ticker:
+        payload["ticker"] = body.ticker.upper()
+    elif body.tickers:
+        payload["tickers"] = [t.upper() for t in body.tickers]
+
+    try:
+        run_name = (
+            f"dashboard-{body.ticker or 'full'}-"
+            f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
+        )
+        exec_resp = sfn.start_execution(
+            stateMachineArn=STATE_MACHINE_ARN,
+            name=run_name,
+            input=json.dumps(payload),
+        )
+        return {
+            "executionArn":  exec_resp["executionArn"],
+            "status":        "RUNNING",
+            "startDate":     exec_resp["startDate"].isoformat(),
+            "payload":       payload,
+            "message": (
+                f"Pipeline iniciado para ticker '{body.ticker}'"
+                if body.ticker else "Pipeline completo iniciado"
+            ),
+        }
+    except Exception as e:
+        logger.exception("run_pipeline error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/pipeline/status", tags=["Pipeline"])
+def pipeline_status(
+    execution_arn: str = Query(..., description="ARN de la ejecucion de Step Functions"),
+    x_api_key: str = Header(default=""),
+):
+    """
+    Estado de una ejecucion de Step Functions.
+    Devuelve: RUNNING | SUCCEEDED | FAILED | TIMED_OUT | ABORTED
+    """
+    check_api_key(x_api_key)
+    try:
+        desc = sfn.describe_execution(executionArn=execution_arn)
+        return {
+            "executionArn": execution_arn,
+            "status":       desc["status"],
+            "startDate":    desc["startDate"].isoformat(),
+            "stopDate":     desc.get("stopDate", {}) and desc["stopDate"].isoformat()
+                            if desc.get("stopDate") else None,
+            "input":        json.loads(desc.get("input", "{}")),
+        }
+    except Exception as e:
+        logger.exception("pipeline_status error")
         raise HTTPException(status_code=500, detail=str(e))
 
 

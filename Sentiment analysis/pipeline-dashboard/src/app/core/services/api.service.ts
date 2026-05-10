@@ -137,4 +137,50 @@ export class ApiService {
     return this.http.get<BucketStats>(`${this.baseUrl}/stats`,
       { headers: this.authHeaders });
   }
+
+  // ─── Tickers ──────────────────────────────────────────────────────
+  /** Lista los ETFs del universo (etf_universe.json) */
+  getTickers(): Observable<{ tickers: string[]; total: number }> {
+    return this.http.get<any>(`${this.baseUrl}/tickers`,
+      { headers: this.authHeaders });
+  }
+
+  // ─── Raw data ────────────────────────────────────────────────────
+  /** Noticias raw de Finnhub para un ticker y fecha */
+  getRawNews(date: string, ticker: string): Observable<{
+    date: string; ticker: string; articles: any[]; total: number;
+    all_tickers_in_file: string[];
+  }> {
+    return this.http.get<any>(
+      `${this.baseUrl}/raw/${date}/news/${ticker.toUpperCase()}`,
+      { headers: this.authHeaders });
+  }
+
+  /** Datos OHLCV para un ticker y fecha */
+  getRawOhlcv(date: string, ticker: string, limit = 90): Observable<{
+    date: string; ticker: string; records: number; latest: any; data: any[];
+  }> {
+    const params = new HttpParams().set('limit', limit.toString());
+    return this.http.get<any>(
+      `${this.baseUrl}/raw/${date}/ohlcv/${ticker.toUpperCase()}`,
+      { headers: this.authHeaders, params });
+  }
+
+  // ─── Pipeline trigger ─────────────────────────────────────────────
+  /** Lanza el pipeline (completo o para un ticker concreto) */
+  runPipeline(body: { ticker?: string; tickers?: string[]; batch_date?: string }): Observable<{
+    executionArn: string; status: string; startDate: string; message: string;
+  }> {
+    return this.http.post<any>(`${this.baseUrl}/pipeline/run`, body,
+      { headers: this.authHeaders });
+  }
+
+  /** Estado de una ejecucion de Step Functions */
+  getPipelineStatus(executionArn: string): Observable<{
+    executionArn: string; status: string; startDate: string; stopDate: string | null; input: any;
+  }> {
+    const params = new HttpParams().set('execution_arn', executionArn);
+    return this.http.get<any>(`${this.baseUrl}/pipeline/status`,
+      { headers: this.authHeaders, params });
+  }
 }

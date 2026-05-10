@@ -269,6 +269,13 @@ export class SidebarComponent {
       route: '/backtesting',
       description: 'Sharpe · Drawdown · Alpha vs Buy & Hold',
     },
+    {
+      label: 'Explorador',
+      icon: 'search',
+      route: '/explorer',
+      description: 'Noticias raw · OHLCV · decisión por ticker · lanzar pipeline',
+      badge: 'NEW',
+    },
   ];
 
   infraNav: NavItem[] = [

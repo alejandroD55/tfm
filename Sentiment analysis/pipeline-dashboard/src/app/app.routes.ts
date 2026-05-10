@@ -27,6 +27,11 @@ export const routes: Routes = [
       import('./features/audit/audit.component').then(m => m.AuditComponent),
   },
   {
+    path: 'explorer',
+    loadComponent: () =>
+      import('./features/ticker-explorer/ticker-explorer.component').then(m => m.TickerExplorerComponent),
+  },
+  {
     path: '',
     redirectTo: 'dashboard',
     pathMatch: 'full',
