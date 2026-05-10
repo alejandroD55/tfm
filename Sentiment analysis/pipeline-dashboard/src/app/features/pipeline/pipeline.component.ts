@@ -6,15 +6,15 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatExpansionModule } from '@angular/material/expansion';
-import { LegendPosition, NgxChartsModule } from '@swimlane/ngx-charts';
+import { NgxChartsModule } from '@swimlane/ngx-charts';
 import { forkJoin, switchMap, of } from 'rxjs';
 import { ReportService } from '../../core/services/report.service';
 import { DailyReport, PipelineHealth, BatchStatus } from '../../core/models/report.model';
-import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
+import { ChartDataPoint } from '../../core/models/pipeline.model';
 
 interface BatchSummary {
   date: string;
-  status: BatchStatus;
+  status: string;
   tickers_expected: number;
   tickers_with_signals: number;
   headlines_scored: number;
@@ -103,7 +103,7 @@ interface BatchSummary {
                   <div><div class="bn-label">Red Bayesiana</div><small>pgmpy</small></div>
                 </div>
                 <div class="f-text">
-                  Cruza los indicadores técnicos (λ3) con el sentimiento de las noticias (λ2) usando probabilidad condicional para emitir la <strong>Confianza Alcista</strong> y la decisión final (Comprar/Mantener/Cash).
+                  Cruza los indicadores (λ3) con el sentimiento de las noticias (λ2) para emitir la <strong>Confianza Alcista</strong> y la decisión (Comprar/Mantener/Cash).
                 </div>
               </div>
               <div class="f-arrow">→</div>
@@ -114,17 +114,17 @@ interface BatchSummary {
                   <div><div class="bn-label">Reporte Final</div><small>Consolidación</small></div>
                 </div>
                 <div class="f-text">
-                  Calcula las métricas financieras históricas (Sharpe, Drawdown, etc.) y genera el archivo <code>report.json</code> que está leyendo este Dashboard ahora mismo.
+                  Calcula las métricas financieras (Sharpe, Drawdown, etc.) y genera el archivo <code>report.json</code> que está leyendo este Dashboard.
                 </div>
               </div>
             </div>
 
             <div class="glossary-grid" style="margin-top: 16px; border-top: 1px solid var(--border); padding-top: 16px;">
               <div class="g-col">
-                <strong>Batch (Ejecución):</strong> Un ciclo completo de las 5 Lambdas. Si alguna falla por problemas de red o de API, el batch marca error para que el ingeniero lo revise.
+                <strong>Batch (Ejecución):</strong> Un ciclo completo de las 5 Lambdas. Si alguna falla por problemas de API, el batch marca error para que el ingeniero lo revise.
               </div>
               <div class="g-col">
-                <strong>Cobertura:</strong> Porcentaje de ETFs que lograron procesarse correctamente hasta el final (idealmente el 100%).
+                <strong>Cobertura:</strong> Activos con señal generada / Total esperados. Puede ser menor a 100% de forma natural si un día no hay noticias suficientes para procesar un ETF.
               </div>
             </div>
 
@@ -179,11 +179,10 @@ interface BatchSummary {
                 <span>Estado de las Ejecuciones</span>
               </div>
             </div>
-            <div class="chart-container-tall">
+            <div class="chart-container-pie">
               <ngx-charts-pie-chart
                 [results]="statusPieChart"
                 [legend]="true"
-                [legendPosition]="legendBelow"
                 [labels]="false"
                 [doughnut]="true"
                 [arcWidth]="0.35"
@@ -198,7 +197,7 @@ interface BatchSummary {
                 <mat-icon>show_chart</mat-icon>
                 <span>Cobertura Diaria de Activos</span>
               </div>
-              <span class="card-sub">% de ETFs procesados con éxito cada día</span>
+              <span class="card-sub">% de ETFs con Señal Generada</span>
             </div>
             <div class="chart-container-tall">
               <ngx-charts-bar-vertical
@@ -268,14 +267,14 @@ interface BatchSummary {
 
                 <mat-expansion-panel-header [collapsedHeight]="'76px'" [expandedHeight]="'76px'">
                   <div class="batch-row">
-                    <span class="batch-status {{ batch.status.toLowerCase() }}">
+                    <span class="batch-status {{ getStatusClass(batch.status) }}">
                       <mat-icon>{{ statusIcon(batch.status) }}</mat-icon>
                       {{ translateStatus(batch.status) }}
                     </span>
                     <span class="batch-date">{{ batch.date }}</span>
 
                     <div class="batch-meta">
-                      <span class="m-item" matTooltip="Activos procesados">
+                      <span class="m-item" matTooltip="Señales generadas vs Total ETFs">
                         <mat-icon>storage</mat-icon>
                         {{ batch.tickers_with_signals }}/{{ batch.tickers_expected }} Activos
                       </span>
@@ -351,7 +350,7 @@ interface BatchSummary {
     .g-col strong { color: var(--slate-900); display: block; margin-bottom: 4px; }
 
     /* Layout columnar del flujo de Arquitectura */
-    .flow-container { display: flex; align-items: flex-start; gap: 12px; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 10px; }
+    .flow-container { display: flex; align-items: flex-start; gap: 12px; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 24px; }
     .f-step { flex: 1; min-width: 160px; display: flex; flex-direction: column; gap: 8px; }
     .f-arrow { margin-top: 15px; font-size: 24px; font-weight: bold; color: var(--slate-400); }
     
@@ -391,15 +390,18 @@ interface BatchSummary {
     .card-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--slate-900); mat-icon { font-size: 18px; height: 18px; width: 18px; color: var(--brand-600); } }
     .card-sub { font-size: 12px; color: var(--slate-500); margin-left: 26px;}
 
-    /* Contenedores con alturas fijas para que quepan las leyendas sin cortar */
+    /* Contenedores Gráficos */
     .chart-container-tall { width: 100%; height: 260px; display: flex; align-items: center; justify-content: center; }
     .chart-container-medium { width: 100%; height: 220px; display: flex; align-items: center; justify-content: center; }
     
-    /* Ajustes obligatorios ngx-charts leyenda */
+    /* Contenedor especial para la Tarta con la leyenda a la derecha limpia */
+    .chart-container-pie { width: 100%; height: 260px; display: flex; align-items: center; justify-content: flex-start; }
+    
+    /* Ajustes para limpiar el fondo gris oscuro nativo de la leyenda ngx-charts */
     .ngx-charts .legend-labels { background: transparent !important; }
+    .ngx-charts .chart-legend .legend-wrap { background: transparent !important; box-shadow: none !important; }
     .ngx-charts .legend-title-text { display: none; }
-    .chart-legend .legend-labels { padding-left: 0 !important; text-align: center; }
-    .chart-legend .legend-label { font-size: 11px !important; color: var(--slate-700) !important; font-weight: 600; margin-right: 12px;}
+    .chart-legend .legend-label { font-size: 12px !important; color: var(--slate-700) !important; font-weight: 600; margin-bottom: 6px;}
 
     /* Timeline */
     .timeline-card { padding: 18px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-sm);}
@@ -438,8 +440,6 @@ interface BatchSummary {
 export class PipelineComponent implements OnInit {
   private reportSvc = inject(ReportService);
 
-  legendBelow = LegendPosition.Below;
-
   loading = true;
   batches: BatchSummary[] = [];
   latestHealth: PipelineHealth | null = null;
@@ -456,7 +456,8 @@ export class PipelineComponent implements OnInit {
   headlinesScheme: any = { domain: ['#8B5CF6'] }; // Violeta
   signalsScheme: any = { domain: ['#3B82F6'] }; // Azul
 
-  get completedCount() { return this.batches.filter(b => b.status === 'COMPLETED').length; }
+  // KPI Logic (Trata STARTED como éxito ya que implica que se generó el report.json)
+  get completedCount() { return this.batches.filter(b => b.status === 'COMPLETED' || b.status === 'STARTED').length; }
   get failedCount()    { return this.batches.filter(b => b.status === 'FAILED').length; }
   get avgCoverage()    {
     if (!this.batches.length) return 0;
@@ -496,7 +497,7 @@ export class PipelineComponent implements OnInit {
     // 1. Gráfico de Estados (Tarta)
     const counts: Record<string, number> = { COMPLETED: 0, FAILED: 0 };
     for (const b of this.batches) {
-      if (b.status === 'COMPLETED') counts['COMPLETED']++;
+      if (b.status === 'COMPLETED' || b.status === 'STARTED') counts['COMPLETED']++;
       else counts['FAILED']++;
     }
     this.statusPieChart = [
@@ -504,11 +505,11 @@ export class PipelineComponent implements OnInit {
       { name: 'Error', value: counts['FAILED'] }
     ].filter(i => i.value > 0);
 
-    // 2. Gráfico de Cobertura (Barras) -> Invertimos para que el día más reciente salga a la derecha
+    // 2. Gráfico de Cobertura (Barras) -> Invertimos para cronología correcta
     const sortedBatches = [...this.batches].reverse();
 
     this.coverageChart = sortedBatches.map(b => ({
-      name: b.date.slice(5), // Solo mostramos mes-día (ej: 05-10)
+      name: b.date.slice(5),
       value: +(b.coverage_ratio * 100).toFixed(1),
     }));
 
@@ -525,13 +526,17 @@ export class PipelineComponent implements OnInit {
     }));
   }
 
-  // Utilidades de traducción visual
+  // Utilidades
+  getStatusClass(s: string) {
+    return (s === 'COMPLETED' || s === 'STARTED') ? 'completed' : 'failed';
+  }
+
   statusIcon(s: string) {
-    return s === 'COMPLETED' ? 'check_circle' : 'error';
+    return (s === 'COMPLETED' || s === 'STARTED') ? 'check_circle' : 'error';
   }
   
   translateStatus(s: string) {
-    return s === 'COMPLETED' ? 'COMPLETADO' : 'ERROR';
+    return (s === 'COMPLETED' || s === 'STARTED') ? 'COMPLETADO' : 'ERROR';
   }
 
   stageIcon(key: string) {

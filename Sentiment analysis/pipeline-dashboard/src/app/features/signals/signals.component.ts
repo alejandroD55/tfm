@@ -38,7 +38,7 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
             <mat-icon>psychology</mat-icon>
             <span>Decisiones de Inteligencia Artificial</span>
           </div>
-          <h1 class="page-title">Señales & Explicabilidad</h1>
+          <h1 class="page-title">Señales y Explicabilidad</h1>
           <p class="page-sub">
             Descubre el razonamiento exacto de la IA (Red Bayesiana + FinBERT) detrás de cada decisión.
           </p>
