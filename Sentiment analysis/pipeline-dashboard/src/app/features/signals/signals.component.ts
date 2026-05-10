@@ -8,7 +8,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatExpansionModule } from '@angular/material/expansion';
-import { NgxChartsModule, LegendPosition } from '@swimlane/ngx-charts';
+import { NgxChartsModule } from '@swimlane/ngx-charts';
 import { switchMap, catchError, of } from 'rxjs';
 import { ReportService } from '../../core/services/report.service';
 import { TraceService } from '../../core/services/trace.service';
@@ -38,7 +38,7 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
             <mat-icon>psychology</mat-icon>
             <span>Decisiones de Inteligencia Artificial</span>
           </div>
-          <h1 class="page-title">Señales y Explicabilidad</h1>
+          <h1 class="page-title">Señales & Explicabilidad</h1>
           <p class="page-sub">
             Descubre el razonamiento exacto de la IA (Red Bayesiana + FinBERT) detrás de cada decisión.
           </p>
@@ -175,45 +175,121 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
         </div>
       } @else {
 
-        <section class="charts-overview">
-          <div class="nodes-grid-full">
+        <section class="charts-grid-layout">
+          <div class="nodes-2x2">
+            
             <div class="chart-box">
               <h4>Sentimiento FinBERT</h4>
-              <div class="chart-container">
-                <ngx-charts-pie-chart [results]="sentimentChart" [labels]="false" [legend]="true" [legendPosition]="legendBelow" [legendTitle]="''" [doughnut]="true" [arcWidth]="0.3" [customColors]="customSentimentColors"></ngx-charts-pie-chart>
+              <div class="donut-container small-donut">
+                <div class="donut-chart-wrapper">
+                  <ngx-charts-pie-chart [results]="sentimentChart" [labels]="false" [legend]="false" [doughnut]="true" [arcWidth]="0.35" [customColors]="customSentimentColors"></ngx-charts-pie-chart>
+                  <div class="donut-center">
+                    <div class="dc-num">{{ tickerViews.length }}</div>
+                    <div class="dc-lbl">ETFs</div>
+                  </div>
+                </div>
+                <div class="custom-legend">
+                  @for (item of sentimentChart; track item.name) {
+                    <div class="cl-item">
+                      <span class="cl-color" [style.background-color]="customSentimentColors(item.name)"></span>
+                      <span class="cl-label">{{ item.name }}</span>
+                      <span class="cl-value">{{ item.value }}</span>
+                    </div>
+                  }
+                </div>
               </div>
             </div>
+
             <div class="chart-box">
               <h4>Fuerza (RSI)</h4>
-              <div class="chart-container">
-                <ngx-charts-pie-chart [results]="rsiChart" [labels]="false" [legend]="true" [legendPosition]="legendBelow" [legendTitle]="''" [doughnut]="true" [arcWidth]="0.3" [customColors]="customRsiColors"></ngx-charts-pie-chart>
+              <div class="donut-container small-donut">
+                <div class="donut-chart-wrapper">
+                  <ngx-charts-pie-chart [results]="rsiChart" [labels]="false" [legend]="false" [doughnut]="true" [arcWidth]="0.35" [customColors]="customRsiColors"></ngx-charts-pie-chart>
+                  <div class="donut-center">
+                    <div class="dc-num">{{ tickerViews.length }}</div>
+                    <div class="dc-lbl">ETFs</div>
+                  </div>
+                </div>
+                <div class="custom-legend">
+                  @for (item of rsiChart; track item.name) {
+                    <div class="cl-item">
+                      <span class="cl-color" [style.background-color]="customRsiColors(item.name)"></span>
+                      <span class="cl-label">{{ item.name | titlecase }}</span>
+                      <span class="cl-value">{{ item.value }}</span>
+                    </div>
+                  }
+                </div>
               </div>
             </div>
+
             <div class="chart-box">
               <h4>Tendencia General</h4>
-              <div class="chart-container">
-                <ngx-charts-pie-chart [results]="trendChart" [labels]="false" [legend]="true" [legendPosition]="legendBelow" [legendTitle]="''" [doughnut]="true" [arcWidth]="0.3" [customColors]="customTrendColors"></ngx-charts-pie-chart>
+              <div class="donut-container small-donut">
+                <div class="donut-chart-wrapper">
+                  <ngx-charts-pie-chart [results]="trendChart" [labels]="false" [legend]="false" [doughnut]="true" [arcWidth]="0.35" [customColors]="customTrendColors"></ngx-charts-pie-chart>
+                  <div class="donut-center">
+                    <div class="dc-num">{{ tickerViews.length }}</div>
+                    <div class="dc-lbl">ETFs</div>
+                  </div>
+                </div>
+                <div class="custom-legend">
+                  @for (item of trendChart; track item.name) {
+                    <div class="cl-item">
+                      <span class="cl-color" [style.background-color]="customTrendColors(item.name)"></span>
+                      <span class="cl-label">{{ item.name | titlecase }}</span>
+                      <span class="cl-value">{{ item.value }}</span>
+                    </div>
+                  }
+                </div>
               </div>
             </div>
+
             <div class="chart-box">
               <h4>Volatilidad Mercado</h4>
-              <div class="chart-container">
-                <ngx-charts-pie-chart [results]="volatilityChart" [labels]="false" [legend]="true" [legendPosition]="legendBelow" [legendTitle]="''" [doughnut]="true" [arcWidth]="0.3" [customColors]="customVolColors"></ngx-charts-pie-chart>
+              <div class="donut-container small-donut">
+                <div class="donut-chart-wrapper">
+                  <ngx-charts-pie-chart [results]="volatilityChart" [labels]="false" [legend]="false" [doughnut]="true" [arcWidth]="0.35" [customColors]="customVolColors"></ngx-charts-pie-chart>
+                  <div class="donut-center">
+                    <div class="dc-num">{{ tickerViews.length }}</div>
+                    <div class="dc-lbl">ETFs</div>
+                  </div>
+                </div>
+                <div class="custom-legend">
+                  @for (item of volatilityChart; track item.name) {
+                    <div class="cl-item">
+                      <span class="cl-color" [style.background-color]="customVolColors(item.name)"></span>
+                      <span class="cl-label">{{ item.name | titlecase }}</span>
+                      <span class="cl-value">{{ item.value }}</span>
+                    </div>
+                  }
+                </div>
               </div>
             </div>
           </div>
           
           <div class="chart-box main-chart-full">
             <h4>Decisión Final de Inversión</h4>
-            <div class="chart-container" style="position: relative;">
-              <ngx-charts-pie-chart [results]="signalChart" [labels]="false" [legend]="true" [legendPosition]="legendBelow" [legendTitle]="''" [doughnut]="true" [arcWidth]="0.25" [customColors]="customSignalColors"></ngx-charts-pie-chart>
-              <div class="chart-center"><mat-icon>psychology</mat-icon></div>
+            <div class="donut-container large-donut">
+              <div class="donut-chart-wrapper">
+                <ngx-charts-pie-chart [results]="signalChart" [labels]="false" [legend]="false" [doughnut]="true" [arcWidth]="0.3" [customColors]="customSignalColors"></ngx-charts-pie-chart>
+                <div class="donut-center">
+                  <div class="dc-num">{{ tickerViews.length }}</div>
+                  <div class="dc-lbl">Señales</div>
+                </div>
+              </div>
+              <div class="custom-legend">
+                @for (item of signalChart; track item.name) {
+                  <div class="cl-item">
+                    <span class="cl-color" [style.background-color]="customSignalColors(item.name)"></span>
+                    <span class="cl-label">{{ item.name }}</span>
+                    <span class="cl-value">{{ item.value }}</span>
+                  </div>
+                }
+              </div>
             </div>
           </div>
         </section>
-          
         
-
         <div class="card table-card">
           <table mat-table [dataSource]="dataSource" multiTemplateDataRows matSort class="aurora-table">
 
@@ -426,10 +502,6 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
     </div>
   `,
   styles: [`
-    /* Ajuste para las etiquetas de los Smart Donuts */
-    .ngx-charts .pie-label-path { stroke: var(--slate-300) !important; }
-    .ngx-charts .pie-label text { fill: var(--slate-600) !important; font-size: 11px !important; font-weight: 600; }
-
     /* shared page chrome */
     .page { max-width: var(--content-max); margin: 0 auto; padding-bottom: 40px;}
     .page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; flex-wrap: wrap; margin-bottom: 22px; }
@@ -478,29 +550,35 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
     
     .bn-target { background: linear-gradient(135deg, var(--brand-700), var(--brand-600)); border-color: transparent; color: #fff; mat-icon { color: #fff; } .bn-label { color: #fff; } small { color: rgba(255,255,255,.7); } }
 
-    /* Layout Gráficos de Nodos (Dashboard Visual) */
-    .charts-overview { display: flex; flex-direction: column; gap: 16px; margin-bottom: 24px; }
-    .nodes-grid-full { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-    @media (max-width: 768px) { .nodes-grid-full { grid-template-columns: 1fr; } }
+    /* Custom Smart Donuts */
+    .charts-grid-layout { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 24px; }
+    @media (max-width: 1100px) { .charts-grid-layout { grid-template-columns: 1fr; } }
+    .nodes-2x2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     
     .chart-box { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); padding: 16px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; }
-    .chart-box h4 { font-size: 13px; font-weight: 700; text-transform: uppercase; color: var(--slate-700); text-align: center; margin-bottom: 4px; }
+    .chart-box h4 { font-size: 13px; font-weight: 700; text-transform: uppercase; color: var(--slate-700); text-align: center; margin-bottom: 12px; }
+    .main-chart-full { border-color: rgba(124, 58, 237, 0.3); background: rgba(124, 58, 237, 0.02); }
+    .main-chart-full h4 { color: var(--accent-violet); font-size: 15px; }
+
+    .donut-container { display: flex; align-items: center; justify-content: center; gap: 16px; width: 100%; }
+    .donut-chart-wrapper { position: relative; flex-shrink: 0; }
+    .small-donut .donut-chart-wrapper { width: 140px; height: 140px; }
+    .large-donut .donut-chart-wrapper { width: 260px; height: 260px; }
     
-    /* Contenedores con altura suficiente para la leyenda debajo */
-    .chart-container { width: 100%; height: 220px; display: flex; align-items: center; justify-content: center; }
-    
-    .main-chart-full { border-color: rgba(124, 58, 237, 0.3); background: rgba(124, 58, 237, 0.02); position: relative; align-items: center;}
-    .main-chart-full h4 { color: var(--accent-violet); font-size: 16px; margin-bottom: 12px;}
-    .main-chart-full .chart-container { height: 280px; max-width: 600px; margin: 0 auto; }
-    
-    .chart-center { position: absolute; top: 38%; left: 50%; transform: translate(-50%, -50%); color: var(--slate-300); pointer-events: none;}
-    .chart-center mat-icon { font-size: 48px; height: 48px; width: 48px;}
-    
-    /* Ajustes obligatorios para que las leyendas de ngx-charts se vean bien */
-    .ngx-charts .legend-labels { background: transparent !important; }
-    .ngx-charts .legend-title-text { display: none; } /* Ocultamos el título de la leyenda para ahorrar espacio */
-    .chart-legend .legend-labels { padding-left: 0 !important; text-align: center; }
-    .chart-legend .legend-label { font-size: 11px !important; color: var(--slate-700) !important; font-weight: 600; white-space: nowrap; margin-right: 12px;}
+    .donut-center { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+    .dc-num { font-size: 26px; font-weight: 700; color: var(--slate-900); line-height: 1; }
+    .large-donut .dc-num { font-size: 48px; }
+    .dc-lbl { font-size: 10px; color: var(--slate-500); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; margin-top: 4px; }
+    .large-donut .dc-lbl { font-size: 14px; }
+
+    .custom-legend { display: flex; flex-direction: column; gap: 8px; min-width: 90px; }
+    .cl-item { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+    .cl-color { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex-shrink: 0;}
+    .cl-label { flex: 1; font-weight: 600; color: var(--slate-600); }
+    .cl-value { font-weight: 700; color: var(--slate-900); }
+    .large-donut .custom-legend { gap: 12px; min-width: 120px;}
+    .large-donut .cl-item { font-size: 14px; }
+    .large-donut .cl-color { width: 14px; height: 14px; }
 
     /* ─── Table ─── */
     .card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-sm); }
@@ -531,7 +609,6 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
     .signal-pill.sell { background: rgba(124, 58, 237, .15); color: #7C3AED; } /* Violeta */
     .signal-pill.hold { background: var(--warn-100);    color: var(--warn-700); }
 
-    /* SOLUCIÓN AL COLOR DE LA BARRA DE PROBABILIDAD (CSS Aplanado) */
     .prob-cell { display: flex; align-items: center; gap: 10px; min-width: 140px; }
     .prob-gauge { flex: 1; height: 6px; background: var(--slate-100); border-radius: var(--r-pill); overflow: hidden; }
     .gauge-fill { height: 100%; border-radius: var(--r-pill); transition: width .5s; }
@@ -636,19 +713,15 @@ export class SignalsComponent implements OnInit, AfterViewInit {
 
   @ViewChild(MatSort) sort!: MatSort;
 
-  legendBelow = LegendPosition.Below;
-
   loading = true;
   availableDates: ReportDateEntry[] = [];
   selectedDate = '';
   filterSignal = '';
   expandedRows = new Set<string>();
 
-  // Columnas actualizadas
   displayedColumns = ['ticker', 'signal', 'prob_up', 'evidence', 'trades', 'winrate', 'return', 'alpha', 'expand'];
   dataSource = new MatTableDataSource<TickerView>();
 
-  // Gráficos Donut
   signalChart: ChartDataPoint[] = [];
   sentimentChart: ChartDataPoint[] = [];
   rsiChart: ChartDataPoint[] = [];
@@ -664,7 +737,6 @@ export class SignalsComponent implements OnInit, AfterViewInit {
   tickerTraceLoading = new Set<string>();
   hasTraceForDate = false;
 
-  // Paletas de color personalizadas para los nuevos gráficos
   customSignalColors = (name: string) => {
     if (name === 'COMPRAR') return '#22C55E';
     if (name === 'CASH') return '#7C3AED';
@@ -698,7 +770,6 @@ export class SignalsComponent implements OnInit, AfterViewInit {
     });
   }
 
-  // Se activa justo cuando la vista y la tabla están listas
   ngAfterViewInit() {
     this.dataSource.sort = this.sort;
   }
@@ -719,7 +790,6 @@ export class SignalsComponent implements OnInit, AfterViewInit {
     const views = this.reportSvc.buildTickerViews(report);
     this.dataSource.data = views;
     
-    // Reconectamos el sort por si los datos han mutado
     if (this.sort) {
       this.dataSource.sort = this.sort;
     }
@@ -731,7 +801,6 @@ export class SignalsComponent implements OnInit, AfterViewInit {
     this.holdCount = views.filter(v => v.signal === 'HOLD').length;
     this.avgProbUp = views.length ? (views.reduce((s, v) => s + v.prob_up, 0) / views.length) * 100 : 0;
 
-    // Procesar datos para los nuevos gráficos de Nodos
     const sent = { ALCISTA: 0, BAJISTA: 0, NEUTRAL: 0 };
     const rsi = { SOBREVENTA: 0, SOBRECOMPRA: 0, NEUTRAL: 0 };
     const trend = { ALCISTA: 0, BAJISTA: 0 };
@@ -804,7 +873,6 @@ export class SignalsComponent implements OnInit, AfterViewInit {
     }));
   }
 
-  // Utilidad de Traducción
   translateState(state: string): string {
     const dict: Record<string, string> = {
       bullish: 'Alcista', bearish: 'Bajista', neutral: 'Neutral',
@@ -818,7 +886,7 @@ export class SignalsComponent implements OnInit, AfterViewInit {
   getProbClass(prob: number): string {
     if (prob >= 0.65) return 'high';
     if (prob <= 0.35) return 'low';
-    return 'mid'; // Mantener (Amarillo)
+    return 'mid';
   }
 
   getTextClass(prob: number): string {

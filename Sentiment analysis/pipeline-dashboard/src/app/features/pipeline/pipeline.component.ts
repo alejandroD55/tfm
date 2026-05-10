@@ -6,7 +6,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatExpansionModule } from '@angular/material/expansion';
-import { NgxChartsModule } from '@swimlane/ngx-charts';
+import { LegendPosition, NgxChartsModule } from '@swimlane/ngx-charts';
 import { forkJoin, switchMap, of } from 'rxjs';
 import { ReportService } from '../../core/services/report.service';
 import { DailyReport, PipelineHealth, BatchStatus } from '../../core/models/report.model';
@@ -179,36 +179,15 @@ interface BatchSummary {
                 <span>Estado de las Ejecuciones</span>
               </div>
             </div>
-            
-            <div class="donut-container">
-              <div class="donut-chart-wrapper">
-                <ngx-charts-pie-chart
-                  [results]="statusPieChart"
-                  [legend]="false"
-                  [labels]="false"
-                  [doughnut]="true"
-                  [arcWidth]="0.35"
-                  [customColors]="customStatusColors"
-                  [view]="[220, 220]">
-                </ngx-charts-pie-chart>
-                <div class="donut-center">
-                  <div class="dc-num">{{ batches.length }}</div>
-                  <div class="dc-lbl">Totales</div>
-                </div>
-              </div>
-              
-              <div class="custom-legend">
-                <div class="cl-item">
-                  <span class="cl-color" style="background-color: #22C55E;"></span>
-                  <span class="cl-label">EXITOSAS</span>
-                  <span class="cl-value">{{ completedCount }}</span>
-                </div>
-                <div class="cl-item">
-                  <span class="cl-color" style="background-color: #EF4444;"></span>
-                  <span class="cl-label">FALLIDAS</span>
-                  <span class="cl-value">{{ failedCount }}</span>
-                </div>
-              </div>
+            <div class="chart-container-pie">
+              <ngx-charts-pie-chart
+                [results]="statusPieChart"
+                [legend]="true"
+                [labels]="false"
+                [doughnut]="true"
+                [arcWidth]="0.35"
+                [scheme]="statusScheme">
+              </ngx-charts-pie-chart>
             </div>
           </div>
 
@@ -414,19 +393,15 @@ interface BatchSummary {
     /* Contenedores Gráficos */
     .chart-container-tall { width: 100%; height: 260px; display: flex; align-items: center; justify-content: center; }
     .chart-container-medium { width: 100%; height: 220px; display: flex; align-items: center; justify-content: center; }
-
-    /* Donut y Leyenda Personalizada (Igual que Portfolio) */
-    .donut-container { display: flex; align-items: center; justify-content: center; gap: 20px; height: 260px;}
-    .donut-chart-wrapper { position: relative; width: 220px; height: 220px; }
-    .donut-center { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
-    .dc-num { font-size: 32px; font-weight: 700; color: var(--slate-900); line-height: 1; }
-    .dc-lbl { font-size: 12px; color: var(--slate-500); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
-
-    .custom-legend { display: flex; flex-direction: column; gap: 12px; min-width: 100px; }
-    .cl-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-    .cl-color { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
-    .cl-label { flex: 1; font-weight: 600; color: var(--slate-700); }
-    .cl-value { font-weight: 700; color: var(--slate-900); font-size: 15px; }
+    
+    /* Contenedor especial para la Tarta con la leyenda a la derecha limpia */
+    .chart-container-pie { width: 100%; height: 260px; display: flex; align-items: center; justify-content: flex-start; }
+    
+    /* Ajustes para limpiar el fondo gris oscuro nativo de la leyenda ngx-charts */
+    .ngx-charts .legend-labels { background: transparent !important; }
+    .ngx-charts .chart-legend .legend-wrap { background: transparent !important; box-shadow: none !important; }
+    .ngx-charts .legend-title-text { display: none; }
+    .chart-legend .legend-label { font-size: 12px !important; color: var(--slate-700) !important; font-weight: 600; margin-bottom: 6px;}
 
     /* Timeline */
     .timeline-card { padding: 18px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-sm);}
@@ -465,6 +440,8 @@ interface BatchSummary {
 export class PipelineComponent implements OnInit {
   private reportSvc = inject(ReportService);
 
+  legendBelow = LegendPosition.Below;
+
   loading = true;
   batches: BatchSummary[] = [];
   latestHealth: PipelineHealth | null = null;
@@ -476,14 +453,10 @@ export class PipelineComponent implements OnInit {
   signalsChart: ChartDataPoint[] = [];
 
   // Paletas de color
+  statusScheme: any   = { domain: ['#22C55E', '#EF4444', '#F59E0B'] }; // Verde, Rojo, Amarillo
   coverageScheme: any = { domain: ['#06B6D4'] }; // Cyan
   headlinesScheme: any = { domain: ['#8B5CF6'] }; // Violeta
   signalsScheme: any = { domain: ['#3B82F6'] }; // Azul
-
-  customStatusColors = (name: string) => {
-    if (name === 'Éxito') return '#22C55E';
-    return '#EF4444'; // Error
-  };
 
   // KPI Logic
   get completedCount() { return this.batches.filter(b => b.status === 'COMPLETED' || b.status === 'STARTED').length; }
@@ -505,15 +478,26 @@ export class PipelineComponent implements OnInit {
       })
     ).subscribe({
       next: (reports: any[]) => {
-        this.batches = reports.map((r: DailyReport) => ({
-          date: r.report_date,
-          status: r.pipeline_health.batch_status,
-          tickers_expected: r.pipeline_health.tickers_expected,
-          tickers_with_signals: r.pipeline_health.tickers_with_signals,
-          headlines_scored: r.pipeline_health.headlines_scored,
-          coverage_ratio: r.pipeline_health.coverage_ratio,
-          stage_kpis: r.pipeline_health.stage_kpis,
-        }));
+        this.batches = reports.map((r: DailyReport) => {
+          
+          // --- MAGIA: Inyectamos los KPIs de la Lambda 5 artificialmente ---
+          const stage_kpis = { ...r.pipeline_health.stage_kpis };
+          stage_kpis['report'] = {
+            tickers_reported: r.summary?.total_tickers || r.pipeline_health.tickers_expected,
+            total_closed_trades: r.summary?.total_closed_trades || 0
+          };
+
+          return {
+            date: r.report_date,
+            status: r.pipeline_health.batch_status,
+            tickers_expected: r.pipeline_health.tickers_expected,
+            tickers_with_signals: r.pipeline_health.tickers_with_signals,
+            headlines_scored: r.pipeline_health.headlines_scored,
+            coverage_ratio: r.pipeline_health.coverage_ratio,
+            stage_kpis: stage_kpis, // Ahora incluye la Lambda 5
+          };
+        });
+
         this.latestHealth = reports[0]?.pipeline_health ?? null;
         this.buildCharts();
         this.loading = false;
@@ -534,7 +518,7 @@ export class PipelineComponent implements OnInit {
       { name: 'Error', value: counts['FAILED'] }
     ].filter(i => i.value > 0);
 
-    // 2. Gráfico de Cobertura (Barras) -> Invertimos para cronología correcta
+    // 2. Gráfico de Cobertura (Barras)
     const sortedBatches = [...this.batches].reverse();
 
     this.coverageChart = sortedBatches.map(b => ({
@@ -542,13 +526,13 @@ export class PipelineComponent implements OnInit {
       value: +(b.coverage_ratio * 100).toFixed(1),
     }));
 
-    // 3. Gráfico de Volumen de Noticias (Barras)
+    // 3. Gráfico de Volumen de Noticias
     this.headlinesChart = sortedBatches.map(b => ({
       name: b.date.slice(5),
       value: b.headlines_scored,
     }));
 
-    // 4. Gráfico de Señales Emitidas (Barras)
+    // 4. Gráfico de Señales Emitidas
     this.signalsChart = sortedBatches.map(b => ({
       name: b.date.slice(5),
       value: b.tickers_with_signals,
@@ -601,13 +585,13 @@ export class PipelineComponent implements OnInit {
       'tickers_skipped': 'ETFs Omitidos',
       'signals_generated': 'Decisiones Generadas',
       'tickers_with_sentiment': 'Cruces NLP Exitósos',
-      'tickers_reported': 'Activos Reportados',
-      'total_closed_trades': 'Op. Completadas'
+      'tickers_reported': 'Activos Reportados',      // Nueva Key
+      'total_closed_trades': 'Operaciones Cerradas'  // Nueva Key
     };
     return dict[key] || key.replace(/_/g, ' ');
   }
 
-  // Fuerza el orden de los logs a λ1, λ2, λ3, λ4, λ5
+  // Fuerza el orden estricto: λ1, λ2, λ3, λ4, λ5
   getStages(kpis: Record<string, any>) {
     if (!kpis) return [];
     const orderedKeys = ['ingestion', 'sentiment', 'indicators', 'bayesian', 'report'];
@@ -619,7 +603,7 @@ export class PipelineComponent implements OnInit {
       }
     }
     
-    // Por si en el futuro se añade alguna Lambda extra a la base de datos
+    // Por seguridad, si aparece una lambda no registrada
     for (const key of Object.keys(kpis)) {
       if (!orderedKeys.includes(key)) {
         result.push({ key, value: kpis[key] });
