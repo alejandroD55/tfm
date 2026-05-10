@@ -1,52 +1,40 @@
 <div class="aurora-shell">
 
-  <!-- Sidebar -->
   <aside class="aurora-sidebar">
     <app-sidebar></app-sidebar>
   </aside>
 
-  <!-- Main column -->
   <div class="aurora-main">
 
-    <!-- Topbar -->
     <header class="aurora-topbar">
       <div class="topbar-left">
         <div class="brand-mini">
           <div class="brand-dot"></div>
           <span class="brand-name">Aurora</span>
-          <span class="brand-tag">Bayesian ETF Trading</span>
+          <span class="brand-tag">Trading System (TFM)</span>
         </div>
       </div>
 
       <div class="topbar-center">
-        <div class="market-pill" matTooltip="Estado del mercado USA">
+        <div class="market-pill" matTooltip="Ejecutando Modelo Bayesiano">
           <span class="market-led on"></span>
-          <span>Markets · Live</span>
+          <span>Modelo Activo</span>
           <span class="market-sep">·</span>
           <span class="market-now">{{ now | date:'EEE d MMM · HH:mm' }}</span>
         </div>
       </div>
 
       <div class="topbar-right">
-        <button class="icon-btn" matTooltip="Notificaciones">
-          <mat-icon>notifications_none</mat-icon>
-          <span class="badge-dot"></span>
-        </button>
-        <button class="icon-btn" matTooltip="Documentación / TFM">
-          <mat-icon>menu_book</mat-icon>
-        </button>
-        <div class="topbar-divider"></div>
-        <div class="user-chip" matTooltip="Sesión activa">
-          <div class="user-avatar">AR</div>
+        <div class="user-chip" matTooltip="Desarrolladores del Proyecto">
+          <div class="user-avatar">A&A</div>
           <div class="user-meta">
-            <span class="user-name">Alejandro R.</span>
-            <span class="user-role">Quant analyst</span>
+            <span class="user-name">A. Ramos y A. Padrón</span>
+            <span class="user-role">MLOps & Quant Engineers</span>
           </div>
         </div>
       </div>
     </header>
 
-    <!-- Routed content -->
     <main class="aurora-content">
       <router-outlet />
     </main>

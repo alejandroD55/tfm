@@ -19,11 +19,10 @@ interface NavItem {
   template: `
     <div class="sb">
 
-      <!-- Brand block -->
       <div class="sb-brand">
         <div class="sb-brand-mark">
           <div class="sb-brand-glow"></div>
-          <span class="sb-brand-letter">A</span>
+          <span class="sb-brand-letter">F×B</span>
         </div>
         <div class="sb-brand-text">
           <div class="sb-brand-title">Aurora</div>
@@ -31,13 +30,11 @@ interface NavItem {
         </div>
       </div>
 
-      <!-- Status pill -->
       <div class="sb-status">
         <span class="sb-led"></span>
         <span class="sb-status-text">Pipeline operativo</span>
       </div>
 
-      <!-- Main nav -->
       <div class="sb-section">
         <div class="sb-section-label">Análisis</div>
         <nav class="sb-nav">
@@ -81,7 +78,6 @@ interface NavItem {
         </nav>
       </div>
 
-      <!-- Footer -->
       <div class="sb-footer">
         <div class="sb-foot-row">
           <mat-icon>verified</mat-icon>
@@ -124,7 +120,7 @@ interface NavItem {
     }
     .sb-brand-letter {
       font-weight: 800; color: #fff;
-      font-size: 18px; letter-spacing: -.02em;
+      font-size: 16px; letter-spacing: -.02em;
     }
     .sb-brand-text { line-height: 1.15; }
     .sb-brand-title {
@@ -288,12 +284,6 @@ export class SidebarComponent {
       route: '/audit',
       description: 'Trazabilidad completa · CPT · decisiones implícitas · sentimiento multi-headline',
       badge: 'NEW',
-    },
-    {
-      label: 'Data Lake',
-      icon: 'database',
-      route: '/s3-explorer',
-      description: 'Buckets tfm-unir-datalake y tfm-unir-config',
-    },
+    }
   ];
 }
