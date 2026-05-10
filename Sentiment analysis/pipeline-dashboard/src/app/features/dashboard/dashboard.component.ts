@@ -34,15 +34,15 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
           <p class="page-sub">Sistema de trading algorítmico · Red Bayesiana + FinBERT · Evaluando los últimos {{ report?.data_period_days || 365 }} días</p>
         </div>
         <div class="page-actions">
-          <mat-form-field appearance="outline" class="date-input" subscriptSizing="dynamic">
-            <mat-label>Fecha del Informe</mat-label>
-            <mat-select [(ngModel)]="selectedDate" (ngModelChange)="onDateChange($event)">
+          <div class="filter-group">
+            <label>Fecha del Informe</label>
+            <select class="aurora-select" [(ngModel)]="selectedDate" (change)="onDateChange(selectedDate)">
               @for (d of availableDates; track d.date) {
-                <mat-option [value]="d.date">{{ d.date }}</mat-option>
+                <option [value]="d.date">{{ d.date }}</option>
               }
-            </mat-select>
-          </mat-form-field>
-          <button class="btn btn-ghost" (click)="refresh()" matTooltip="Recargar datos">
+            </select>
+          </div>
+          <button class="btn btn-ghost" (click)="refresh()" matTooltip="Recargar último informe">
             <mat-icon>refresh</mat-icon>
             <span>Actualizar</span>
           </button>
@@ -338,9 +338,9 @@ export class DashboardComponent implements OnInit {
 
   // Función para forzar los colores de la Tarta
   customSignalColors = (name: string) => {
-    if (name === 'BUY') return '#22C55E';
-    if (name === 'SELL') return '#7C3AED';
-    return '#F59E0B'; // HOLD
+    if (name === 'COMPRAR') return '#22C55E';
+    if (name === 'CASH') return '#7C3AED';
+    return '#F59E0B'; // MANTENER
   };
 
   // Función dinámica para colorear las barras de probabilidad según el valor
@@ -399,9 +399,9 @@ export class DashboardComponent implements OnInit {
 
     // Tarta de Decisiones
     this.signalPieChart = [
-      { name: 'BUY', value: this.buyCount },
-      { name: 'SELL', value: this.sellCount },
-      { name: 'HOLD', value: this.holdCount }
+      { name: 'COMPRAR', value: this.buyCount },
+      { name: 'CASH', value: this.sellCount },
+      { name: 'MANTENER', value: this.holdCount }
     ].filter(item => item.value > 0);
 
     // Gráfico de Probabilidades

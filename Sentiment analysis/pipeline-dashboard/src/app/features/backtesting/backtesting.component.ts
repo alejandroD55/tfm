@@ -68,7 +68,10 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
               <strong>Calidad del Riesgo (Sharpe Ratio):</strong> Relaciona el beneficio obtenido con el riesgo (volatilidad) asumido. Un valor superior a 1.0 indica un comportamiento excelente.
             </div>
             <div class="g-col">
-              <strong>Caída Máxima (Max Drawdown):</strong> El mayor porcentaje de dinero que la cartera llegó a perder desde su pico más alto. En nuestra estrategia, mantenerse cerca del 0% es el objetivo principal para proteger el capital.
+              <strong>Factor de Beneficio (Profit Factor):</strong> Indica cuánto dinero se gana por cada dólar que se pierde. Un valor superior a 1.0 significa que la estrategia es rentable (ej: 2.0 significa que ganas el doble de lo que pierdes).
+            </div>
+            <div class="g-col">
+              <strong>Caída Máxima (Max Drawdown):</strong> El mayor porcentaje de dinero que la cartera llegó a perder desde su pico más alto. Mantenerse cerca del 0% es el objetivo principal para proteger el capital.
             </div>
           </div>
         </mat-expansion-panel>
@@ -287,7 +290,7 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
             <ng-container matColumnDef="sharpe">
               <th mat-header-cell *matHeaderCellDef mat-sort-header="sharpe_ratio">Ratio Sharpe</th>
               <td mat-cell *matCellDef="let r">
-                <span class="num" [class.pos]="r.sharpe_ratio>1">{{ r.sharpe_ratio|number:'1.2-2' }}</span>
+                <span class="num" [class.pos]="r.sharpe_ratio>1" [class.neg]="r.sharpe_ratio<0">{{ r.sharpe_ratio|number:'1.2-2' }}</span>
               </td>
             </ng-container>
 
@@ -325,9 +328,9 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
             </ng-container>
 
             <ng-container matColumnDef="pf">
-              <th mat-header-cell *matHeaderCellDef mat-sort-header="profit_factor">F. Beneficio</th>
+              <th mat-header-cell *matHeaderCellDef mat-sort-header="profit_factor" matTooltip="Beneficios Brutos / Pérdidas Brutas (>1 es ganancia)">Factor Beneficio</th>
               <td mat-cell *matCellDef="let r">
-                <span class="num" [class.pos]="r.profit_factor>1">{{ r.profit_factor|number:'1.2-2' }}</span>
+                <span class="num" [class.pos]="r.profit_factor>1" [class.neg]="r.profit_factor<1">{{ r.profit_factor|number:'1.2-2' }}</span>
               </td>
             </ng-container>
 
@@ -507,7 +510,15 @@ export class BacktestingComponent implements OnInit, AfterViewInit {
       this.tableSource.sort = this.sort;
     }
 
-    this.returnChart   = this.reportSvc.returnComparisonChart(this.tickerViews);
+    // MAPEO FORZADO PARA EL GRÁFICO AGRUPADO: Eje X = ETF, Eje Y = IA vs Mercado
+    this.returnChart = this.tickerViews.map(t => ({
+      name: t.ticker,
+      series: [
+        { name: 'Estrategia IA', value: t.cumulative_return * 100 },
+        { name: 'Mercado (Buy & Hold)', value: t.buy_hold_return * 100 }
+      ]
+    }));
+
     this.sharpeChart   = this.reportSvc.sharpeChart(this.tickerViews);
     this.drawdownChart = this.reportSvc.drawdownChart(this.tickerViews);
     this.alphaChart    = this.reportSvc.alphaChart(this.tickerViews);

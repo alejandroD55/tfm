@@ -216,6 +216,13 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
 
         <div class="card table-card">
           <table mat-table [dataSource]="dataSource" multiTemplateDataRows matSort class="aurora-table">
+          
+            <ng-container matColumnDef="ticker">
+              <th mat-header-cell *matHeaderCellDef mat-sort-header>Activo</th>
+              <td mat-cell *matCellDef="let row">
+                <span class="ticker-name">{{ row.ticker }}</span>
+              </td>
+            </ng-container>
 
             <ng-container matColumnDef="signal">
               <th mat-header-cell *matHeaderCellDef mat-sort-header>Decisión</th>
@@ -224,13 +231,6 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
                   <mat-icon>{{ signalIcon(row.signal) }}</mat-icon>
                   {{ row.signal === 'BUY' ? 'COMPRAR' : row.signal === 'SELL' ? 'CASH' : 'MANTENER' }}
                 </span>
-              </td>
-            </ng-container>
-
-            <ng-container matColumnDef="ticker">
-              <th mat-header-cell *matHeaderCellDef mat-sort-header>Activo</th>
-              <td mat-cell *matCellDef="let row">
-                <span class="ticker-name">{{ row.ticker }}</span>
               </td>
             </ng-container>
 
