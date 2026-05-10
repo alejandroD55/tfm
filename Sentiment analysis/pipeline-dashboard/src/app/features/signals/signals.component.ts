@@ -719,9 +719,14 @@ export class SignalsComponent implements OnInit, AfterViewInit {
   filterSignal = '';
   expandedRows = new Set<string>();
 
+  // 1. SOLUCIÓN: Declaramos la variable que el HTML está buscando para los Smart Donuts
+  tickerViews: TickerView[] = [];
+
+  // Nombres Limpios y en Castellano para la Tabla
   displayedColumns = ['ticker', 'signal', 'prob_up', 'evidence', 'trades', 'winrate', 'return', 'alpha', 'expand'];
   dataSource = new MatTableDataSource<TickerView>();
 
+  // Gráficos de Resumen
   signalChart: ChartDataPoint[] = [];
   sentimentChart: ChartDataPoint[] = [];
   rsiChart: ChartDataPoint[] = [];
@@ -737,6 +742,7 @@ export class SignalsComponent implements OnInit, AfterViewInit {
   tickerTraceLoading = new Set<string>();
   hasTraceForDate = false;
 
+  // Funciones de Coloreado Dinámico (Para NGX-Charts)
   customSignalColors = (name: string) => {
     if (name === 'COMPRAR') return '#22C55E';
     if (name === 'CASH') return '#7C3AED';
@@ -788,6 +794,9 @@ export class SignalsComponent implements OnInit, AfterViewInit {
 
   private processReport(report: DailyReport) {
     const views = this.reportSvc.buildTickerViews(report);
+    
+    // 2. SOLUCIÓN: Guardamos los datos en la variable para que el HTML pueda contar la longitud
+    this.tickerViews = views; 
     this.dataSource.data = views;
     
     if (this.sort) {
@@ -801,6 +810,7 @@ export class SignalsComponent implements OnInit, AfterViewInit {
     this.holdCount = views.filter(v => v.signal === 'HOLD').length;
     this.avgProbUp = views.length ? (views.reduce((s, v) => s + v.prob_up, 0) / views.length) * 100 : 0;
 
+    // Procesar datos para gráficos de Nodos (Con nombres en castellano)
     const sent = { ALCISTA: 0, BAJISTA: 0, NEUTRAL: 0 };
     const rsi = { SOBREVENTA: 0, SOBRECOMPRA: 0, NEUTRAL: 0 };
     const trend = { ALCISTA: 0, BAJISTA: 0 };
@@ -873,6 +883,7 @@ export class SignalsComponent implements OnInit, AfterViewInit {
     }));
   }
 
+  // Utilidad de Traducción
   translateState(state: string): string {
     const dict: Record<string, string> = {
       bullish: 'Alcista', bearish: 'Bajista', neutral: 'Neutral',
@@ -886,7 +897,7 @@ export class SignalsComponent implements OnInit, AfterViewInit {
   getProbClass(prob: number): string {
     if (prob >= 0.65) return 'high';
     if (prob <= 0.35) return 'low';
-    return 'mid';
+    return 'mid'; // Mantener (Amarillo)
   }
 
   getTextClass(prob: number): string {
