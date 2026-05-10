@@ -4,7 +4,6 @@ import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
-import { MatSelectModule } from '@angular/material/select';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatExpansionModule } from '@angular/material/expansion';
 import { MatChipsModule } from '@angular/material/chips';
@@ -19,7 +18,7 @@ import { ReportDateEntry } from '../../core/models/report.model';
   standalone: true,
   imports: [
     CommonModule, FormsModule, MatIconModule, MatButtonModule,
-    MatProgressSpinnerModule, MatSelectModule, MatTooltipModule,
+    MatProgressSpinnerModule, MatTooltipModule,
     MatExpansionModule, MatChipsModule
   ],
   template: `
@@ -33,18 +32,8 @@ import { ReportDateEntry } from '../../core/models/report.model';
           </div>
           <h1 class="page-title">Auditoría del Modelo Matemático</h1>
           <p class="page-sub">
-            Inspección de caja blanca (Whitebox) de la Red Bayesiana. Consulta los pesos, distribuciones y umbrales exactos usados en la versión del modelo de este día.
+            Inspección de caja blanca (Whitebox) de la Red Bayesiana. Consulta los pesos, distribuciones y umbrales exactos de la versión del algoritmo actualmente en producción.
           </p>
-        </div>
-        <div class="page-actions">
-          <div class="filter-group">
-            <label>Fecha de la Traza</label>
-            <select class="aurora-select" [(ngModel)]="selectedDate" (change)="onDateChange(selectedDate)">
-              @for (d of availableDates; track d.date) {
-                <option [value]="d.date">{{ d.date }}</option>
-              }
-            </select>
-          </div>
         </div>
       </header>
 
@@ -83,32 +72,15 @@ import { ReportDateEntry } from '../../core/models/report.model';
       @if (loading) {
         <div class="loader">
           <mat-spinner diameter="40"></mat-spinner>
-          <p>Cargando pesos matemáticos desde AWS S3...</p>
+          <p>Cargando pesos matemáticos de la Red Bayesiana...</p>
         </div>
       } @else if (!trace) {
         <div class="empty-state">
           <mat-icon>info_outline</mat-icon>
-          <h3>No hay traza auditable para esta fecha</h3>
-          <p>La traza de caja blanca se genera a partir de la versión 2.0 del algoritmo.</p>
+          <h3>No hay datos de caja blanca disponibles</h3>
+          <p>Debes ejecutar el pipeline al menos una vez para generar la traza maestra.</p>
         </div>
       } @else {
-
-        <section class="exec-banner">
-          <div class="exec-icon"><mat-icon>verified_user</mat-icon></div>
-          <div class="exec-body">
-            <div class="exec-title">
-              Firma de Ejecución: lambda_bayesian · {{ trace.batch_date }} · Versión del Modelo: v{{ model?.version || '1.0.0' }}
-            </div>
-            <div class="exec-meta">
-              {{ trace.execution.signals_generated }} decisiones generadas en
-              {{ trace.execution.duration_seconds }}s ·
-              {{ trace.execution.tickers_skipped }} activos omitidos por falta de datos
-            </div>
-          </div>
-          <div class="exec-stats">
-            <span class="es ok">Trazabilidad OK</span>
-          </div>
-        </section>
 
         <section class="card">
           <div class="card-head">
@@ -116,7 +88,7 @@ import { ReportDateEntry } from '../../core/models/report.model';
               <mat-icon>tune</mat-icon>
               <span>Parámetros de Configuración del Algoritmo</span>
             </div>
-            <span class="card-sub">Reglas deterministas aplicadas a los datos crudos</span>
+            <span class="card-sub">Reglas deterministas aplicadas a los datos crudos antes de entrar a la IA. (Versión {{ model?.version || '1.0.0' }})</span>
           </div>
 
           <div class="config-grid">
@@ -157,7 +129,7 @@ import { ReportDateEntry } from '../../core/models/report.model';
                 <div class="cr">
                   <span class="signal-badge hold">MANTENER</span>
                   <span class="cr-val">
-                    Si Confianza está entre {{ (model?.signal_thresholds?.HOLD?.range?.[0] || 0.35) * 100 }}% y {{ (model?.signal_thresholds?.HOLD?.range?.[1] || 0.65) * 100 }}%
+                    Si Confianza entre {{ (model?.signal_thresholds?.HOLD?.range?.[0] || 0.35) * 100 }}% y {{ (model?.signal_thresholds?.HOLD?.range?.[1] || 0.65) * 100 }}%
                   </span>
                 </div>
               </div>
@@ -297,7 +269,7 @@ import { ReportDateEntry } from '../../core/models/report.model';
     .glossary-panel mat-icon { font-size: 18px; height: 18px; width: 18px; color: var(--brand-600); }
     
     .glossary-content { padding-top: 10px; display: flex; flex-wrap: wrap; gap: 16px;}
-    .g-col { flex: 1 1 200px; font-size: 12.5px; color: var(--slate-700); line-height: 1.5; }
+    .g-col { flex: 1 1 200px; font-size: 12.5px; color: var(--slate-700); line-height: 1.5; margin-bottom: 12px; } /* Añadido margen inferior para evitar recorte */
     .g-col strong { color: var(--slate-900); display: block; margin-bottom: 4px; }
     .full-width { flex: 1 1 100%; }
 
@@ -306,15 +278,6 @@ import { ReportDateEntry } from '../../core/models/report.model';
     .limitation-box strong { color: var(--warn-700); display: flex; align-items: center; gap: 6px; mat-icon {font-size: 18px; height: 18px; width: 18px;}}
     .limit-list { margin: 8px 0 0 0; padding-left: 20px; font-size: 12.5px;}
     .limit-list li { margin-bottom: 4px;}
-
-    /* Banner Ejecución */
-    .exec-banner { display: flex; align-items: center; gap: 16px; background: var(--success-50); border-radius: var(--r-md); padding: 16px 20px; margin-bottom: 24px; border-left: 4px solid var(--success-500); }
-    .exec-icon mat-icon { font-size: 28px; height: 28px; width: 28px; color: var(--success-600); }
-    .exec-body { flex: 1; }
-    .exec-title { font-weight: 700; font-size: 14px; color: var(--slate-900); font-family: var(--font-mono);}
-    .exec-meta { font-size: 12px; color: var(--slate-600); margin-top: 4px; }
-    .exec-stats { display: flex; gap: 8px; }
-    .es { padding: 4px 12px; border-radius: var(--r-pill); font-size: 12px; font-weight: 700; &.ok { background: var(--success-100); color: var(--success-700); } }
 
     /* Tarjetas y Rejillas */
     .card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-sm); padding: 18px; margin-bottom: 24px; }
@@ -360,7 +323,13 @@ import { ReportDateEntry } from '../../core/models/report.model';
     .cpt-table tr:hover { background: var(--slate-50); }
     
     .prob-bar-cell { display: flex; align-items: center; gap: 8px; min-width: 130px;}
-    .pb-fill { height: 6px; background: var(--warn-400); border-radius: 3px; flex: 1; &.high { background: linear-gradient(to right, var(--success-500), var(--success-600)); } &.mid { background: var(--warn-400); } &.low { background: linear-gradient(to right, #7C3AED, #5b21b6); } }
+    
+    /* El truco del !important para forzar el color amarillo en "Mantener" */
+    .pb-fill { height: 6px; background: var(--slate-300); border-radius: 3px; flex: 1; }
+    .pb-fill.high { background: linear-gradient(to right, var(--success-500), var(--success-600)) !important; } 
+    .pb-fill.mid { background: var(--warn-400) !important; } 
+    .pb-fill.low { background: linear-gradient(to right, #7C3AED, #5b21b6) !important; } 
+    
     .prob-pct-text { font-weight: 700; min-width: 40px; text-align: right;}
     .txt-green { color: var(--success-700); } .txt-yellow { color: var(--warn-700); } .txt-purple { color: #7C3AED; }
     .muted { color: var(--slate-400); font-weight: 600;}
@@ -382,7 +351,7 @@ export class AuditComponent implements OnInit {
   trace: BayesianTrace | null = null;
   model: ModelConfig | null   = null;
   availableDates: ReportDateEntry[] = [];
-  selectedDate  = '';
+  selectedDate  = ''; // Lo dejamos solo para descargar internamente el último archivo, no se muestra
 
   cptRows:            any[] = [];
   cptFilterSentiment  = '';
@@ -405,6 +374,7 @@ export class AuditComponent implements OnInit {
       switchMap(dates => {
         this.availableDates = dates;
         if (!dates.length) { this.loading = false; return []; }
+        // Forzamos que siempre coja la última versión disponible
         this.selectedDate = dates[0].date;
         return this.traceSvc.getTrace(this.selectedDate);
       })
@@ -426,7 +396,6 @@ export class AuditComponent implements OnInit {
   private processTrace(t: BayesianTrace) {
     this.trace = t;
     this.model = t.model_config;
-    // Eliminado el operador de encadenamiento opcional si sabemos que viene.
     this.limitations = t.model_config.known_limitations || [];
 
     if (t.model_config.priors) {

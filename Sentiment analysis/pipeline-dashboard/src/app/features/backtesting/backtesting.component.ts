@@ -405,6 +405,9 @@ import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
     .chart-host-small { width: 100%; height: 220px; overflow: hidden; }
     .chart-card { padding: 18px 16px 12px; }
 
+    /* Ocultar las bandas grises/blancas de fondo en el gráfico agrupado */
+    .ngx-charts .grid-panel rect { display: none !important; }
+
     .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
     .row-2 .card { margin-bottom: 0; }
     @media (max-width: 1100px) { .row-2 { grid-template-columns: 1fr; } }
