@@ -67,6 +67,12 @@ spec:
                   name: tfm-aurora-secret
                   key: dbname
                   optional: true
+            - name: AURORA_AUTH_MODE
+              valueFrom:
+                secretKeyRef:
+                  name: tfm-aurora-secret
+                  key: auth_mode
+                  optional: true
           resources:
             requests:
               cpu: "50m"

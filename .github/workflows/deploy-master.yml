@@ -453,8 +453,9 @@ jobs:
           HOST=$(echo "$CREDS"     | python3 -c "import sys,json; print(json.load(sys.stdin)['host'])")
           PORT=$(echo "$CREDS"     | python3 -c "import sys,json; print(json.load(sys.stdin).get('port',5432))")
           USER=$(echo "$CREDS"     | python3 -c "import sys,json; print(json.load(sys.stdin)['username'])")
-          PASSWORD=$(echo "$CREDS" | python3 -c "import sys,json; print(json.load(sys.stdin)['password'])")
+          PASSWORD=$(echo "$CREDS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('password',''))")
           DBNAME=$(echo "$CREDS"   | python3 -c "import sys,json; print(json.load(sys.stdin).get('dbname','tfm'))")
+          AUTH_MODE=$(echo "$CREDS"| python3 -c "import sys,json; print(json.load(sys.stdin).get('auth_mode',''))")
 
           kubectl create secret generic tfm-aurora-secret \
             --namespace "${NAMESPACE}" \
@@ -463,6 +464,7 @@ jobs:
             --from-literal=username="$USER" \
             --from-literal=password="$PASSWORD" \
             --from-literal=dbname="$DBNAME" \
+            --from-literal=auth_mode="$AUTH_MODE" \
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Lanzar K8s Job de migración

@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS trading_signals (
 CREATE INDEX IF NOT EXISTS idx_signals_date_ticker ON trading_signals(batch_date, ticker);
 CREATE INDEX IF NOT EXISTS idx_signals_signal ON trading_signals(signal);
 
--- Tabla de explicabilidad de senales
+-- Tabla de explicabilidad de señales
 CREATE TABLE IF NOT EXISTS signal_explanations (
     id SERIAL PRIMARY KEY,
     batch_date DATE NOT NULL,

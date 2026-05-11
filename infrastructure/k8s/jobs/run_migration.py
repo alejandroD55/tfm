@@ -14,6 +14,7 @@ import json
 import subprocess
 import sys
 import logging
+import boto3
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger("migration")
@@ -28,14 +29,13 @@ def get_credentials():
     user = os.getenv("AURORA_USER")
     password = os.getenv("AURORA_PASSWORD")
     dbname = os.getenv("AURORA_DBNAME", "tfm")
+    auth_mode = str(os.getenv("AURORA_AUTH_MODE", "")).lower()
 
-    if all([host, user, password]):
+    if all([host, user]) and (password or auth_mode == "iam"):
         logger.info("Credenciales cargadas desde variables de entorno")
-        return host, port, user, password, dbname
+        return host, port, user, password, dbname, auth_mode
 
     # ── Opción 2: AWS Secrets Manager ────────────────────────────────────────
-    import boto3
-
     secret_name = os.getenv("AURORA_SECRET_NAME", "aurora/credentials")
     region = os.getenv("AWS_REGION", "eu-north-1")
 
@@ -48,9 +48,30 @@ def get_credentials():
         creds["host"],
         str(creds.get("port", 5432)),
         creds["username"],
-        creds["password"],
+        creds.get("password", ""),
         creds.get("dbname", "tfm"),
+        str(creds.get("auth_mode", "")).lower(),
     )
+
+
+def build_psql_env(host, port, user, password, auth_mode):
+    """Build env for psql. Supports static password or IAM token."""
+    env = {**os.environ}
+    if auth_mode == "iam":
+        region = os.getenv("AWS_REGION", "eu-north-1")
+        token = boto3.client("rds", region_name=region).generate_db_auth_token(
+            DBHostname=host,
+            Port=int(port),
+            DBUsername=user,
+            Region=region,
+        )
+        env["PGPASSWORD"] = token
+    else:
+        if not password:
+            logger.error("AURORA_PASSWORD no disponible y auth_mode no es IAM.")
+            sys.exit(1)
+        env["PGPASSWORD"] = password
+    return env
 
 
 def run_migration():
@@ -59,11 +80,11 @@ def run_migration():
         logger.error(f"Schema no encontrado: {schema_path}")
         sys.exit(1)
 
-    host, port, user, password, dbname = get_credentials()
+    host, port, user, password, dbname, auth_mode = get_credentials()
 
-    logger.info(f"Conectando a Aurora: {host}:{port}/{dbname} como '{user}'")
+    logger.info(f"Conectando a Aurora: {host}:{port}/{dbname} como '{user}' (auth_mode={auth_mode or 'password'})")
 
-    env = {**os.environ, "PGPASSWORD": password}
+    env = build_psql_env(host, port, user, password, auth_mode)
 
     # ── Verificar conectividad ──────────────────────────────────────────────
     check = subprocess.run(
@@ -91,6 +112,8 @@ def run_migration():
 
     # ── Ejecutar schema SQL ─────────────────────────────────────────────────
     logger.info(f"Aplicando schema: {schema_path}")
+    # Renovamos token IAM por si hubo demora entre pasos
+    env = build_psql_env(host, port, user, password, auth_mode)
     result = subprocess.run(
         [
             "psql",
@@ -124,6 +147,7 @@ def run_migration():
     logger.info("Schema aplicado correctamente")
 
     # ── Verificar tablas creadas ────────────────────────────────────────────
+    env = build_psql_env(host, port, user, password, auth_mode)
     verify = subprocess.run(
         [
             "psql",
