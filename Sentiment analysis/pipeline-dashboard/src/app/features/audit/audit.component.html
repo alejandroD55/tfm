@@ -1,0 +1,216 @@
+<div class="page">
+
+  <header class="page-head">
+    <div class="page-head-text">
+      <div class="page-eyebrow">
+        <mat-icon>manage_search</mat-icon>
+        <span>Observabilidad y Trazabilidad MLOps</span>
+      </div>
+      <h1 class="page-title">Auditoría del Modelo Matemático</h1>
+      <p class="page-sub">
+        Inspección de caja blanca (Whitebox) de la Red Bayesiana. Consulta los pesos, distribuciones y umbrales exactos de la versión del algoritmo actualmente en producción.
+      </p>
+    </div>
+  </header>
+
+  <mat-accordion class="glossary-accordion">
+    <mat-expansion-panel class="glossary-panel">
+      <mat-expansion-panel-header>
+        <mat-panel-title>
+          <mat-icon>lightbulb</mat-icon>
+          <span>¿Cómo auditar el comportamiento del algoritmo? (Glosario)</span>
+        </mat-panel-title>
+      </mat-expansion-panel-header>
+      
+      <div class="glossary-content">
+        <div class="g-col">
+          <strong>1. Reglas de Discretización:</strong> Los modelos bayesianos no entienden de números continuos. Aquí documentamos cómo convertimos un número (ej. RSI = 25) en un estado discreto entendible por la IA (ej. "Sobreventa").
+        </div>
+        <div class="g-col">
+          <strong>2. Distribuciones Prior:</strong> Los sesgos matemáticos base. Antes de analizar ningún ETF, la IA asume estas probabilidades estadísticas (ej: Asume que el mercado está en tendencia alcista el 50% de las veces).
+        </div>
+        <div class="g-col">
+          <strong>3. Matriz CPT (Tabla Condicional):</strong> El núcleo de la IA. Muestra las 36 combinaciones posibles del mercado y qué probabilidad exacta de subida se le asigna a cada escenario.
+        </div>
+
+        <div class="g-col full-width limitation-box">
+          <strong><mat-icon>engineering</mat-icon> Decisiones Implícitas (Hardcoded) de esta versión:</strong>
+          <ul class="limit-list">
+            @for (lim of limitations; track $index) {
+              <li>{{ lim }}</li>
+            }
+          </ul>
+        </div>
+      </div>
+    </mat-expansion-panel>
+  </mat-accordion>
+
+  @if (loading) {
+    <div class="loader">
+      <mat-spinner diameter="40"></mat-spinner>
+      <p>Cargando pesos matemáticos de la Red Bayesiana...</p>
+    </div>
+  } @else if (!trace) {
+    <div class="empty-state">
+      <mat-icon>info_outline</mat-icon>
+      <h3>No hay datos de caja blanca disponibles</h3>
+      <p>Debes ejecutar el pipeline al menos una vez para generar la traza maestra.</p>
+    </div>
+  } @else {
+
+    <section class="card">
+      <div class="card-head">
+        <div class="card-title">
+          <mat-icon>tune</mat-icon>
+          <span>Parámetros de Configuración del Algoritmo</span>
+        </div>
+        <span class="card-sub">Reglas deterministas aplicadas a los datos crudos antes de entrar a la IA. (Versión {{ model?.version || '1.0.0' }})</span>
+      </div>
+
+      <div class="config-grid">
+
+        <div class="config-box">
+          <h4 class="config-box-title"><mat-icon>compress</mat-icon> Reglas de Discretización</h4>
+          <div class="config-rows">
+            <div class="cr">
+              <span class="cr-label">Considerar Sobreventa si:</span>
+              <span class="cr-val badge-blue">RSI &lt; {{ model?.discretization?.rsi?.oversold_below }}</span>
+            </div>
+            <div class="cr">
+              <span class="cr-label">Considerar Sobrecompra si:</span>
+              <span class="cr-val badge-red">RSI &gt; {{ model?.discretization?.rsi?.overbought_above }}</span>
+            </div>
+            <div class="cr">
+              <span class="cr-label">Considerar Tendencia Alcista si:</span>
+              <span class="cr-val badge-green">SMA 20 &gt; SMA 50</span>
+            </div>
+            <div class="cr">
+              <span class="cr-label">Considerar Alta Volatilidad si:</span>
+              <span class="cr-val badge-orange">Bandas Bollinger &gt; {{ (model?.discretization?.volatility?.high_if_band_width_ratio_above || 0.05) * 100 }}%</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="config-box">
+          <h4 class="config-box-title"><mat-icon>call_split</mat-icon> Umbrales de Inversión</h4>
+          <div class="config-rows">
+            <div class="cr">
+              <span class="signal-badge buy">COMPRAR</span>
+              <span class="cr-val">Si Confianza &gt; {{ (model?.signal_thresholds?.BUY?.prob_up_above || 0.65) * 100 }}%</span>
+            </div>
+            <div class="cr">
+              <span class="signal-badge sell">CASH (CORTOS)</span>
+              <span class="cr-val">Si Confianza &lt; {{ (model?.signal_thresholds?.SELL?.prob_up_below || 0.35) * 100 }}%</span>
+            </div>
+            <div class="cr">
+              <span class="signal-badge hold">MANTENER</span>
+              <span class="cr-val">
+                Si Confianza entre {{ (model?.signal_thresholds?.HOLD?.range?.[0] || 0.35) * 100 }}% y {{ (model?.signal_thresholds?.HOLD?.range?.[1] || 0.65) * 100 }}%
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="config-box">
+          <h4 class="config-box-title"><mat-icon>donut_small</mat-icon> Distribuciones Estadísticas Base (Priors)</h4>
+          @for (node of priorNodes; track node.name) {
+            <div class="prior-node">
+              <span class="pn-name">{{ translateNode(node.name) }}</span>
+              <div class="pn-bars">
+                @for (state of node.states; track state.key) {
+                  <div class="pn-bar-row">
+                    <span class="pn-state">{{ translateState(state.key) }}</span>
+                    <div class="pn-bar-wrap">
+                      <div class="pn-bar"
+                           [style.width.%]="state.value * 100"
+                           [class.green]="isPositiveState(state.key)"
+                           [class.red]="isNegativeState(state.key)"></div>
+                    </div>
+                    <span class="pn-pct">{{ (state.value * 100) | number:'1.0-0' }}%</span>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+        </div>
+
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <div class="card-title">
+          <mat-icon>grid_on</mat-icon>
+          <span>Matriz de Probabilidad Condicional (CPT)</span>
+        </div>
+        <span class="card-sub">Tabla completa de las 36 combinaciones matemáticas que rigen la decisión final del algoritmo.</span>
+      </div>
+
+      <div class="cpt-filters">
+        <select class="aurora-select" [(ngModel)]="cptFilterSentiment">
+          <option value="">Sentimiento (FinBERT): Todos</option>
+          <option value="bullish">Alcista</option>
+          <option value="neutral">Neutral</option>
+          <option value="bearish">Bajista</option>
+        </select>
+
+        <select class="aurora-select" [(ngModel)]="cptFilterRsi">
+          <option value="">Fuerza (RSI): Todos</option>
+          <option value="overbought">Sobrecompra</option>
+          <option value="neutral">Neutral</option>
+          <option value="oversold">Sobreventa</option>
+        </select>
+
+        <select class="aurora-select" [(ngModel)]="cptFilterTrend">
+          <option value="">Tendencia: Todos</option>
+          <option value="uptrend">Alcista</option>
+          <option value="downtrend">Bajista</option>
+        </select>
+      </div>
+
+      <div class="cpt-table-wrap">
+        <table class="cpt-table">
+          <thead>
+            <tr>
+              <th>Sentimiento</th><th>Fuerza (RSI)</th><th>Tendencia</th><th>Volatilidad</th>
+              <th>Confianza Alcista P(↑)</th><th>Señal Implícita</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of filteredCpt; track $index) {
+              <tr>
+                <td><span class="ev-chip {{ row.sentiment }}">{{ translateState(row.sentiment) }}</span></td>
+                <td><span class="ev-chip {{ row.rsi }}">{{ translateState(row.rsi) }}</span></td>
+                <td><span class="ev-chip {{ row.trend }}">{{ translateState(row.trend) }}</span></td>
+                <td><span class="ev-chip vol-{{ row.volatility }}">{{ translateState(row.volatility) }}</span></td>
+                <td>
+                  <div class="prob-bar-cell">
+                    <div class="pb-wrap">
+                      <div class="pb-fill"
+                           [style.width.%]="row.prob_up * 100"
+                           [class.high]="row.prob_up >= 0.65"
+                           [class.mid]="row.prob_up > 0.35 && row.prob_up < 0.65"
+                           [class.low]="row.prob_up <= 0.35"></div>
+                    </div>
+                    <span class="prob-pct-text" 
+                          [class.txt-green]="row.prob_up >= 0.65"
+                          [class.txt-yellow]="row.prob_up > 0.35 && row.prob_up < 0.65"
+                          [class.txt-purple]="row.prob_up <= 0.35">
+                      {{ (row.prob_up * 100) | number:'1.0-0' }}%
+                    </span>
+                  </div>
+                </td>
+                <td>
+                  @if (row.prob_up >= 0.65) { <span class="signal-badge buy">COMPRAR</span> }
+                  @else if (row.prob_up <= 0.35) { <span class="signal-badge sell">CASH</span> }
+                  @else { <span class="signal-badge hold">MANTENER</span> }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  }
+</div>

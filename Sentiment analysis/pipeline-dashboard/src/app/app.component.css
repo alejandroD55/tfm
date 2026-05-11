@@ -10,7 +10,10 @@
 .aurora-shell {
   display: flex;
   flex-direction: row;
-  height: 100vh;          /* fijo, nunca crece más allá del viewport     */
+  height: 100vh;          /* fallback en navegadores antiguos             */
+  height: 100dvh;         /* alto dinámico real del viewport (móvil safe) */
+  min-height: 100vh;
+  min-height: 100dvh;
   overflow: hidden;       /* evita cualquier scroll en el contenedor raíz */
   background: var(--bg-canvas);
 }
@@ -24,7 +27,19 @@
   border-right: 1px solid rgba(255, 255, 255, .04);
   overflow: hidden;       /* el contenido interno no desborda             */
   z-index: 20;
+  display: flex;          /* asegura que el host <app-sidebar> se estire  */
+  flex-direction: column;
   /* No necesita position:sticky porque el padre ya tiene overflow:hidden */
+}
+
+/* Garantía extra: el host <app-sidebar> ocupa todo el aside, evitando
+   cualquier hueco visible bajo el sidenav al hacer scroll. */
+.aurora-sidebar > app-sidebar {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
 }
 
 /* ─── Columna principal (flex col, ocupa el resto) ─────────────── */

@@ -4,10 +4,22 @@
    hereda los 100vh del shell flex. Nunca hay scroll en el sidebar.
    ───────────────────────────────────────────────────────────────────── */
 
+/* Asegura que el host <app-sidebar> ocupe todo el alto del aside padre.
+   Sin esto, el host se queda en altura auto y deja un hueco visible en
+   la parte inferior del sidenav al hacer scroll del contenido. */
+:host {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
 .sb {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   height: 100%;       /* hereda los 100vh del padre */
+  min-height: 0;
   padding: 20px 14px 16px;
   gap: 14px;
   color: var(--side-fg);

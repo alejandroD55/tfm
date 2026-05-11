@@ -51,7 +51,7 @@ spec:
             # ARN de la State Machine de Step Functions
             # Rellena con el ARN real tras crear la state machine
             - name: STATE_MACHINE_ARN
-              value: "arn:aws:states:eu-north-1:ACCOUNT_ID:stateMachine:tfm-trading-pipeline"
+              value: "arn:aws:states:eu-north-1:ACCOUNT_ID:stateMachine:tfm-pipeline"
             - name: DASHBOARD_API_KEY
               valueFrom:
                 secretKeyRef:

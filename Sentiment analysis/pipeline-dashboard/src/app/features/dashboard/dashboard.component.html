@@ -1,0 +1,208 @@
+<div class="page">
+
+  <header class="page-head">
+    <div class="page-head-text">
+      <div class="page-eyebrow">
+        <mat-icon>space_dashboard</mat-icon>
+        <span>Visión General de la Cartera</span>
+      </div>
+      <h1 class="page-title">Resumen Operativo</h1>
+      <p class="page-sub">Sistema de trading algorítmico · Red Bayesiana + FinBERT · Evaluando los últimos {{ report?.data_period_days || 365 }} días</p>
+    </div>
+    <div class="page-actions">
+      <div class="filter-group">
+        <label>Fecha del Informe</label>
+        <select class="aurora-select" [(ngModel)]="selectedDate" (change)="onDateChange(selectedDate)">
+          @for (d of availableDates; track d.date) {
+            <option [value]="d.date">{{ d.date }}</option>
+          }
+        </select>
+      </div>
+      <button class="btn btn-ghost" (click)="refresh()" matTooltip="Recargar último informe">
+        <mat-icon>refresh</mat-icon>
+        <span>Actualizar</span>
+      </button>
+    </div>
+  </header>
+
+  <mat-accordion class="glossary-accordion">
+    <mat-expansion-panel class="glossary-panel">
+      <mat-expansion-panel-header>
+        <mat-panel-title>
+          <mat-icon>lightbulb</mat-icon>
+          <span>¿Cómo interpretar estas métricas? (Glosario)</span>
+        </mat-panel-title>
+      </mat-expansion-panel-header>
+      <div class="glossary-content">
+        <div class="g-col">
+          <strong>Estrategia IA vs Mercado:</strong> Compara el rendimiento de nuestra IA frente a la estrategia pasiva "Comprar y Mantener" (Buy & Hold). La IA busca preservar el capital estando en liquidez (cash) ante el peligro.
+        </div>
+        <div class="g-col">
+          <strong>Ratio de Sharpe:</strong> Mide la calidad de la inversión. Relaciona la rentabilidad obtenida con el riesgo asumido. Un valor superior a 1.0 indica un comportamiento excelente ajustado al riesgo.
+        </div>
+        <div class="g-col">
+          <strong>Caída Máxima:</strong> El mayor porcentaje de dinero que la cartera llegó a perder desde su pico más alto. Un valor cercano a 0% demuestra que el sistema es extremadamente seguro.
+        </div>
+        <div class="g-col">
+          <strong>Probabilidad Alcista P(↑):</strong> Confianza matemática de la IA sobre si el ETF subirá. Si es ≥ 65% compramos; si es ≤ 35% pasamos a liquidez (Cash); y en el rango medio mantenemos.
+        </div>
+      </div>
+    </mat-expansion-panel>
+  </mat-accordion>
+
+  @if (loading) {
+    <div class="loader">
+      <mat-spinner diameter="40"></mat-spinner>
+      <p>Extrayendo datos del Data Lake de AWS…</p>
+    </div>
+  } @else if (report) {
+
+    <section class="kpi-grid">
+
+      <article class="kpi" [class.kpi-pos]="report.summary.avg_cumulative_return > 0" [class.kpi-neg]="report.summary.avg_cumulative_return < 0">
+        <div class="kpi-head">
+          <span class="kpi-label">Beneficio Estrategia IA</span>
+          <span class="kpi-icon"><mat-icon>smart_toy</mat-icon></span>
+        </div>
+        <div class="kpi-value">
+          {{ report.summary.avg_cumulative_return > 0 ? '+' : '' }}{{ (report.summary.avg_cumulative_return * 100) | number:'1.2-2' }}<span class="unit">%</span>
+        </div>
+        <div class="kpi-foot">
+          <span class="delta" [class.up]="report.summary.avg_cumulative_return > 0" [class.down]="report.summary.avg_cumulative_return < 0">
+            <mat-icon>{{ report.summary.avg_cumulative_return >= 0 ? 'arrow_upward' : 'arrow_downward' }}</mat-icon>
+            Rentabilidad Neta
+          </span>
+        </div>
+      </article>
+
+      <article class="kpi" [class.kpi-pos]="avgBenchmark > 0" [class.kpi-neg]="avgBenchmark < 0">
+        <div class="kpi-head">
+          <span class="kpi-label">Rentabilidad Mercado (B&H)</span>
+          <span class="kpi-icon"><mat-icon>public</mat-icon></span>
+        </div>
+        <div class="kpi-value">
+          {{ avgBenchmark > 0 ? '+' : '' }}{{ (avgBenchmark * 100) | number:'1.2-2' }}<span class="unit">%</span>
+        </div>
+        <div class="kpi-foot">
+          <span class="quality">Comprar y Mantener</span>
+        </div>
+      </article>
+
+      <article class="kpi" [class.kpi-pos]="report.summary.avg_sharpe_ratio > 1">
+        <div class="kpi-head">
+          <span class="kpi-label">Ratio de Sharpe (Riesgo)</span>
+          <span class="kpi-icon"><mat-icon>balance</mat-icon></span>
+        </div>
+        <div class="kpi-value">{{ report.summary.avg_sharpe_ratio | number:'1.2-2' }}</div>
+        <div class="kpi-foot">
+          <span class="quality" [class.good]="report.summary.avg_sharpe_ratio > 1" [class.bad]="report.summary.avg_sharpe_ratio < 0">
+            {{ qualityLabel(report.summary.avg_sharpe_ratio) }}
+          </span>
+        </div>
+      </article>
+
+      <article class="kpi kpi-neg">
+        <div class="kpi-head">
+          <span class="kpi-label">Caída Máxima</span>
+          <span class="kpi-icon"><mat-icon>water_drop</mat-icon></span>
+        </div>
+        <div class="kpi-value">{{ (report.summary.avg_max_drawdown * 100) | number:'1.2-2' }}<span class="unit">%</span></div>
+        <div class="kpi-foot">
+          <span class="delta down"><mat-icon>security</mat-icon> Protección de capital</span>
+        </div>
+      </article>
+
+    </section>
+
+    <section class="row">
+      
+      <div class="card chart-card span-4">
+        <div class="card-head">
+          <div class="card-title"><mat-icon>donut_large</mat-icon> <span>Decisiones de IA (Hoy)</span></div>
+        </div>
+        
+        <div class="donut-container">
+          <div class="donut-chart-wrapper">
+            <ngx-charts-pie-chart
+              [results]="signalPieChart"
+              [legend]="false"
+              [labels]="false"
+              [doughnut]="true"
+              [arcWidth]="0.35"
+              [customColors]="customSignalColors"
+              [view]="[220, 220]">
+            </ngx-charts-pie-chart>
+            <div class="donut-center">
+              <div class="dc-num">{{ tickerViews.length }}</div>
+              <div class="dc-lbl">ETFs</div>
+            </div>
+          </div>
+          
+          <div class="custom-legend">
+            <div class="cl-item">
+              <span class="cl-color" style="background-color: #22C55E;"></span>
+              <span class="cl-label">COMPRAR</span>
+              <span class="cl-value">{{ buyCount }}</span>
+            </div>
+            <div class="cl-item">
+              <span class="cl-color" style="background-color: #7C3AED;"></span>
+              <span class="cl-label">CASH</span>
+              <span class="cl-value">{{ sellCount }}</span>
+            </div>
+            <div class="cl-item">
+              <span class="cl-color" style="background-color: #F59E0B;"></span>
+              <span class="cl-label">MANTENER</span>
+              <span class="cl-value">{{ holdCount }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card chart-card span-8">
+        <div class="card-head">
+          <div class="card-title"><mat-icon>track_changes</mat-icon> <span>Tasa de Acierto (Win Rate) Histórica por ETF</span></div>
+          <span class="card-sub">Efectividad de las operaciones cerradas en el último año</span>
+        </div>
+        <div class="chart-host">
+          <ngx-charts-bar-vertical
+            [results]="winRateChart"
+            [xAxis]="true" [yAxis]="true" [showGridLines]="true"
+            [customColors]="customWinRateColors"
+            yAxisLabel="Acierto (%)" [showYAxisLabel]="true"
+            [showDataLabel]="true" [yScaleMax]="100" [barPadding]="4" [roundEdges]="true">
+          </ngx-charts-bar-vertical>
+        </div>
+      </div>
+
+    </section>
+
+    <section class="row">
+      <div class="card chart-card span-12">
+        <div class="card-head">
+          <div class="card-title"><mat-icon>bar_chart</mat-icon> <span>Probabilidad Alcista P(↑) por ETF</span></div>
+          <span class="card-sub">Confianza matemática calculada por la Red Bayesiana</span>
+        </div>
+        <div class="chart-host">
+          <ngx-charts-bar-vertical
+            [results]="probUpChart"
+            [xAxis]="true" [yAxis]="true" [showGridLines]="true"
+            [customColors]="customProbColors"
+            yAxisLabel="Probabilidad (%)" [showYAxisLabel]="true"
+            [showDataLabel]="true" [yScaleMax]="100" [barPadding]="4" [roundEdges]="true">
+          </ngx-charts-bar-vertical>
+        </div>
+        <div class="thresholds">
+          <span class="th-buy">COMPRAR ≥ 65%</span>
+          <span class="th-hold">MANTENER 35–65%</span>
+          <span class="th-sell">CASH ≤ 35%</span>
+        </div>
+      </div>
+    </section>
+
+  } @else {
+    <div class="empty">
+      <mat-icon>inbox</mat-icon>
+      <p>No hay informes disponibles todavía.</p>
+    </div>
+  }
+</div>

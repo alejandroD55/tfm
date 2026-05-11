@@ -183,4 +183,58 @@ export class ApiService {
     return this.http.get<any>(`${this.baseUrl}/pipeline/status`,
       { headers: this.authHeaders, params });
   }
+
+  // ─── Búsqueda de instrumentos financieros ─────────────────────────
+  /** Busca ETFs, fondos y acciones usando Finnhub */
+  searchInstruments(q: string, filterType = '', limit = 20): Observable<{
+    query: string;
+    results: InstrumentResult[];
+    total: number;
+  }> {
+    let params = new HttpParams()
+      .set('q', q)
+      .set('limit', limit.toString());
+    if (filterType) params = params.set('filter_type', filterType);
+    return this.http.get<any>(`${this.baseUrl}/search/instruments`,
+      { headers: this.authHeaders, params });
+  }
+
+  /** Perfil completo de un instrumento: precio, cap. de mercado, sector... */
+  getInstrumentProfile(symbol: string): Observable<InstrumentProfile> {
+    return this.http.get<InstrumentProfile>(
+      `${this.baseUrl}/instrument/${symbol.toUpperCase()}/profile`,
+      { headers: this.authHeaders });
+  }
+}
+
+// ─── DTOs de instrumentos ─────────────────────────────────────────────────────
+
+export interface InstrumentResult {
+  symbol:        string;
+  displaySymbol: string;
+  description:   string;
+  type:          string;
+  typeLabel:     string;
+  isEtfOrFund:   boolean;
+}
+
+export interface InstrumentProfile {
+  symbol:          string;
+  name:            string;
+  country:         string;
+  currency:        string;
+  exchange:        string;
+  industry:        string;
+  marketCap:       number | null;
+  shareOutstanding:number | null;
+  logo:            string;
+  weburl:          string;
+  ipo:             string;
+  currentPrice:    number | null;
+  change:          number | null;
+  changePct:       number | null;
+  high52w:         number | null;
+  low52w:          number | null;
+  prevClose:       number | null;
+  openPrice:       number | null;
 }

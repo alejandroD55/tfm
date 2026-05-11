@@ -1,0 +1,645 @@
+<div class="page">
+  <!-- ─── Header ─── -->
+  <header class="page-head">
+    <div class="page-head-text">
+      <div class="page-eyebrow">
+        <mat-icon>search</mat-icon><span>Ticker Explorer</span>
+      </div>
+      <h1 class="page-title">Explorador de instrumentos</h1>
+      <p class="page-sub">
+        Busca cualquier ETF, fondo o acción. Visualiza sus noticias, OHLCV
+        y la cadena de decisión bayesiana. Lanza el pipeline para ejecutar
+        el análisis sobre cualquier instrumento.
+      </p>
+    </div>
+  </header>
+
+  <!-- ─── Buscador de instrumentos (Finnhub) ─── -->
+  <section class="instrument-search-section">
+    <div class="is-header">
+      <div class="is-title"><mat-icon>travel_explore</mat-icon> Buscar ETFs &amp; Fondos</div>
+      <span class="is-sub">Busca por símbolo o nombre · powered by Finnhub</span>
+    </div>
+
+    <div class="is-input-row">
+      <div class="is-input-wrap">
+        <mat-icon class="is-icon">search</mat-icon>
+        <input class="is-input"
+               [(ngModel)]="instrumentQuery"
+               (ngModelChange)="onInstrumentSearch($event)"
+               placeholder="Ej: S&amp;P 500, MSCI World, Vanguard, QQQ..."
+               (keyup.enter)="triggerInstrumentSearch()">
+        @if (instrumentSearching) {
+          <mat-spinner diameter="18" class="is-spinner"></mat-spinner>
+        }
+      </div>
+      <div class="is-filter-chips">
+        <button class="filter-chip" [class.active]="instrumentFilter === ''"     (click)="setInstrumentFilter('')">Todos</button>
+        <button class="filter-chip" [class.active]="instrumentFilter === 'ETF'"  (click)="setInstrumentFilter('ETF')">ETFs</button>
+        <button class="filter-chip" [class.active]="instrumentFilter === 'FUND'" (click)="setInstrumentFilter('FUND')">Fondos</button>
+        <button class="filter-chip" [class.active]="instrumentFilter === 'STOCK'"(click)="setInstrumentFilter('STOCK')">Acciones</button>
+      </div>
+    </div>
+
+    <!-- Resultados de búsqueda -->
+    @if (instrumentResults.length > 0) {
+      <div class="is-results">
+        @for (r of instrumentResults; track r.symbol) {
+          <div class="is-card" [class.is-selected]="selectedInstrument?.symbol === r.symbol"
+               (click)="selectInstrument(r)">
+            <div class="is-card-left">
+              <div class="is-symbol">{{ r.displaySymbol }}</div>
+              <div class="is-name">{{ r.description }}</div>
+            </div>
+            <div class="is-card-right">
+              <span class="is-type-badge" [class.etf]="r.isEtfOrFund">{{ r.typeLabel }}</span>
+              <div class="is-actions">
+                <button class="is-btn explore"
+                        (click)="loadInstrumentInExplorer(r); $event.stopPropagation()"
+                        matTooltip="Ver datos del instrumento">
+                  <mat-icon>bar_chart</mat-icon>
+                  <span>Explorar</span>
+                </button>
+                <button class="is-btn pipeline"
+                        (click)="runPipelineForInstrument(r); $event.stopPropagation()"
+                        [disabled]="pipelineRunning"
+                        matTooltip="Ejecutar pipeline para este instrumento">
+                  <mat-icon>play_circle</mat-icon>
+                  <span>Pipeline</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        }
+      </div>
+    } @else if (instrumentQuery.length >= 2 && !instrumentSearching) {
+      <div class="is-empty">
+        <mat-icon>search_off</mat-icon>
+        <p>Sin resultados para "{{ instrumentQuery }}"</p>
+      </div>
+    }
+
+    <!-- Perfil del instrumento seleccionado -->
+    @if (selectedInstrument && instrumentProfile) {
+      <div class="is-profile">
+        @if (instrumentProfile.logo) {
+          <img class="ip-logo" [src]="instrumentProfile.logo" [alt]="instrumentProfile.name"
+               (error)="instrumentProfile.logo = ''">
+        }
+        <div class="ip-info">
+          <div class="ip-name">{{ instrumentProfile.name }}</div>
+          <div class="ip-meta">
+            <span>{{ instrumentProfile.exchange }}</span>
+            @if (instrumentProfile.country) { <span>· {{ instrumentProfile.country }}</span> }
+            @if (instrumentProfile.industry) { <span>· {{ instrumentProfile.industry }}</span> }
+          </div>
+        </div>
+        @if (instrumentProfile.currentPrice) {
+          <div class="ip-price">
+            <div class="ip-price-val">{{ instrumentProfile.currentPrice | number:'1.2-2' }} {{ instrumentProfile.currency }}</div>
+            <div class="ip-change" [class.pos]="(instrumentProfile.changePct || 0) >= 0"
+                                   [class.neg]="(instrumentProfile.changePct || 0) < 0">
+              {{ (instrumentProfile.changePct || 0) >= 0 ? '+' : '' }}{{ instrumentProfile.changePct | number:'1.2-2' }}%
+            </div>
+          </div>
+        }
+        <div class="ip-stats">
+          @if (instrumentProfile.marketCap) {
+            <div class="ip-stat">
+              <span class="ip-sl">Cap. mercado</span>
+              <span class="ip-sv">{{ instrumentProfile.marketCap | number:'1.0-0' }}M</span>
+            </div>
+          }
+          @if (instrumentProfile.high52w) {
+            <div class="ip-stat">
+              <span class="ip-sl">Máx 52s</span>
+              <span class="ip-sv green">{{ instrumentProfile.high52w | number:'1.2-2' }}</span>
+            </div>
+          }
+          @if (instrumentProfile.low52w) {
+            <div class="ip-stat">
+              <span class="ip-sl">Mín 52s</span>
+              <span class="ip-sv red">{{ instrumentProfile.low52w | number:'1.2-2' }}</span>
+            </div>
+          }
+        </div>
+      </div>
+    }
+  </section>
+
+  <!-- ─── Buscador ─── -->
+  <section class="search-section">
+    <div class="search-row">
+      <!-- Ticker input con autocompletado -->
+      <div class="search-box">
+        <mat-icon class="search-icon">search</mat-icon>
+        <input
+          class="search-input"
+          [(ngModel)]="tickerInput"
+          (ngModelChange)="onTickerInput($event)"
+          (keyup.enter)="loadTicker()"
+          placeholder="Ej: SPY, QQQ, IWM..."
+          list="ticker-list"
+        />
+        <datalist id="ticker-list">
+          @for (t of filteredTickers; track t) {
+            <option [value]="t"></option>
+          }
+        </datalist>
+      </div>
+
+      <!-- Fecha -->
+      <div class="date-box">
+        <mat-icon>event</mat-icon>
+        <select class="date-select" [(ngModel)]="selectedDate">
+          @for (d of availableDates; track d.date) {
+            <option [value]="d.date">{{ d.date }}</option>
+          }
+        </select>
+      </div>
+
+      <!-- Buscar -->
+      <button
+        class="btn btn-primary"
+        (click)="loadTicker()"
+        [disabled]="!tickerInput.trim()"
+      >
+        <mat-icon>manage_search</mat-icon>
+        <span>Explorar</span>
+      </button>
+
+      <!-- Pipeline trigger -->
+      <button
+        class="btn btn-accent"
+        (click)="triggerPipeline()"
+        [disabled]="!tickerInput.trim() || pipelineRunning"
+        [matTooltip]="'Ejecutar el pipeline completo solo para este ticker'"
+      >
+        @if (pipelineRunning) {
+          <mat-spinner diameter="16"></mat-spinner>
+        } @else {
+          <mat-icon>play_circle</mat-icon>
+        }
+        <span>{{
+          pipelineRunning ? 'Ejecutando...' : 'Lanzar pipeline'
+        }}</span>
+      </button>
+    </div>
+
+    <!-- Chips de tickers rápidos -->
+    @if (availableTickers.length) {
+      <div class="quick-chips">
+        <span class="chips-label">Acceso rápido:</span>
+        @for (t of availableTickers.slice(0, 12); track t) {
+          <button
+            class="ticker-chip"
+            [class.active]="currentTicker === t"
+            (click)="selectTicker(t)"
+          >
+            {{ t }}
+          </button>
+        }
+      </div>
+    }
+  </section>
+
+  <!-- ─── Pipeline status ─── -->
+  @if (pipelineExecution) {
+    <div
+      class="pipeline-status"
+      [class]="'ps-' + pipelineExecution.status.toLowerCase()"
+    >
+      <mat-icon>{{
+        pipelineStatusIcon(pipelineExecution.status)
+      }}</mat-icon>
+      <div>
+        <strong>Pipeline {{ pipelineExecution.status }}</strong>
+        @if (pipelineExecution.status === 'RUNNING') {
+          <span>
+            — ejecutando para <strong>{{ currentTicker }}</strong
+            >...</span
+          >
+        } @else if (pipelineExecution.status === 'SUCCEEDED') {
+          <span>
+            — completado. Refresca la página para ver los nuevos
+            datos.</span
+          >
+        } @else if (pipelineExecution.status === 'FAILED') {
+          <span> — error en la ejecución. Revisa CloudWatch Logs.</span>
+        }
+      </div>
+      @if (pipelineExecution.status === 'RUNNING') {
+        <mat-spinner diameter="16"></mat-spinner>
+      }
+    </div>
+  }
+
+  <!-- ─── Contenido del ticker ─── -->
+  @if (loading) {
+    <div class="loader">
+      <mat-spinner diameter="40"></mat-spinner>
+      <p>Cargando datos de {{ tickerInput }}...</p>
+    </div>
+  } @else if (currentTicker) {
+    <!-- Banner del ticker -->
+    <section class="ticker-banner">
+      <div class="tb-left">
+        <div class="tb-symbol">{{ currentTicker }}</div>
+        <div class="tb-date">{{ selectedDate }}</div>
+      </div>
+      @if (tickerTrace) {
+        <div
+          class="tb-signal {{ tickerTrace.inference.signal.toLowerCase() }}"
+        >
+          {{ tickerTrace.inference.signal }}
+        </div>
+        <div class="tb-prob">
+          <div class="tbp-label">P(subida)</div>
+          <div class="tbp-val">
+            {{ tickerTrace.inference.prob_up * 100 | number: '1.1-1' }}%
+          </div>
+          <div class="tbp-bar">
+            <div
+              class="tbp-fill"
+              [style.width.%]="tickerTrace.inference.prob_up * 100"
+              [class.buy]="tickerTrace.inference.prob_up > 0.65"
+              [class.sell]="tickerTrace.inference.prob_up < 0.35"
+            ></div>
+          </div>
+        </div>
+        <div class="tb-states">
+          @for (s of getTraceStates(); track s.label) {
+            <div class="tbs-item">
+              <span class="tbs-label">{{ s.label }}</span>
+              <span class="ev-chip {{ s.cls }}">{{ s.value }}</span>
+            </div>
+          }
+        </div>
+      } @else {
+        <div class="no-trace-note">
+          <mat-icon>info_outline</mat-icon>
+          Sin traza bayesiana para esta fecha. Ejecuta el pipeline primero.
+        </div>
+      }
+    </section>
+
+    <div class="explorer-grid">
+      <!-- ─── OHLCV Chart ─── -->
+      <section class="card chart-section">
+        <div class="card-head">
+          <div class="card-title">
+            <mat-icon>candlestick_chart</mat-icon
+            ><span>Precio de cierre — {{ currentTicker }}</span>
+          </div>
+          <span class="card-sub"
+            >{{ ohlcvData.length }} sesiones · últimos 90 días</span
+          >
+        </div>
+        @if (ohlcvData.length) {
+          <div class="chart-host">
+            <ngx-charts-line-chart
+              [results]="ohlcvChartData"
+              [xAxis]="true"
+              [yAxis]="true"
+              [showGridLines]="true"
+              [scheme]="lineScheme"
+              [view]="chartView"
+              [autoScale]="true"
+              [legend]="false"
+              yAxisLabel="Precio (USD)"
+              [showYAxisLabel]="true"
+            >
+            </ngx-charts-line-chart>
+          </div>
+
+          <!-- OHLCV tabla últimas sesiones -->
+          <div class="ohlcv-table-wrap">
+            <table class="ohlcv-table">
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Open</th>
+                  <th>High</th>
+                  <th>Low</th>
+                  <th>Close</th>
+                  <th>Volumen</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (
+                  row of ohlcvData.slice(-10).reverse();
+                  track row.date
+                ) {
+                  <tr [class.today-row]="row.date === selectedDate">
+                    <td>{{ row.date }}</td>
+                    <td>{{ row.open | number: '1.2-2' }}</td>
+                    <td class="high">{{ row.high | number: '1.2-2' }}</td>
+                    <td class="low">{{ row.low | number: '1.2-2' }}</td>
+                    <td class="close">{{ row.close | number: '1.2-2' }}</td>
+                    <td>{{ row.volume | number: '1.0-0' }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        } @else {
+          <div class="empty-box">
+            <mat-icon>bar_chart</mat-icon>
+            <p>
+              No hay datos OHLCV para {{ currentTicker }} en
+              {{ selectedDate }}
+            </p>
+          </div>
+        }
+      </section>
+
+      <!-- ─── Noticias ─── -->
+      <section class="card news-section">
+        <div class="card-head">
+          <div class="card-title">
+            <mat-icon>newspaper</mat-icon>
+            <span>Noticias Finnhub — {{ currentTicker }}</span>
+          </div>
+          <span class="card-sub"
+            >{{ articles.length }} titulares · fuente de sentimiento
+            FinBERT</span
+          >
+        </div>
+
+        @if (articles.length) {
+          <!-- Distribución de sentimiento -->
+          @if (tickerTrace?.sentiment_detail) {
+            <div class="sent-dist">
+              @for (e of getSentimentDist(); track e.key) {
+                <div class="sd-item">
+                  <span class="ev-chip {{ e.key }}">{{ e.key }}</span>
+                  <div class="sd-bar-wrap">
+                    <div
+                      class="sd-bar {{ e.key }}"
+                      [style.width.%]="e.pct"
+                    ></div>
+                  </div>
+                  <span class="sd-num">{{ e.count }} ({{ e.pct }}%)</span>
+                </div>
+              }
+              <div class="sd-note">
+                <mat-icon>info_outline</mat-icon>
+                Dominante:
+                <strong>{{
+                  tickerTrace?.sentiment_detail?.dominant?.sentiment
+                }}</strong>
+                ({{
+                  (tickerTrace?.sentiment_detail?.dominant?.confidence ||
+                    0) * 100 | number: '1.0-0'
+                }}% confidence) → señal
+                <strong>{{ tickerTrace?.inference?.signal }}</strong>
+              </div>
+            </div>
+          }
+
+          <!-- Lista de artículos -->
+          <div class="articles-list">
+            @for (art of articles; track $index) {
+              <div
+                class="article-card"
+                [class.has-sentiment]="art.sentiment"
+              >
+                <div class="art-head">
+                  @if (art.sentiment) {
+                    <span class="ev-chip {{ art.sentiment }} small">
+                      {{ art.sentiment }}
+                      {{ (art.confidence || 0) * 100 | number: '1.0-0' }}%
+                    </span>
+                  }
+                  @if (art.source) {
+                    <span class="art-source">{{ art.source }}</span>
+                  }
+                  @if (art.datetime) {
+                    <span class="art-date">{{
+                      art.datetime * 1000 | date: 'dd/MM HH:mm'
+                    }}</span>
+                  }
+                </div>
+                <div class="art-headline">{{ art.headline }}</div>
+                @if (art.url) {
+                  <a
+                    class="art-link"
+                    [href]="art.url"
+                    target="_blank"
+                    rel="noopener"
+                  >
+                    <mat-icon>open_in_new</mat-icon> Ver artículo
+                  </a>
+                }
+              </div>
+            }
+          </div>
+        } @else {
+          <div class="empty-box">
+            <mat-icon>newspaper</mat-icon>
+            <p>
+              No hay noticias para {{ currentTicker }} en {{ selectedDate }}
+            </p>
+            <p class="empty-sub">
+              Puede que la ingesta aún no se haya ejecutado para esta fecha.
+            </p>
+          </div>
+        }
+      </section>
+    </div>
+
+    <!-- ─── Decisión bayesiana completa ─── -->
+    @if (tickerTrace) {
+      <section class="card decision-section">
+        <div class="card-head">
+          <div class="card-title">
+            <mat-icon>account_tree</mat-icon
+            ><span>Cadena de decisión bayesiana</span>
+          </div>
+          <span class="card-sub"
+            >De los datos ingestados a la señal final</span
+          >
+        </div>
+
+        <!-- Reasoning -->
+        <div class="reasoning-box">
+          <mat-icon>lightbulb</mat-icon>
+          <span>{{ tickerTrace.reasoning }}</span>
+        </div>
+
+        <!-- Raw → discretizado → inferencia -->
+        <div class="decision-flow">
+          <div class="df-stage">
+            <div class="df-stage-title">
+              <mat-icon>numbers</mat-icon> 1 · Datos crudos
+            </div>
+            <div class="df-kv-grid">
+              <div class="dfkv">
+                <span>Precio cierre</span
+                ><strong>{{
+                  tickerTrace.raw_values.close_price | number: '1.2-2'
+                }}</strong>
+              </div>
+              <div class="dfkv">
+                <span>RSI 14</span>
+                <strong
+                  [class.green]="tickerTrace.raw_values.rsi_14 < 30"
+                  [class.red]="tickerTrace.raw_values.rsi_14 > 70"
+                >
+                  {{ tickerTrace.raw_values.rsi_14 | number: '1.2-2' }}
+                </strong>
+              </div>
+              <div class="dfkv">
+                <span>SMA 20</span
+                ><strong>{{
+                  tickerTrace.raw_values.sma_20 | number: '1.2-2'
+                }}</strong>
+              </div>
+              <div class="dfkv">
+                <span>SMA 50</span
+                ><strong>{{
+                  tickerTrace.raw_values.sma_50 | number: '1.2-2'
+                }}</strong>
+              </div>
+              <div class="dfkv">
+                <span>SMA spread</span>
+                <strong
+                  [class.green]="
+                    (tickerTrace.raw_values.sma_spread || 0) > 0
+                  "
+                  [class.red]="(tickerTrace.raw_values.sma_spread || 0) < 0"
+                >
+                  {{ tickerTrace.raw_values.sma_spread | number: '1.2-2' }}
+                </strong>
+              </div>
+              <div class="dfkv">
+                <span>BB width</span>
+                <strong
+                  [class.orange]="
+                    tickerTrace.raw_values.bb_width_ratio > 0.05
+                  "
+                >
+                  {{
+                    tickerTrace.raw_values.bb_width_ratio * 100
+                      | number: '1.2-2'
+                  }}%
+                </strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="df-arrow"><mat-icon>arrow_forward</mat-icon></div>
+
+          <div class="df-stage">
+            <div class="df-stage-title">
+              <mat-icon>compress</mat-icon> 2 · Discretización
+            </div>
+            <div class="df-chips">
+              <div class="dfc-row">
+                <span class="dfc-label">Sentimiento</span>
+                <span
+                  class="ev-chip {{
+                    tickerTrace.discretization.sentiment_state
+                  }}"
+                >
+                  {{ tickerTrace.discretization.sentiment_state }}
+                </span>
+                <span class="dfc-raw"
+                  >(FinBERT {{ tickerTrace.discretization.sentiment_raw }}
+                  {{
+                    tickerTrace.discretization.sentiment_conf * 100
+                      | number: '1.0-0'
+                  }}%)</span
+                >
+              </div>
+              <div class="dfc-row">
+                <span class="dfc-label">RSI 14</span>
+                <span
+                  class="ev-chip {{ tickerTrace.discretization.rsi_state }}"
+                  >{{ tickerTrace.discretization.rsi_state }}</span
+                >
+                <span class="dfc-raw"
+                  >({{
+                    tickerTrace.raw_values.rsi_14 | number: '1.1-1'
+                  }})</span
+                >
+              </div>
+              <div class="dfc-row">
+                <span class="dfc-label">Tendencia</span>
+                <span
+                  class="ev-chip {{
+                    tickerTrace.discretization.trend_state
+                  }}"
+                  >{{ tickerTrace.discretization.trend_state }}</span
+                >
+                <span class="dfc-raw">(SMA20 vs SMA50)</span>
+              </div>
+              <div class="dfc-row">
+                <span class="dfc-label">Volatilidad</span>
+                <span
+                  class="ev-chip vol-{{
+                    tickerTrace.discretization.volatility_state
+                  }}"
+                  >{{ tickerTrace.discretization.volatility_state }}</span
+                >
+                <span class="dfc-raw"
+                  >(BB
+                  {{
+                    tickerTrace.raw_values.bb_width_ratio * 100
+                      | number: '1.2-2'
+                  }}%)</span
+                >
+              </div>
+            </div>
+          </div>
+
+          <div class="df-arrow"><mat-icon>arrow_forward</mat-icon></div>
+
+          <div class="df-stage result-stage">
+            <div class="df-stage-title">
+              <mat-icon>query_stats</mat-icon> 3 · Inferencia bayesiana
+            </div>
+            <div
+              class="result-signal {{
+                tickerTrace.inference.signal.toLowerCase()
+              }}"
+            >
+              {{ tickerTrace.inference.signal }}
+            </div>
+            <div class="result-probs">
+              <div>
+                P(subida) =
+                <strong
+                  >{{
+                    tickerTrace.inference.prob_up * 100 | number: '1.1-1'
+                  }}%</strong
+                >
+              </div>
+              <div>
+                P(bajada) =
+                <strong
+                  >{{
+                    tickerTrace.inference.prob_down * 100 | number: '1.1-1'
+                  }}%</strong
+                >
+              </div>
+            </div>
+            <div class="result-threshold">
+              Umbral: {{ tickerTrace.inference.threshold_used }}
+            </div>
+          </div>
+        </div>
+      </section>
+    }
+  } @else if (!loading) {
+    <div class="welcome-state">
+      <mat-icon>manage_search</mat-icon>
+      <h3>Busca un ticker para explorar</h3>
+      <p>
+        Introduce un símbolo (SPY, QQQ, IWM...) y selecciona una fecha para
+        ver las noticias ingestadas, los datos OHLCV y la decisión bayesiana
+        completa.
+      </p>
+    </div>
+  }
+</div>

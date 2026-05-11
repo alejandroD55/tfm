@@ -3,18 +3,20 @@ TFM Dashboard API - FastAPI
 ===========================
 Endpoints:
   GET /health
-  GET /reports                    - Lista fechas disponibles
-  GET /reports/{date}             - Report completo
-  GET /trace/{date}               - Traza bayesiana completa
-  GET /trace/{date}/{ticker}      - Traza por ticker
-  GET /model                      - Config del modelo bayesiano
-  GET /tickers                    - Lista ETFs del universo (nuevo)
-  GET /raw/{date}/news/{ticker}   - Noticias raw de Finnhub por ticker (nuevo)
-  GET /raw/{date}/ohlcv/{ticker}  - Datos OHLCV por ticker (nuevo)
-  POST /pipeline/run              - Lanza pipeline para ticker(s) (nuevo)
-  GET /pipeline/status            - Estado de una ejecucion Step Functions (nuevo)
-  GET /sentiment/{date}/{ticker}  - Sentimiento detallado (nuevo)
-  GET /indicators/{date}/{ticker} - Indicadores tecnicos (nuevo)
+  GET /reports                      - Lista fechas disponibles
+  GET /reports/{date}               - Report completo
+  GET /trace/{date}                 - Traza bayesiana completa
+  GET /trace/{date}/{ticker}        - Traza por ticker
+  GET /model                        - Config del modelo bayesiano
+  GET /tickers                      - Lista ETFs del universo
+  GET /raw/{date}/news/{ticker}     - Noticias raw de Finnhub por ticker
+  GET /raw/{date}/ohlcv/{ticker}    - Datos OHLCV por ticker
+  POST /pipeline/run                - Lanza pipeline para ticker(s)
+  GET /pipeline/status              - Estado de una ejecucion Step Functions
+  GET /search/instruments           - Busca ETFs y fondos via Finnhub (nuevo)
+  GET /instrument/{symbol}/profile  - Perfil detallado de un instrumento (nuevo)
+  GET /sentiment/{date}/{ticker}    - Sentimiento detallado
+  GET /indicators/{date}/{ticker}   - Indicadores tecnicos
   GET /files
   GET /files/presign
   GET /stats
@@ -25,6 +27,8 @@ import io
 import json
 import logging
 import base64
+import urllib.request
+import urllib.parse
 from datetime import datetime, timezone
 from typing import Optional, List
 
@@ -44,9 +48,43 @@ DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "")
 PRESIGN_TTL       = int(os.getenv("PRESIGN_TTL_SEC", "900"))
 STATE_MACHINE_ARN = os.getenv("STATE_MACHINE_ARN", "")
 
-s3  = boto3.client("s3",            region_name=AWS_REGION)
-sfn = boto3.client("stepfunctions", region_name=AWS_REGION)
-lmb = boto3.client("lambda",        region_name=AWS_REGION)
+s3          = boto3.client("s3",            region_name=AWS_REGION)
+sfn         = boto3.client("stepfunctions", region_name=AWS_REGION)
+lmb         = boto3.client("lambda",        region_name=AWS_REGION)
+secrets_api = boto3.client("secretsmanager", region_name=AWS_REGION)
+
+# Cache de claves externas (se leen una vez por instancia del pod)
+_finnhub_key_cache: Optional[str] = None
+
+
+def _get_finnhub_key() -> str:
+    """Lee la API Key de Finnhub desde Secrets Manager (con cache por pod)."""
+    global _finnhub_key_cache
+    if not _finnhub_key_cache:
+        try:
+            resp = secrets_api.get_secret_value(SecretId="finnhub/api_key")
+            _finnhub_key_cache = json.loads(resp["SecretString"])["api_key"]
+        except Exception as e:
+            logger.error(f"Error leyendo finnhub/api_key: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail="Finnhub API key no configurada en Secrets Manager"
+            )
+    return _finnhub_key_cache
+
+
+def _finnhub_get(path: str) -> dict:
+    """Realiza una peticion GET a la API de Finnhub."""
+    key = _get_finnhub_key()
+    sep = "&" if "?" in path else "?"
+    url = f"https://finnhub.io/api/v1{path}{sep}token={key}"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        raise HTTPException(status_code=e.code, detail=f"Finnhub error: {e.reason}")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Error contactando Finnhub: {str(e)}")
 
 app = FastAPI(
     title="TFM Dashboard API",
@@ -541,6 +579,130 @@ def pipeline_status(
     except Exception as e:
         logger.exception("pipeline_status error")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Búsqueda de instrumentos financieros ────────────────────────────────────
+
+# Tipos Finnhub relevantes para ETFs y fondos
+_INSTRUMENT_TYPES = {
+    "ETP":          "ETF",
+    "ETF":          "ETF",
+    "FUND":         "Fondo",
+    "CLOSED-END":   "Fondo Cerrado",
+    "MUTUAL FUND":  "Fondo Mutuo",
+    "INDEX":        "Índice",
+    "Common Stock": "Acción",
+    "PREFERRED":    "Preferente",
+    "ADR":          "ADR",
+    "REIT":         "REIT",
+}
+
+
+@app.get("/search/instruments", tags=["Búsqueda"])
+def search_instruments(
+    q: str = Query(..., min_length=1, description="Símbolo o nombre del instrumento"),
+    filter_type: str = Query(default="", description="Filtrar por tipo: ETF, FUND, Stock..."),
+    limit: int = Query(default=20, ge=1, le=50),
+    x_api_key: str = Header(default=""),
+):
+    """
+    Busca ETFs, fondos y acciones usando la API de Finnhub.
+    Devuelve símbolo, nombre, tipo y exchange para cada resultado.
+
+    Tipos más comunes:
+      ETP / ETF     → Exchange Traded Products (ETFs, ETNs)
+      FUND          → Fondos de inversión
+      Common Stock  → Acciones ordinarias
+      REIT          → Real Estate Investment Trusts
+
+    Ejemplo: q=SPY → devuelve todos los instrumentos que coincidan con SPY
+    """
+    check_api_key(x_api_key)
+
+    encoded_q = urllib.parse.quote(q)
+    data      = _finnhub_get(f"/search?q={encoded_q}")
+    results   = data.get("result", [])
+
+    # Enriquecer con tipo legible y filtrar si se pide
+    enriched = []
+    for r in results:
+        raw_type     = r.get("type", "")
+        readable     = _INSTRUMENT_TYPES.get(raw_type, raw_type)
+        is_etf_fund  = raw_type.upper() in ("ETP", "ETF", "FUND", "CLOSED-END", "REIT")
+
+        # Filtro por tipo si se especifica
+        if filter_type:
+            ft = filter_type.upper()
+            if ft in ("ETF", "ETP") and raw_type.upper() not in ("ETP", "ETF"):
+                continue
+            elif ft == "FUND" and raw_type.upper() not in ("FUND", "CLOSED-END", "REIT"):
+                continue
+            elif ft == "STOCK" and raw_type.upper() != "COMMON STOCK":
+                continue
+
+        enriched.append({
+            "symbol":       r.get("symbol", ""),
+            "displaySymbol":r.get("displaySymbol", r.get("symbol", "")),
+            "description":  r.get("description", ""),
+            "type":         raw_type,
+            "typeLabel":    readable,
+            "isEtfOrFund":  is_etf_fund,
+        })
+        if len(enriched) >= limit:
+            break
+
+    # Ordenar: ETFs y fondos primero
+    enriched.sort(key=lambda r: (0 if r["isEtfOrFund"] else 1, r["symbol"]))
+
+    return {
+        "query":   q,
+        "results": enriched,
+        "total":   len(enriched),
+    }
+
+
+@app.get("/instrument/{symbol}/profile", tags=["Búsqueda"])
+def get_instrument_profile(symbol: str, x_api_key: str = Header(default="")):
+    """
+    Perfil completo de un instrumento: nombre, sector, industria, capitalización,
+    país, descripción y logo (si está disponible).
+    Fuente: Finnhub /stock/profile2
+    """
+    check_api_key(x_api_key)
+    ticker = symbol.upper()
+    try:
+        profile = _finnhub_get(f"/stock/profile2?symbol={ticker}")
+    except HTTPException:
+        profile = {}
+
+    # Datos de cotización básica (si existe)
+    quote: dict = {}
+    try:
+        quote = _finnhub_get(f"/quote?symbol={ticker}")
+    except HTTPException:
+        pass
+
+    return {
+        "symbol":      ticker,
+        "name":        profile.get("name", ticker),
+        "country":     profile.get("country", ""),
+        "currency":    profile.get("currency", "USD"),
+        "exchange":    profile.get("exchange", ""),
+        "industry":    profile.get("finnhubIndustry", ""),
+        "marketCap":   profile.get("marketCapitalization"),
+        "shareOutstanding": profile.get("shareOutstanding"),
+        "logo":        profile.get("logo", ""),
+        "weburl":      profile.get("weburl", ""),
+        "ipo":         profile.get("ipo", ""),
+        # Cotización
+        "currentPrice":    quote.get("c"),
+        "change":          quote.get("d"),
+        "changePct":       quote.get("dp"),
+        "high52w":         quote.get("h"),
+        "low52w":          quote.get("l"),
+        "prevClose":       quote.get("pc"),
+        "openPrice":       quote.get("o"),
+    }
 
 
 @app.get("/stats", tags=["S3"])

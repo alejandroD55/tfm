@@ -180,15 +180,15 @@ header "9/10 · Aplicar manifests K8s"
 # Obtener ARN de la state machine (si existe) para configurar el pod API
 STATE_MACHINE_ARN_VALUE=""
 if aws stepfunctions list-state-machines --region "${AWS_REGION}" \
-   --query "stateMachines[?name=='tfm-trading-pipeline'].stateMachineArn" \
+   --query "stateMachines[?name=='tfm-pipeline'].stateMachineArn" \
    --output text 2>/dev/null | grep -q "arn:"; then
   STATE_MACHINE_ARN_VALUE=$(aws stepfunctions list-state-machines \
     --region "${AWS_REGION}" \
-    --query "stateMachines[?name=='tfm-trading-pipeline'].stateMachineArn" \
+    --query "stateMachines[?name=='tfm-pipeline'].stateMachineArn" \
     --output text)
   info "State Machine ARN: ${STATE_MACHINE_ARN_VALUE}"
 else
-  warn "State Machine 'tfm-trading-pipeline' no encontrada. El trigger de pipeline no funcionara hasta crearla."
+  warn "State Machine 'tfm-pipeline' no encontrada. El trigger de pipeline no funcionara hasta crearla."
 fi
 
 # Función que sustituye los placeholders de imagen y ARNs, y aplica
@@ -197,7 +197,7 @@ apply_manifest() {
   local IMAGE=$2
   sed \
     -e "s|ACCOUNT_ID.dkr.ecr.AWS_REGION.amazonaws.com/.*|${IMAGE}|g" \
-    -e "s|arn:aws:states:eu-north-1:ACCOUNT_ID:stateMachine:tfm-trading-pipeline|${STATE_MACHINE_ARN_VALUE}|g" \
+    -e "s|arn:aws:states:eu-north-1:ACCOUNT_ID:stateMachine:tfm-pipeline|${STATE_MACHINE_ARN_VALUE}|g" \
     "${FILE}" | kubectl apply -f -
 }
 
