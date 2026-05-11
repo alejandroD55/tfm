@@ -11,8 +11,8 @@ RUN pip3 install --no-cache-dir boto3==1.34.69 --break-system-packages
 
 WORKDIR /migration
 
-# Copiar schema SQL y script de ejecución
-COPY database_schema.sql .
+# Copiar migraciones versionadas y script de ejecución
+COPY migrations ./migrations
 COPY infrastructure/k8s/jobs/run_migration.py .
 
 CMD ["python3", "run_migration.py"]

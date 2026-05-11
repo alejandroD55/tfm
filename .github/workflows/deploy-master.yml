@@ -71,7 +71,7 @@ jobs:
       report: ${{ steps.filter.outputs.report }}
       api: ${{ steps.filter.outputs.api }}
       frontend: ${{ steps.filter.outputs.frontend }}
-      schema: ${{ steps.filter.outputs.schema }}
+      migrations: ${{ steps.filter.outputs.migrations }}
       any_lambda: ${{ steps.filter.outputs.ingestion == 'true'
         || steps.filter.outputs.sentiment == 'true'
         || steps.filter.outputs.indicators == 'true'
@@ -105,8 +105,9 @@ jobs:
             frontend:
               - 'Sentiment analysis/pipeline-dashboard/**'
               - 'infrastructure/k8s/frontend/**'
-            schema:
-              - 'database_schema.sql'
+            migrations:
+              - 'migrations/**'
+              - 'infrastructure/k8s/jobs/**'
 
   # ──────────────────────────────────────────────────────────────────────────
   # 2. LAMBDAS — un job por función, corren en paralelo
@@ -403,7 +404,7 @@ jobs:
       - deploy-frontend
     if: |
       always() &&
-      needs.changes.outputs.schema == 'true' &&
+      needs.changes.outputs.migrations == 'true' &&
       !failure() && !cancelled()
     steps:
       - uses: actions/checkout@v4
@@ -479,12 +480,52 @@ jobs:
             infrastructure/k8s/jobs/db-migrate.yaml \
             | kubectl apply -f -
 
-      - name: Esperar que termine el Job (timeout 5 min)
+      - name: Esperar que termine el Job (timeout 15 min)
         run: |
-          kubectl wait job/tfm-db-migrate \
-            --namespace "${NAMESPACE}" \
-            --for=condition=complete \
-            --timeout=300s
+          START_TS=$(date +%s)
+          TIMEOUT_SEC=900
+
+          while true; do
+            NOW_TS=$(date +%s)
+            ELAPSED=$((NOW_TS - START_TS))
+            if [ "$ELAPSED" -ge "$TIMEOUT_SEC" ]; then
+              echo "❌ Timeout esperando tfm-db-migrate (${TIMEOUT_SEC}s)"
+              kubectl get job tfm-db-migrate -n "${NAMESPACE}" -o wide || true
+              kubectl get pods -n "${NAMESPACE}" -l app=tfm-db-migrate -o wide || true
+              kubectl describe job tfm-db-migrate -n "${NAMESPACE}" || true
+              kubectl describe pods -n "${NAMESPACE}" -l app=tfm-db-migrate || true
+              exit 1
+            fi
+
+            SUCCEEDED=$(kubectl get job tfm-db-migrate -n "${NAMESPACE}" -o jsonpath='{.status.succeeded}' 2>/dev/null || echo "0")
+            FAILED=$(kubectl get job tfm-db-migrate -n "${NAMESPACE}" -o jsonpath='{.status.failed}' 2>/dev/null || echo "0")
+            ACTIVE=$(kubectl get job tfm-db-migrate -n "${NAMESPACE}" -o jsonpath='{.status.active}' 2>/dev/null || echo "0")
+
+            echo "⏱️  migrate status -> succeeded=${SUCCEEDED:-0} failed=${FAILED:-0} active=${ACTIVE:-0} elapsed=${ELAPSED}s"
+            kubectl get pods -n "${NAMESPACE}" -l app=tfm-db-migrate -o wide || true
+
+            if [ "${SUCCEEDED:-0}" -ge 1 ]; then
+              echo "✅ tfm-db-migrate completado"
+              break
+            fi
+
+            if [ "${FAILED:-0}" -ge 1 ]; then
+              echo "❌ tfm-db-migrate marcado como failed"
+              kubectl describe job tfm-db-migrate -n "${NAMESPACE}" || true
+              kubectl describe pods -n "${NAMESPACE}" -l app=tfm-db-migrate || true
+              PODS=$(kubectl get pods -n "${NAMESPACE}" -l app=tfm-db-migrate -o jsonpath='{.items[*].metadata.name}' || true)
+              for P in $PODS; do
+                echo "---- logs pod: ${P} ----"
+                kubectl logs -n "${NAMESPACE}" "$P" --tail=300 || true
+                echo "---- previous logs pod: ${P} ----"
+                kubectl logs -n "${NAMESPACE}" "$P" --previous --tail=300 || true
+              done
+              kubectl get events -n "${NAMESPACE}" --sort-by='.lastTimestamp' | tail -n 60 || true
+              exit 1
+            fi
+
+            sleep 15
+          done
 
       - name: Mostrar logs de la migración
         if: always()

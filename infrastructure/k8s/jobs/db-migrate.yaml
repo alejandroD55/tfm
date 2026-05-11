@@ -13,14 +13,14 @@ spec:
   # El Job se elimina automáticamente 1h después de completarse
   ttlSecondsAfterFinished: 3600
   # Solo 1 intento por defecto; aumentar si la BD tarda en arrancar
-  backoffLimit: 3
+  backoffLimit: 1
   template:
     metadata:
       labels:
         app: tfm-db-migrate
         component: migration
     spec:
-      restartPolicy: OnFailure
+      restartPolicy: Never
       serviceAccountName: tfm-api-sa # Para acceso a Secrets Manager vía IRSA
       securityContext:
         runAsNonRoot: true
