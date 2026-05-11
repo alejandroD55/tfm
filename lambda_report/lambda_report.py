@@ -22,6 +22,19 @@ def resolve_batch_date(event):
     if raw_date: return raw_date[:10]
     return datetime.now().strftime('%Y-%m-%d')
 
+
+def resolve_pipeline_context(event):
+    pipeline_ctx = (event or {}).get('pipeline_context', {}) if isinstance(event, dict) else {}
+    request = pipeline_ctx.get('request', {}) if isinstance(pipeline_ctx, dict) else {}
+    if not isinstance(request, dict):
+        request = {}
+    batch_date = resolve_batch_date(request) if request.get('batch_date') else resolve_batch_date(pipeline_ctx)
+    run_id = pipeline_ctx.get('run_id') or (event or {}).get('run_id') or f"legacy-{batch_date}"
+    trigger_type = request.get('trigger_type')
+    if trigger_type not in ('manual', 'scheduled'):
+        trigger_type = 'manual' if request.get('ticker') or request.get('tickers') else 'scheduled'
+    return {'batch_date': batch_date, 'run_id': run_id, 'trigger_type': trigger_type}
+
 def get_secret(secret_name):
     try:
         response = secrets_client.get_secret_value(SecretId=secret_name)
@@ -148,18 +161,30 @@ def calculate_backtesting_metrics(signals_df):
         logger.error(f"Error in math: {e}")
         raise
 
-def get_pipeline_health(connection, report_date):
+def get_pipeline_health(connection, report_date, run_id):
     cursor = connection.cursor()
-    cursor.execute("SELECT tickers_processed, status FROM batch_log WHERE batch_date = %s LIMIT 1", (report_date,))
+    cursor.execute(
+        "SELECT tickers_processed, status FROM batch_log WHERE run_id = %s LIMIT 1",
+        (run_id,),
+    )
     batch_row = cursor.fetchone()
+    if not batch_row:
+        cursor.execute(
+            "SELECT tickers_processed, status FROM batch_log WHERE batch_date = %s ORDER BY updated_at DESC LIMIT 1",
+            (report_date,),
+        )
+        batch_row = cursor.fetchone()
     cursor.execute("SELECT COUNT(DISTINCT ticker) FROM technical_indicators WHERE batch_date = %s", (report_date,))
     indicator_tickers = cursor.fetchone()[0]
     cursor.execute("SELECT COUNT(DISTINCT ticker) FROM trading_signals WHERE batch_date = %s", (report_date,))
     signal_tickers = cursor.fetchone()[0]
     cursor.execute("SELECT COUNT(*) FROM sentiment_scores WHERE batch_date = %s", (report_date,))
     headlines = cursor.fetchone()[0]
-    cursor.execute("SELECT stage, metrics FROM pipeline_kpis WHERE batch_date = %s", (report_date,))
+    cursor.execute("SELECT stage, metrics FROM pipeline_kpis WHERE run_id = %s", (run_id,))
     stage_metrics = {row[0]: row[1] for row in cursor.fetchall()}
+    if not stage_metrics:
+        cursor.execute("SELECT stage, metrics FROM pipeline_kpis WHERE batch_date = %s", (report_date,))
+        stage_metrics = {row[0]: row[1] for row in cursor.fetchall()}
     cursor.close()
     tickers_expected = int(batch_row[0]) if batch_row and batch_row[0] is not None else 0
     return {
@@ -191,12 +216,12 @@ def compute_benchmark(signals_df):
         benchmark[ticker] = round(float(buy_hold_return), 4)
     return benchmark
 
-def upsert_pipeline_kpi(connection, batch_date, stage, metrics):
+def upsert_pipeline_kpi(connection, batch_date, run_id, trigger_type, stage, metrics):
     cursor = connection.cursor()
     cursor.execute("""
-        INSERT INTO pipeline_kpis (batch_date, stage, metrics) VALUES (%s, %s, %s::jsonb)
-        ON CONFLICT (batch_date, stage) DO UPDATE SET metrics = EXCLUDED.metrics, updated_at = CURRENT_TIMESTAMP
-    """, (batch_date, stage, json.dumps(metrics)))
+        INSERT INTO pipeline_kpis (batch_date, run_id, trigger_type, stage, metrics) VALUES (%s, %s, %s, %s, %s::jsonb)
+        ON CONFLICT (run_id, stage) DO UPDATE SET metrics = EXCLUDED.metrics, updated_at = CURRENT_TIMESTAMP
+    """, (batch_date, run_id, trigger_type, stage, json.dumps(metrics)))
     connection.commit()
     cursor.close()
 
@@ -212,11 +237,12 @@ def handler(event, context):
         logger.info("Lambda report generation started (Long/Cash Strategy)")
         aurora_creds = get_secret('aurora/credentials')
         connection = connect_to_aurora(aurora_creds)
-        today = resolve_batch_date(event)
+        ctx = resolve_pipeline_context(event)
+        today = ctx['batch_date']
 
         signals_df = get_trading_data(connection, today, days_back=DAYS_BACK)
         backtest_metrics, diagnostics = calculate_backtesting_metrics(signals_df) if not signals_df.empty else ({}, {})
-        pipeline_health = get_pipeline_health(connection, today)
+        pipeline_health = get_pipeline_health(connection, today, ctx['run_id'])
         explanations = get_explanations_sample(connection, today, limit=10)
         benchmark = compute_benchmark(signals_df) if not signals_df.empty else {}
 
@@ -240,10 +266,10 @@ def handler(event, context):
             'trace_artifact': f'results/{today}/bayesian_trace.json',
         }
         report_key = save_report_to_s3(report_data, today)
-        upsert_pipeline_kpi(connection, today, 'report', {'tickers_reported': len(backtest_metrics), 'total_closed_trades': int(sum(item['trades_closed'] for item in diagnostics.values())) if diagnostics else 0})
+        upsert_pipeline_kpi(connection, today, ctx['run_id'], ctx['trigger_type'], 'report', {'tickers_reported': len(backtest_metrics), 'total_closed_trades': int(sum(item['trades_closed'] for item in diagnostics.values())) if diagnostics else 0, 'trigger_type': ctx['trigger_type']})
 
         cursor = connection.cursor()
-        cursor.execute("UPDATE batch_log SET status = %s WHERE batch_date = %s", ('COMPLETED', today))
+        cursor.execute("UPDATE batch_log SET status = %s, updated_at = CURRENT_TIMESTAMP WHERE run_id = %s", ('COMPLETED', ctx['run_id']))
         connection.commit()
         cursor.close()
         connection.close()

@@ -117,6 +117,21 @@ def resolve_batch_date(event):
     raw = (event or {}).get('batch_date') or (event or {}).get('date')
     return raw[:10] if raw else None
 
+
+def resolve_pipeline_context(event):
+    pipeline_ctx = (event or {}).get('pipeline_context', {}) if isinstance(event, dict) else {}
+    request = pipeline_ctx.get('request', {}) if isinstance(pipeline_ctx, dict) else {}
+    if not isinstance(request, dict):
+        request = {}
+
+    batch_date = resolve_batch_date(request) if request.get('batch_date') else resolve_batch_date(pipeline_ctx)
+    run_id = pipeline_ctx.get('run_id') or (event or {}).get('run_id') or f"legacy-{batch_date}"
+    trigger_type = request.get('trigger_type')
+    if trigger_type not in ('manual', 'scheduled'):
+        trigger_type = 'manual' if request.get('ticker') or request.get('tickers') else 'scheduled'
+
+    return {'batch_date': batch_date, 'run_id': run_id, 'trigger_type': trigger_type}
+
 def get_secret(secret_name):
     resp = secrets_client.get_secret_value(SecretId=secret_name)
     return json.loads(resp.get('SecretString', resp.get('SecretBinary')))
@@ -266,12 +281,12 @@ def upsert_signal_explanation(connection, batch_date, ticker, states):
     connection.commit()
     cursor.close()
 
-def upsert_pipeline_kpi(connection, batch_date, stage, metrics):
+def upsert_pipeline_kpi(connection, batch_date, run_id, trigger_type, stage, metrics):
     cursor = connection.cursor()
     cursor.execute("""
-        INSERT INTO pipeline_kpis (batch_date, stage, metrics) VALUES (%s, %s, %s::jsonb)
-        ON CONFLICT (batch_date, stage) DO UPDATE SET metrics = EXCLUDED.metrics, updated_at = CURRENT_TIMESTAMP
-    """, (batch_date, stage, json.dumps(metrics)))
+        INSERT INTO pipeline_kpis (batch_date, run_id, trigger_type, stage, metrics) VALUES (%s, %s, %s, %s, %s::jsonb)
+        ON CONFLICT (run_id, stage) DO UPDATE SET metrics = EXCLUDED.metrics, updated_at = CURRENT_TIMESTAMP
+    """, (batch_date, run_id, trigger_type, stage, json.dumps(metrics)))
     connection.commit()
     cursor.close()
 
@@ -283,7 +298,8 @@ def handler(event, context):
         aurora_creds = get_secret('aurora/credentials')
         connection   = connect_to_aurora(aurora_creds)
         cursor = connection.cursor()
-        latest_date = resolve_batch_date(event)
+        ctx = resolve_pipeline_context(event)
+        latest_date = ctx['batch_date']
         if not latest_date:
             cursor.execute("SELECT MAX(batch_date) FROM batch_log")
             latest_date = cursor.fetchone()[0]
@@ -296,6 +312,7 @@ def handler(event, context):
         tickers_trace, signals_processed, skipped = {}, 0, []
 
         for ticker in tickers:
+            cursor = None
             try:
                 all_sentiments, indicators_result = get_ticker_data(connection, latest_date, ticker)
                 if not all_sentiments or not indicators_result:
@@ -321,7 +338,6 @@ def handler(event, context):
                     ON CONFLICT (batch_date, ticker) DO UPDATE SET signal=EXCLUDED.signal, prob_up=EXCLUDED.prob_up, prob_down=EXCLUDED.prob_down
                 """, (latest_date, ticker, signal, prob_up, prob_down))
                 connection.commit()
-                cursor.close()
 
                 tickers_trace[ticker] = {
                     "raw_values": {"close_price": round(float(close_price), 4) if close_price else None, "rsi_14": round(float(rsi_14), 4) if rsi_14 else None, "sma_20": round(float(sma_20), 4) if sma_20 else None, "sma_50": round(float(sma_50), 4) if sma_50 else None, "sma_spread": sma_spread, "bb_upper": round(float(bb_upper), 4) if bb_upper else None, "bb_lower": round(float(bb_lower), 4) if bb_lower else None, "bb_width_ratio": bb_width_ratio},
@@ -332,12 +348,18 @@ def handler(event, context):
                 }
                 signals_processed += 1
             except Exception as e:
+                # Si una operación SQL falla, hay que limpiar la transacción para
+                # que el siguiente ticker no herede el estado "aborted".
+                connection.rollback()
                 logger.error(f"Error processing {ticker}: {e}"); skipped.append({"ticker": ticker, "reason": str(e)})
+            finally:
+                if cursor is not None:
+                    cursor.close()
 
         end_time = datetime.now(timezone.utc)
-        execution_meta = {"started_at": start_time.isoformat(), "finished_at": end_time.isoformat(), "duration_seconds": round((end_time - start_time).total_seconds(), 2), "tickers_attempted": len(tickers), "signals_generated": signals_processed, "tickers_skipped": len(skipped), "skipped_detail": skipped}
+        execution_meta = {"started_at": start_time.isoformat(), "finished_at": end_time.isoformat(), "duration_seconds": round((end_time - start_time).total_seconds(), 2), "run_id": ctx['run_id'], "trigger_type": ctx['trigger_type'], "tickers_attempted": len(tickers), "signals_generated": signals_processed, "tickers_skipped": len(skipped), "skipped_detail": skipped}
         trace_key = save_bayesian_trace(latest_date, tickers_trace, execution_meta)
-        upsert_pipeline_kpi(connection, latest_date, 'bayesian', {'tickers_with_sentiment': len(tickers), 'signals_generated': signals_processed, 'tickers_skipped': len(skipped), 'trace_s3_key': trace_key, 'model_version': MODEL_CONFIG["version"]})
+        upsert_pipeline_kpi(connection, latest_date, ctx['run_id'], ctx['trigger_type'], 'bayesian', {'tickers_with_sentiment': len(tickers), 'signals_generated': signals_processed, 'tickers_skipped': len(skipped), 'trace_s3_key': trace_key, 'model_version': MODEL_CONFIG["version"], 'trigger_type': ctx['trigger_type']})
         connection.close()
         return {'statusCode': 200, 'body': json.dumps({'message': 'Bayesian inference completed', 'signals': signals_processed, 'trace_key': trace_key})}
     except Exception as e:

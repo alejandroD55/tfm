@@ -4,11 +4,16 @@
 -- Tabla de registro de lotes (batches)
 CREATE TABLE IF NOT EXISTS batch_log (
     id SERIAL PRIMARY KEY,
-    batch_date DATE NOT NULL UNIQUE,
+    batch_date DATE NOT NULL,
+    run_id TEXT,
+    trigger_type VARCHAR(20) NOT NULL DEFAULT 'scheduled',
+    execution_name TEXT,
+    requested_tickers JSONB NOT NULL DEFAULT '[]'::jsonb,
     status VARCHAR(50) NOT NULL,
     tickers_processed INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT batch_log_trigger_type_check CHECK (trigger_type IN ('manual', 'scheduled')),
     CONSTRAINT status_check CHECK (status IN ('STARTED', 'COMPLETED', 'FAILED'))
 );
 
@@ -93,14 +98,28 @@ CREATE INDEX IF NOT EXISTS idx_signal_explanations_date_ticker ON signal_explana
 CREATE TABLE IF NOT EXISTS pipeline_kpis (
     id SERIAL PRIMARY KEY,
     batch_date DATE NOT NULL,
+    run_id TEXT,
+    trigger_type VARCHAR(20) NOT NULL DEFAULT 'scheduled',
     stage VARCHAR(50) NOT NULL,
     metrics JSONB NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(batch_date, stage)
+    CONSTRAINT pipeline_kpis_trigger_type_check CHECK (trigger_type IN ('manual', 'scheduled')),
+    UNIQUE(run_id, stage)
 );
 
 CREATE INDEX IF NOT EXISTS idx_pipeline_kpis_date_stage ON pipeline_kpis(batch_date, stage);
+CREATE INDEX IF NOT EXISTS idx_batch_log_date_trigger ON batch_log(batch_date, trigger_type);
+CREATE INDEX IF NOT EXISTS idx_batch_log_run_id ON batch_log(run_id);
+CREATE INDEX IF NOT EXISTS idx_pipeline_kpis_run_id ON pipeline_kpis(run_id);
+
+-- Reparación preventiva de secuencias SERIAL (evita colisiones de PK tras cargas manuales/restores)
+SELECT setval(pg_get_serial_sequence('batch_log', 'id'), COALESCE((SELECT MAX(id) FROM batch_log), 1), true);
+SELECT setval(pg_get_serial_sequence('sentiment_scores', 'id'), COALESCE((SELECT MAX(id) FROM sentiment_scores), 1), true);
+SELECT setval(pg_get_serial_sequence('technical_indicators', 'id'), COALESCE((SELECT MAX(id) FROM technical_indicators), 1), true);
+SELECT setval(pg_get_serial_sequence('trading_signals', 'id'), COALESCE((SELECT MAX(id) FROM trading_signals), 1), true);
+SELECT setval(pg_get_serial_sequence('signal_explanations', 'id'), COALESCE((SELECT MAX(id) FROM signal_explanations), 1), true);
+SELECT setval(pg_get_serial_sequence('pipeline_kpis', 'id'), COALESCE((SELECT MAX(id) FROM pipeline_kpis), 1), true);
 
 -- Vista para reportes: Últimas señales por ticker
 CREATE OR REPLACE VIEW latest_signals AS
@@ -172,6 +191,55 @@ CREATE TRIGGER pipeline_kpis_update_timestamp
 BEFORE UPDATE ON pipeline_kpis
 FOR EACH ROW
 EXECUTE FUNCTION update_batch_log_timestamp();
+
+-- Compatibilidad incremental para esquemas ya existentes
+ALTER TABLE batch_log ADD COLUMN IF NOT EXISTS run_id TEXT;
+ALTER TABLE batch_log ADD COLUMN IF NOT EXISTS trigger_type VARCHAR(20) NOT NULL DEFAULT 'scheduled';
+ALTER TABLE batch_log ADD COLUMN IF NOT EXISTS execution_name TEXT;
+ALTER TABLE batch_log ADD COLUMN IF NOT EXISTS requested_tickers JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE batch_log DROP CONSTRAINT IF EXISTS batch_log_batch_date_key;
+ALTER TABLE batch_log DROP CONSTRAINT IF EXISTS batch_log_trigger_type_check;
+ALTER TABLE batch_log
+  ADD CONSTRAINT batch_log_trigger_type_check CHECK (trigger_type IN ('manual', 'scheduled'));
+
+UPDATE batch_log
+SET run_id = COALESCE(run_id, 'legacy-' || id::text);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'batch_log_run_id_key'
+    ) THEN
+        ALTER TABLE batch_log ADD CONSTRAINT batch_log_run_id_key UNIQUE (run_id);
+    END IF;
+END $$;
+
+ALTER TABLE pipeline_kpis ADD COLUMN IF NOT EXISTS run_id TEXT;
+ALTER TABLE pipeline_kpis ADD COLUMN IF NOT EXISTS trigger_type VARCHAR(20) NOT NULL DEFAULT 'scheduled';
+ALTER TABLE pipeline_kpis DROP CONSTRAINT IF EXISTS pipeline_kpis_batch_date_stage_key;
+ALTER TABLE pipeline_kpis DROP CONSTRAINT IF EXISTS pipeline_kpis_trigger_type_check;
+ALTER TABLE pipeline_kpis
+  ADD CONSTRAINT pipeline_kpis_trigger_type_check CHECK (trigger_type IN ('manual', 'scheduled'));
+
+UPDATE pipeline_kpis
+SET run_id = COALESCE(run_id, 'legacy-' || id::text);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'pipeline_kpis_run_id_stage_key'
+    ) THEN
+        ALTER TABLE pipeline_kpis ADD CONSTRAINT pipeline_kpis_run_id_stage_key UNIQUE (run_id, stage);
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_batch_log_date_trigger ON batch_log(batch_date, trigger_type);
+CREATE INDEX IF NOT EXISTS idx_batch_log_run_id ON batch_log(run_id);
+CREATE INDEX IF NOT EXISTS idx_pipeline_kpis_run_id ON pipeline_kpis(run_id);
 
 -- Permisos (ajustar según usuario)
 -- GRANT SELECT, INSERT, UPDATE ON batch_log TO lambda_user;

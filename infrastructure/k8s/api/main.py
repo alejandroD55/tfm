@@ -524,6 +524,7 @@ def run_pipeline(body: PipelineRunRequest, x_api_key: str = Header(default="")):
         )
 
     payload: dict = {}
+    payload["trigger_type"] = "manual"
     if body.batch_date:
         payload["batch_date"] = body.batch_date
     if body.ticker:

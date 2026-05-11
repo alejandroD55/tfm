@@ -24,6 +24,19 @@ def resolve_batch_date(event):
         return raw_date[:10]
     return datetime.now().strftime('%Y-%m-%d')
 
+
+def resolve_pipeline_context(event):
+    pipeline_ctx = (event or {}).get('pipeline_context', {}) if isinstance(event, dict) else {}
+    request = pipeline_ctx.get('request', {}) if isinstance(pipeline_ctx, dict) else {}
+    if not isinstance(request, dict):
+        request = {}
+    batch_date = resolve_batch_date(request) if request.get('batch_date') else resolve_batch_date(pipeline_ctx)
+    run_id = pipeline_ctx.get('run_id') or (event or {}).get('run_id') or f"legacy-{batch_date}"
+    trigger_type = request.get('trigger_type')
+    if trigger_type not in ('manual', 'scheduled'):
+        trigger_type = 'manual' if request.get('ticker') or request.get('tickers') else 'scheduled'
+    return {'batch_date': batch_date, 'run_id': run_id, 'trigger_type': trigger_type}
+
 def get_secret(secret_name):
     try:
         response = secrets_client.get_secret_value(SecretId=secret_name)
@@ -137,17 +150,17 @@ def insert_sentiment_scores(connection, batch_date, ticker, headline, sentiment_
         logger.error(f"Error inserting sentiment score: {str(e)}")
         raise
 
-def upsert_pipeline_kpi(connection, batch_date, stage, metrics):
+def upsert_pipeline_kpi(connection, batch_date, run_id, trigger_type, stage, metrics):
     try:
         cursor = connection.cursor()
         query = """
-            INSERT INTO pipeline_kpis (batch_date, stage, metrics)
-            VALUES (%s, %s, %s::jsonb)
-            ON CONFLICT (batch_date, stage) DO UPDATE
+            INSERT INTO pipeline_kpis (batch_date, run_id, trigger_type, stage, metrics)
+            VALUES (%s, %s, %s, %s, %s::jsonb)
+            ON CONFLICT (run_id, stage) DO UPDATE
             SET metrics = EXCLUDED.metrics,
                 updated_at = CURRENT_TIMESTAMP
         """
-        cursor.execute(query, (batch_date, stage, json.dumps(metrics)))
+        cursor.execute(query, (batch_date, run_id, trigger_type, stage, json.dumps(metrics)))
         connection.commit()
         cursor.close()
     except Exception as e:
@@ -165,7 +178,8 @@ def handler(event, context):
         # INICIALIZAMOS EL CLIENTE
         hf_client = InferenceClient(token=hf_creds['api_key'])
         
-        today = resolve_batch_date(event)
+        ctx = resolve_pipeline_context(event)
+        today = ctx['batch_date']
         news_data = read_news_from_s3(today)
 
         connection = connect_to_aurora(aurora_creds)
@@ -197,11 +211,12 @@ def handler(event, context):
                     skipped_headlines += 1
                     continue
 
-        upsert_pipeline_kpi(connection, today, 'sentiment', {
+        upsert_pipeline_kpi(connection, today, ctx['run_id'], ctx['trigger_type'], 'sentiment', {
             'tickers_in_news': len(news_data),
             'headlines_total': total_headlines,
             'headlines_processed': processed_headlines,
-            'headlines_skipped': skipped_headlines
+            'headlines_skipped': skipped_headlines,
+            'trigger_type': ctx['trigger_type'],
         })
 
         connection.close()

@@ -5,7 +5,10 @@
     "initialize_batch_context": {
       "Type": "Pass",
       "Parameters": {
-        "batch_date.$": "$$.Execution.StartTime"
+        "batch_date.$": "$$.Execution.StartTime",
+        "run_id.$": "$$.Execution.Id",
+        "execution_name.$": "$$.Execution.Name",
+        "request.$": "$"
       },
       "ResultPath": "$.pipeline_context",
       "Next": "lambda_ingestion"
@@ -16,7 +19,7 @@
       "Parameters": {
         "FunctionName": "lambda_ingestion",
         "Payload": {
-          "batch_date.$": "$.pipeline_context.batch_date"
+          "pipeline_context.$": "$.pipeline_context"
         }
       },
       "TimeoutSeconds": 300,
@@ -46,7 +49,7 @@
               "Parameters": {
                 "FunctionName": "lambda_sentiment",
                 "Payload": {
-                  "batch_date.$": "$.pipeline_context.batch_date"
+                  "pipeline_context.$": "$.pipeline_context"
                 }
               },
               "TimeoutSeconds": 300,
@@ -73,7 +76,7 @@
               "Parameters": {
                 "FunctionName": "lambda_indicators",
                 "Payload": {
-                  "batch_date.$": "$.pipeline_context.batch_date"
+                  "pipeline_context.$": "$.pipeline_context"
                 }
               },
               "TimeoutSeconds": 300,
@@ -100,7 +103,7 @@
       "Parameters": {
         "FunctionName": "lambda_bayesian",
         "Payload": {
-          "batch_date.$": "$.pipeline_context.batch_date"
+          "pipeline_context.$": "$.pipeline_context"
         }
       },
       "TimeoutSeconds": 300,
@@ -132,7 +135,7 @@
       "Parameters": {
         "FunctionName": "lambda_report",
         "Payload": {
-          "batch_date.$": "$.pipeline_context.batch_date"
+          "pipeline_context.$": "$.pipeline_context"
         }
       },
       "TimeoutSeconds": 300,

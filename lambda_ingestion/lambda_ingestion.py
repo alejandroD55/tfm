@@ -60,6 +60,36 @@ def resolve_batch_date(event):
     return datetime.now().strftime('%Y-%m-%d')
 
 
+def resolve_pipeline_context(event):
+    """Normalize execution metadata for manual/scheduled runs."""
+    pipeline_ctx = (event or {}).get('pipeline_context', {}) if isinstance(event, dict) else {}
+    request = pipeline_ctx.get('request', {}) if isinstance(pipeline_ctx, dict) else {}
+    if not isinstance(request, dict):
+        request = {}
+
+    batch_date = resolve_batch_date(request) if request.get('batch_date') else resolve_batch_date(pipeline_ctx)
+    run_id = pipeline_ctx.get('run_id') or (event or {}).get('run_id') or f"legacy-{batch_date}"
+    execution_name = pipeline_ctx.get('execution_name')
+
+    requested_tickers = []
+    if request.get('ticker'):
+        requested_tickers = [str(request['ticker']).upper()]
+    elif request.get('tickers'):
+        requested_tickers = [str(t).upper() for t in request['tickers'] if t]
+
+    trigger_type = request.get('trigger_type')
+    if trigger_type not in ('manual', 'scheduled'):
+        trigger_type = 'manual' if requested_tickers else 'scheduled'
+
+    return {
+        'batch_date': batch_date,
+        'run_id': run_id,
+        'execution_name': execution_name,
+        'trigger_type': trigger_type,
+        'requested_tickers': requested_tickers,
+    }
+
+
 def get_secret(secret_name):
     """Retrieve secret from AWS Secrets Manager"""
     try:
@@ -169,39 +199,51 @@ def save_to_s3(data, bucket, key, is_json=True):
         raise
 
 
-def insert_batch_log(connection, batch_date, status, tickers_processed):
+def insert_batch_log(connection, batch_date, run_id, trigger_type, execution_name, requested_tickers, status, tickers_processed):
     """Insert batch log entry to Aurora PostgreSQL"""
     try:
         cursor = connection.cursor()
         query = """
-            INSERT INTO batch_log (batch_date, status, tickers_processed)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (batch_date) DO UPDATE 
+            INSERT INTO batch_log (batch_date, run_id, trigger_type, execution_name, requested_tickers, status, tickers_processed)
+            VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s)
+            ON CONFLICT (run_id) DO UPDATE
             SET updated_at = CURRENT_TIMESTAMP, 
+                batch_date = EXCLUDED.batch_date,
                 status = EXCLUDED.status, 
                 tickers_processed = EXCLUDED.tickers_processed
         """
-        cursor.execute(query, (batch_date, status, tickers_processed))
+        cursor.execute(
+            query,
+            (
+                batch_date,
+                run_id,
+                trigger_type,
+                execution_name,
+                json.dumps(requested_tickers),
+                status,
+                tickers_processed,
+            ),
+        )
         connection.commit()
         cursor.close()
-        logger.info(f"Batch log inserted: {batch_date}, {status}, {tickers_processed} tickers")
+        logger.info(f"Batch log upserted: run_id={run_id}, date={batch_date}, status={status}, tickers={tickers_processed}")
     except Exception as e:
         logger.error(f"Error inserting batch log: {str(e)}")
         raise
 
 
-def upsert_pipeline_kpi(connection, batch_date, stage, metrics):
+def upsert_pipeline_kpi(connection, batch_date, run_id, trigger_type, stage, metrics):
     """Persist stage KPIs for observability."""
     try:
         cursor = connection.cursor()
         query = """
-            INSERT INTO pipeline_kpis (batch_date, stage, metrics)
-            VALUES (%s, %s, %s::jsonb)
-            ON CONFLICT (batch_date, stage) DO UPDATE
+            INSERT INTO pipeline_kpis (batch_date, run_id, trigger_type, stage, metrics)
+            VALUES (%s, %s, %s, %s, %s::jsonb)
+            ON CONFLICT (run_id, stage) DO UPDATE
             SET metrics = EXCLUDED.metrics,
                 updated_at = CURRENT_TIMESTAMP
         """
-        cursor.execute(query, (batch_date, stage, json.dumps(metrics)))
+        cursor.execute(query, (batch_date, run_id, trigger_type, stage, json.dumps(metrics)))
         connection.commit()
         cursor.close()
     except Exception as e:
@@ -231,17 +273,15 @@ def handler(event, context):
 
         # Read ETF configuration (universe completo)
         all_tickers = read_etf_config()
-        batch_date  = resolve_batch_date(event)
+        ctx = resolve_pipeline_context(event)
+        batch_date = ctx['batch_date']
 
         # ── Filtrar por ticker si se especifica en el evento ──────────────────
-        event_ticker  = (event or {}).get('ticker')
-        event_tickers = (event or {}).get('tickers')
-
-        if event_ticker:
-            tickers = [event_ticker.upper()]
+        if len(ctx['requested_tickers']) == 1:
+            tickers = ctx['requested_tickers']
             logger.info(f"Single-ticker mode: {tickers[0]}")
-        elif event_tickers:
-            tickers = [t.upper() for t in event_tickers]
+        elif len(ctx['requested_tickers']) > 1:
+            tickers = ctx['requested_tickers']
             logger.info(f"Multi-ticker mode: {tickers}")
         else:
             tickers = all_tickers
@@ -277,13 +317,23 @@ def handler(event, context):
         # Connect to Aurora and insert batch log
         connection = connect_to_aurora(aurora_creds)
 
-        insert_batch_log(connection, today, 'STARTED', len(tickers))
-        upsert_pipeline_kpi(connection, today, 'ingestion', {
+        insert_batch_log(
+            connection,
+            today,
+            ctx['run_id'],
+            ctx['trigger_type'],
+            ctx['execution_name'],
+            tickers,
+            'STARTED',
+            len(tickers),
+        )
+        upsert_pipeline_kpi(connection, today, ctx['run_id'], ctx['trigger_type'], 'ingestion', {
             'tickers_expected': len(tickers),
             'tickers_with_ohlcv': len(ohlcv_data),
             'tickers_with_news': sum(1 for _, items in news_data.items() if items),
             'headlines_total': sum(len(items) for _, items in news_data.items()),
-            'ohlcv_rows_total': int(len(combined_ohlcv))
+            'ohlcv_rows_total': int(len(combined_ohlcv)),
+            'trigger_type': ctx['trigger_type'],
         })
 
         connection.close()
