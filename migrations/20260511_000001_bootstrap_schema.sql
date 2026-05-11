@@ -109,9 +109,6 @@ CREATE TABLE IF NOT EXISTS pipeline_kpis (
 );
 
 CREATE INDEX IF NOT EXISTS idx_pipeline_kpis_date_stage ON pipeline_kpis(batch_date, stage);
-CREATE INDEX IF NOT EXISTS idx_batch_log_date_trigger ON batch_log(batch_date, trigger_type);
-CREATE INDEX IF NOT EXISTS idx_batch_log_run_id ON batch_log(run_id);
-CREATE INDEX IF NOT EXISTS idx_pipeline_kpis_run_id ON pipeline_kpis(run_id);
 
 -- Vista para reportes: Últimas señales por ticker
 CREATE OR REPLACE VIEW latest_signals AS
