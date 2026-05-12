@@ -1,5 +1,5 @@
 # ─── Lambda Report ────────────────────────────────────────────────────────────
-# Backtesting 90 días + generación de report.json → S3
+# Backtesting 90 dias → escribe en MongoDB reports collection
 FROM public.ecr.aws/lambda/python:3.11
 
 LABEL maintainer="tfm-trading" \
@@ -10,5 +10,6 @@ COPY lambda_report/requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
 RUN pip install --no-cache-dir --only-binary=:all: -r ${LAMBDA_TASK_ROOT}/requirements.txt
 
 COPY lambda_report/lambda_report.py ${LAMBDA_TASK_ROOT}/
+COPY shared/mongo_utils.py ${LAMBDA_TASK_ROOT}/
 
 CMD ["lambda_report.handler"]

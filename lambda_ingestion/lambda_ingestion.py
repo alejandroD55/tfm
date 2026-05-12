@@ -18,6 +18,15 @@ s3_client = boto3.client('s3')
 secrets_client = boto3.client('secretsmanager')
 rds_client = boto3.client('rds')
 
+# ── MongoDB helper ────────────────────────────────────────────────────────────
+try:
+    from mongo_utils import upsert_raw_news as _mongo_upsert_raw_news
+    from mongo_utils import upsert_ohlcv_bulk as _mongo_upsert_ohlcv
+    logger.info("mongo_utils (ingestion) cargado")
+except ImportError:
+    _mongo_upsert_raw_news = None
+    _mongo_upsert_ohlcv   = None
+
 
 def connect_to_aurora(aurora_creds):
     auth_mode = str(aurora_creds.get('auth_mode', '')).lower()
@@ -301,18 +310,42 @@ def handler(event, context):
             raise ValueError("No OHLCV data downloaded for any ticker")
         combined_ohlcv = pd.concat([df for df in ohlcv_data.values()])
 
-        # Save to S3
         today = batch_date
 
-        # Save OHLCV as CSV
+        # ── MongoDB PRIMARY: guardar OHLCV y news en MongoDB ─────────────────
+        # MongoDB es ahora la fuente principal de datos raw.
+        # S3 queda como backup (se puede eliminar cuando MongoDB este validado).
+        if _mongo_upsert_ohlcv:
+            for ticker_sym, ticker_df in ohlcv_data.items():
+                rows = []
+                for idx, row in ticker_df.iterrows():
+                    rows.append({
+                        "date":   str(idx.date()) if hasattr(idx, 'date') else str(idx),
+                        "open":   float(row.get("Open", 0) or 0),
+                        "high":   float(row.get("High", 0) or 0),
+                        "low":    float(row.get("Low",  0) or 0),
+                        "close":  float(row.get("Close",0) or 0),
+                        "volume": float(row.get("Volume",0) or 0),
+                    })
+                _mongo_upsert_ohlcv(today, ticker_sym, rows)
+            logger.info(f"MongoDB: OHLCV guardado para {len(ohlcv_data)} tickers")
+
+        if _mongo_upsert_raw_news:
+            for ticker_sym, articles in news_data.items():
+                if articles:
+                    _mongo_upsert_raw_news(today, ticker_sym, articles)
+            logger.info(f"MongoDB: noticias guardadas para {sum(1 for a in news_data.values() if a)} tickers")
+
+        # ── S3 BACKUP: mantener escritura S3 durante la transicion ───────────
+        # Una vez validado MongoDB, puedes comentar o eliminar este bloque.
         csv_buffer = StringIO()
         combined_ohlcv.to_csv(csv_buffer)
         ohlcv_key = f"raw/{today}/ohlcv.csv"
         save_to_s3(csv_buffer.getvalue(), 'tfm-unir-datalake', ohlcv_key, is_json=False)
 
-        # Save news as JSON
         news_key = f"raw/{today}/news.json"
         save_to_s3(news_data, 'tfm-unir-datalake', news_key, is_json=True)
+        # ─────────────────────────────────────────────────────────────────────
 
         # Connect to Aurora and insert batch log
         connection = connect_to_aurora(aurora_creds)

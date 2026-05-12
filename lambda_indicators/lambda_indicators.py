@@ -15,6 +15,14 @@ s3_client = boto3.client('s3')
 secrets_client = boto3.client('secretsmanager')
 rds_client = boto3.client('rds')
 
+# ── MongoDB helper ────────────────────────────────────────────────────────────
+try:
+    from mongo_utils import read_ohlcv as _mongo_read_ohlcv
+    logger.info("mongo_utils (indicators) cargado")
+except ImportError:
+    logger.warning("mongo_utils no disponible")
+    _mongo_read_ohlcv = None
+
 def resolve_batch_date(event):
     raw_date = (event or {}).get('batch_date') or (event or {}).get('date')
     if raw_date:
@@ -78,11 +86,40 @@ def connect_to_aurora(aurora_creds):
     )
 
 def read_ohlcv_from_s3(batch_date):
+    # ── 1. MongoDB PRIMARY ──────────────────────────────────────────────────
+    if _mongo_read_ohlcv:
+        try:
+            mongo_data = _mongo_read_ohlcv(batch_date)
+            if mongo_data:
+                logger.info(f"OHLCV cargado desde MongoDB ({len(mongo_data)} tickers)")
+                # Reconstruir DataFrame desde los documentos MongoDB
+                all_rows = []
+                for ticker_sym, rows in mongo_data.items():
+                    for r in rows:
+                        all_rows.append({
+                            "Date":   r.get("date", ""),
+                            "Ticker": ticker_sym,
+                            "Open":   float(r.get("open",   0) or 0),
+                            "High":   float(r.get("high",   0) or 0),
+                            "Low":    float(r.get("low",    0) or 0),
+                            "Close":  float(r.get("close",  0) or 0),
+                            "Volume": float(r.get("volume", 0) or 0),
+                        })
+                if all_rows:
+                    df = pd.DataFrame(all_rows)
+                    df.set_index("Date", inplace=True)
+                    return df
+            logger.info("MongoDB no tiene OHLCV para esta fecha, cayendo a S3")
+        except Exception as exc:
+            logger.warning(f"MongoDB read_ohlcv falló, usando S3: {exc}")
+
+    # ── 2. S3 FALLBACK ───────────────────────────────────────────────────────
     try:
         response = s3_client.get_object(
             Bucket='tfm-unir-datalake',
             Key=f'raw/{batch_date}/ohlcv.csv'
         )
+        logger.info(f"OHLCV cargado desde S3 (fallback) para {batch_date}")
         csv_content = response['Body'].read().decode('utf-8')
         df = pd.read_csv(StringIO(csv_content))
         for col in ['Open', 'High', 'Low', 'Close', 'Volume']:

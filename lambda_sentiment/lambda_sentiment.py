@@ -18,6 +18,18 @@ rds_client = boto3.client('rds')
 # Definimos el ID del modelo a nivel global
 MODEL_ID = "ProsusAI/finbert"
 
+# ── MongoDB helper ────────────────────────────────────────────────────────────
+try:
+    from mongo_utils import (
+        upsert_news   as _mongo_upsert_news,
+        read_raw_news as _mongo_read_news,
+    )
+    logger.info("mongo_utils (sentiment) cargado")
+except ImportError:
+    logger.warning("mongo_utils no disponible")
+    _mongo_upsert_news = None
+    _mongo_read_news   = None
+
 def resolve_batch_date(event):
     raw_date = (event or {}).get('batch_date') or (event or {}).get('date')
     if raw_date:
@@ -81,11 +93,24 @@ def connect_to_aurora(aurora_creds):
     )
 
 def read_news_from_s3(batch_date):
+    # ── 1. MongoDB PRIMARY ──────────────────────────────────────────────────
+    if _mongo_read_news:
+        try:
+            news = _mongo_read_news(batch_date)
+            if news:
+                logger.info(f"Noticias cargadas desde MongoDB para {batch_date} ({len(news)} tickers)")
+                return news
+            logger.info("MongoDB no tiene noticias para esta fecha, cayendo a S3")
+        except Exception as exc:
+            logger.warning(f"MongoDB read_raw_news falló, usando S3: {exc}")
+
+    # ── 2. S3 FALLBACK ───────────────────────────────────────────────────────
     try:
         response = s3_client.get_object(
             Bucket='tfm-unir-datalake',
             Key=f'raw/{batch_date}/news.json'
         )
+        logger.info(f"Noticias cargadas desde S3 (fallback) para {batch_date}")
         return json.loads(response['Body'].read())
     except Exception as e:
         logger.error(f"Error reading news from S3: {str(e)}")
@@ -206,6 +231,10 @@ def handler(event, context):
 
                     insert_sentiment_scores(connection, today, ticker, headline, sentiment_data)
                     processed_headlines += 1
+
+                    # MongoDB: guardar articulo con scoring FinBERT
+                    if _mongo_upsert_news:
+                        _mongo_upsert_news(today, ticker, article, sentiment_data)
                 except Exception as e:
                     logger.error(f"Error processing headline for {ticker}: {str(e)}")
                     skipped_headlines += 1
