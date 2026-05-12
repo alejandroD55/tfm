@@ -5,14 +5,12 @@ import pandas as pd
 import psycopg2
 import os
 from datetime import datetime
-from io import StringIO
 import logging
 import pandas_ta_classic as ta
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-s3_client = boto3.client('s3')
 secrets_client = boto3.client('secretsmanager')
 rds_client = boto3.client('rds')
 
@@ -86,50 +84,39 @@ def connect_to_aurora(aurora_creds):
         database=dbname,
     )
 
-def read_ohlcv_from_s3(batch_date):
-    # ── 1. MongoDB PRIMARY ──────────────────────────────────────────────────
-    if _mongo_read_ohlcv:
-        try:
-            mongo_data = _mongo_read_ohlcv(batch_date)
-            if mongo_data:
-                logger.info(f"OHLCV cargado desde MongoDB ({len(mongo_data)} tickers)")
-                # Reconstruir DataFrame desde los documentos MongoDB
-                all_rows = []
-                for ticker_sym, rows in mongo_data.items():
-                    for r in rows:
-                        all_rows.append({
-                            "Date":   r.get("date", ""),
-                            "Ticker": ticker_sym,
-                            "Open":   float(r.get("open",   0) or 0),
-                            "High":   float(r.get("high",   0) or 0),
-                            "Low":    float(r.get("low",    0) or 0),
-                            "Close":  float(r.get("close",  0) or 0),
-                            "Volume": float(r.get("volume", 0) or 0),
-                        })
-                if all_rows:
-                    df = pd.DataFrame(all_rows)
-                    df.set_index("Date", inplace=True)
-                    return df
-            logger.info("MongoDB no tiene OHLCV para esta fecha, cayendo a S3")
-        except Exception as exc:
-            logger.warning(f"MongoDB read_ohlcv falló, usando S3: {exc}")
-
-    # ── 2. S3 FALLBACK ───────────────────────────────────────────────────────
-    try:
-        response = s3_client.get_object(
-            Bucket='tfm-unir-datalake',
-            Key=f'raw/{batch_date}/ohlcv.csv'
+def read_ohlcv_for_batch(batch_date):
+    if not _mongo_read_ohlcv:
+        raise RuntimeError(
+            "mongo_utils no disponible: se requiere read_ohlcv desde MongoDB."
         )
-        logger.info(f"OHLCV cargado desde S3 (fallback) para {batch_date}")
-        csv_content = response['Body'].read().decode('utf-8')
-        df = pd.read_csv(StringIO(csv_content))
-        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-        return df
-    except Exception as e:
-        logger.error(f"Error reading OHLCV from S3: {str(e)}")
+    try:
+        mongo_data = _mongo_read_ohlcv(batch_date)
+    except Exception as exc:
+        logger.error(f"MongoDB read_ohlcv falló: {exc}")
         raise
+    if not mongo_data:
+        raise ValueError(
+            f"No hay OHLCV en MongoDB para batch_date={batch_date}. "
+            "Ejecuta antes la lambda de ingestion."
+        )
+    logger.info(f"OHLCV cargado desde MongoDB ({len(mongo_data)} tickers)")
+    all_rows = []
+    for ticker_sym, rows in mongo_data.items():
+        for r in rows:
+            all_rows.append({
+                "Date":   r.get("date", ""),
+                "Ticker": ticker_sym,
+                "Open":   float(r.get("open",   0) or 0),
+                "High":   float(r.get("high",   0) or 0),
+                "Low":    float(r.get("low",    0) or 0),
+                "Close":  float(r.get("close",  0) or 0),
+                "Volume": float(r.get("volume", 0) or 0),
+            })
+    if not all_rows:
+        raise ValueError(f"MongoDB ohlcv sin filas para {batch_date}")
+    df = pd.DataFrame(all_rows)
+    df.set_index("Date", inplace=True)
+    return df
 
 def calculate_technical_indicators(df):
     try:
@@ -210,7 +197,7 @@ def handler(event, context):
         ctx = resolve_pipeline_context(event)
         today = ctx['batch_date']
         aurora_creds = get_secret('aurora/credentials')
-        ohlcv_df = read_ohlcv_from_s3(today)
+        ohlcv_df = read_ohlcv_for_batch(today)
         indicators_by_ticker = calculate_technical_indicators(ohlcv_df)
 
         connection = connect_to_aurora(aurora_creds)

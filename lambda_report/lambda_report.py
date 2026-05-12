@@ -11,9 +11,16 @@ import logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-s3_client = boto3.client("s3")
 secrets_client = boto3.client("secretsmanager")
 rds_client = boto3.client("rds")
+
+try:
+    from mongo_utils import upsert_report as _mongo_upsert_report
+
+    logger.info("mongo_utils (report) cargado")
+except ImportError:
+    _mongo_upsert_report = None
+    logger.warning("mongo_utils no disponible en lambda_report")
 
 # --- CONFIGURACIÓN GLOBAL ---
 DAYS_BACK = 365
@@ -341,19 +348,6 @@ def upsert_pipeline_kpi(connection, batch_date, run_id, trigger_type, stage, met
     cursor.close()
 
 
-def save_report_to_s3(report_data, report_date):
-    try:
-        key = f"results/{report_date}/report.json"
-        s3_client.put_object(
-            Bucket="tfm-unir-datalake",
-            Key=key,
-            Body=json.dumps(report_data, indent=2, default=str),
-        )
-        return key
-    except Exception:
-        raise
-
-
 def handler(event, context):
     try:
         logger.info("Lambda report generation started (Long/Cash Strategy)")
@@ -436,9 +430,14 @@ def handler(event, context):
                 "sharpe_annualized": True,
                 "limitation": "El backtesting asume ejecucion al cierre. Estrategia de conservacion de capital (Long/Cash).",
             },
-            "trace_artifact": f"results/{today}/bayesian_trace.json",
+            "trace_artifact": f"mongo:bayesian_traces/{today}",
         }
-        report_key = save_report_to_s3(report_data, today)
+        if not _mongo_upsert_report:
+            raise RuntimeError(
+                "mongo_utils no disponible: la imagen debe incluir mongo_utils con upsert_report."
+            )
+        _mongo_upsert_report(report_data)
+        report_key = f"mongo:reports/{today}"
         upsert_pipeline_kpi(
             connection,
             today,

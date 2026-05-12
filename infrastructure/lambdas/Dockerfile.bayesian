@@ -20,7 +20,8 @@ RUN pip install --no-cache-dir \
     networkx \
     joblib \
     pyparsing \
-    tqdm
+    tqdm \
+    "pymongo[srv]==4.6.3"
 
 # ── pgmpy SIN sus dependencias pesadas (sklearn, torch…) ─────────────────────
 RUN pip install --no-cache-dir --no-deps pgmpy==0.1.19
@@ -32,5 +33,6 @@ RUN find /var/lang/lib/python3.11/site-packages \
     -exec rm -rf {} + 2>/dev/null || true
 
 COPY lambda_bayesian/lambda_bayesian.py ${LAMBDA_TASK_ROOT}/
+COPY shared/mongo_utils.py ${LAMBDA_TASK_ROOT}/
 
 CMD ["lambda_bayesian.handler"]

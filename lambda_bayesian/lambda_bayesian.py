@@ -34,12 +34,18 @@ from pgmpy.inference import VariableElimination
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-s3_client = boto3.client("s3")
 secrets_client = boto3.client("secretsmanager")
 rds_client = boto3.client("rds")
 
-DATALAKE_BUCKET = "tfm-unir-datalake"
+try:
+    from mongo_utils import upsert_bayesian_trace as _mongo_upsert_bayesian_trace
+    from mongo_utils import upsert_bayesian_report as _mongo_upsert_bayesian_report
 
+    logger.info("mongo_utils (bayesian) cargado")
+except ImportError:
+    _mongo_upsert_bayesian_trace = None
+    _mongo_upsert_bayesian_report = None
+    logger.warning("mongo_utils no disponible en lambda_bayesian")
 
 MODEL_CONFIG = {
     "version": "1.1.0",
@@ -489,14 +495,11 @@ def save_bayesian_trace(batch_date, tickers_trace, execution_meta):
             "known_issues": MODEL_CONFIG["known_limitations"],
         },
     }
-    key = f"results/{batch_date}/bayesian_trace.json"
-    s3_client.put_object(
-        Bucket=DATALAKE_BUCKET,
-        Key=key,
-        Body=json.dumps(trace, indent=2, default=str),
-        ContentType="application/json",
-    )
-    return key
+    if _mongo_upsert_bayesian_trace:
+        _mongo_upsert_bayesian_trace(batch_date, trace)
+        return f"mongo:bayesian_traces/{batch_date}"
+    logger.warning("mongo_utils upsert_bayesian_trace no disponible; traza no guardada")
+    return None
 
 
 def upsert_signal_explanation(connection, batch_date, ticker, states):
@@ -650,6 +653,13 @@ def handler(event, context):
                     },
                     "reasoning": reasoning,
                 }
+                if _mongo_upsert_bayesian_report:
+                    _mongo_upsert_bayesian_report(
+                        latest_date,
+                        ticker,
+                        tickers_trace[ticker],
+                        MODEL_CONFIG["version"],
+                    )
                 signals_processed += 1
             except Exception as e:
                 # Si una operación SQL falla, hay que limpiar la transacción para
@@ -684,7 +694,8 @@ def handler(event, context):
                 "tickers_with_sentiment": len(tickers),
                 "signals_generated": signals_processed,
                 "tickers_skipped": len(skipped),
-                "trace_s3_key": trace_key,
+                "trace_storage": "mongo",
+                "trace_ref": trace_key,
                 "model_version": MODEL_CONFIG["version"],
                 "trigger_type": ctx["trigger_type"],
             },

@@ -3,28 +3,27 @@ TFM Dashboard API - FastAPI
 ===========================
 Endpoints:
   GET /health
-  GET /reports                      - Lista fechas disponibles
-  GET /reports/{date}               - Report completo
-  GET /trace/{date}                 - Traza bayesiana completa
+  GET /reports                      - Lista fechas (MongoDB reports)
+  GET /reports/{date}               - Report completo (MongoDB)
+  GET /trace/{date}                 - Traza bayesiana completa (MongoDB bayesian_traces)
   GET /trace/{date}/{ticker}        - Traza por ticker
   GET /model                        - Config del modelo bayesiano
-  GET /tickers                      - Lista ETFs del universo
-  GET /raw/{date}/news/{ticker}     - Noticias raw de Finnhub por ticker
-  GET /raw/{date}/ohlcv/{ticker}    - Datos OHLCV por ticker
+  GET /tickers                      - Lista ETFs (MongoDB etf_universe)
+  POST /mongo/etf-universe          - Actualiza el universo ETF en MongoDB
+  GET /raw/{date}/news/{ticker}     - Noticias raw (MongoDB raw_news)
+  GET /raw/{date}/ohlcv/{ticker}    - OHLCV (MongoDB ohlcv)
   POST /pipeline/run                - Lanza pipeline para ticker(s)
   GET /pipeline/status              - Estado de una ejecucion Step Functions
   GET /search/instruments           - Busca ETFs y fondos via Finnhub (nuevo)
   GET /instrument/{symbol}/profile  - Perfil detallado de un instrumento (nuevo)
   GET /sentiment/{date}/{ticker}    - Sentimiento detallado
   GET /indicators/{date}/{ticker}   - Indicadores tecnicos
-  GET /files
-  GET /files/presign
-  GET /stats
+  GET /files                        - 410 (reemplazado por Mongo)
+  GET /files/presign                - 410
+  GET /stats                        - 410 (usar GET /mongo/stats)
 """
 
 import os
-import csv
-import io
 import json
 import logging
 import urllib.request
@@ -33,7 +32,6 @@ from datetime import datetime, timezone
 from typing import Optional, List
 
 import boto3
-from botocore.exceptions import ClientError
 from fastapi import FastAPI, HTTPException, Query, Header
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
@@ -41,15 +39,27 @@ from fastapi.middleware.cors import CORSMiddleware
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("tfm-api")
 
-DATALAKE_BUCKET = os.getenv("DATALAKE_BUCKET", "tfm-unir-datalake")
-CONFIG_BUCKET = os.getenv("CONFIG_BUCKET", "tfm-unir-config")
 AWS_REGION = os.getenv("AWS_REGION", "eu-north-1")
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "")
 PRESIGN_TTL = int(os.getenv("PRESIGN_TTL_SEC", "900"))
 STATE_MACHINE_ARN = os.getenv("STATE_MACHINE_ARN", "")
 MONGODB_DB = os.getenv("MONGODB_DB", "tfm")
 
-s3 = boto3.client("s3", region_name=AWS_REGION)
+try:
+    from mongo_utils import (
+        get_etf_tickers,
+        upsert_etf_universe,
+        read_bayesian_trace,
+        read_raw_news_ticker,
+        read_ohlcv_ticker,
+    )
+except ImportError:
+    get_etf_tickers = None  # type: ignore[misc, assignment]
+    upsert_etf_universe = None  # type: ignore[misc, assignment]
+    read_bayesian_trace = None  # type: ignore[misc, assignment]
+    read_raw_news_ticker = None  # type: ignore[misc, assignment]
+    read_ohlcv_ticker = None  # type: ignore[misc, assignment]
+
 sfn = boto3.client("stepfunctions", region_name=AWS_REGION)
 lmb = boto3.client("lambda", region_name=AWS_REGION)
 secrets_api = boto3.client("secretsmanager", region_name=AWS_REGION)
@@ -153,7 +163,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["GET", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -166,18 +176,26 @@ def check_api_key(x_api_key: str = Header(default="")):
         raise HTTPException(status_code=403, detail="API Key invalida o ausente")
 
 
-# ─── Helper: leer JSON de S3 ──────────────────────────────────────────────────
+# ─── Helpers: lecturas desde Mongo (mongo_utils en la imagen API) ────────────
 
 
-def _read_s3_json(key: str) -> dict:
-    try:
-        resp = s3.get_object(Bucket=DATALAKE_BUCKET, Key=key)
-        return json.loads(resp["Body"].read().decode("utf-8"))
-    except ClientError as e:
-        code = e.response["Error"]["Code"]
-        if code in ("NoSuchKey", "404"):
-            raise HTTPException(status_code=404, detail=f"Archivo no encontrado: {key}")
-        raise HTTPException(status_code=500, detail=str(e))
+def _require_mongo_pipeline_helpers():
+    if read_bayesian_trace is None or read_raw_news_ticker is None or read_ohlcv_ticker is None:
+        raise HTTPException(
+            status_code=503,
+            detail="mongo_utils no disponible en la imagen de la API",
+        )
+
+
+def _bayesian_trace_for_date(date: str) -> dict:
+    _require_mongo_pipeline_helpers()
+    trace = read_bayesian_trace(date)  # type: ignore[misc]
+    if not trace:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No hay traza en MongoDB (coleccion bayesian_traces) para {date}",
+        )
+    return trace
 
 
 # ─── Sistema ──────────────────────────────────────────────────────────────────
@@ -197,43 +215,34 @@ def health():
 
 @app.get("/reports", tags=["Reports"])
 def list_reports(x_api_key: str = Header(default="")):
-    """Lista todas las fechas con report.json disponible."""
+    """Lista fechas con reporte diario en MongoDB (coleccion reports)."""
     check_api_key(x_api_key)
     try:
-        paginator = s3.get_paginator("list_objects_v2")
+        db = _require_mongo()
         dates = []
-        for page in paginator.paginate(
-            Bucket=DATALAKE_BUCKET, Prefix="results/", Delimiter="/"
+        for doc in (
+            db["reports"]
+            .find({}, {"report_date": 1, "updated_at": 1, "created_at": 1})
+            .sort("report_date", -1)
+            .limit(500)
         ):
-            for cp in page.get("CommonPrefixes", []):
-                prefix = cp.get("Prefix", "")
-                date_str = prefix.replace("results/", "").rstrip("/")
-                if len(date_str) == 10:
-                    key = f"results/{date_str}/report.json"
-                    try:
-                        head = s3.head_object(Bucket=DATALAKE_BUCKET, Key=key)
-                        has_trace = False
-                        try:
-                            s3.head_object(
-                                Bucket=DATALAKE_BUCKET,
-                                Key=f"results/{date_str}/bayesian_trace.json",
-                            )
-                            has_trace = True
-                        except ClientError:
-                            pass
-                        dates.append(
-                            {
-                                "date": date_str,
-                                "s3Key": key,
-                                "lastModified": head["LastModified"].isoformat(),
-                                "sizeBytes": head["ContentLength"],
-                                "has_trace": has_trace,
-                            }
-                        )
-                    except ClientError:
-                        pass
-        dates.sort(key=lambda x: x["date"], reverse=True)
+            d = doc.get("report_date")
+            if not d or len(str(d)) != 10:
+                continue
+            d = str(d)[:10]
+            lm = doc.get("updated_at") or doc.get("created_at")
+            has_trace = db["bayesian_traces"].count_documents({"batch_date": d}) > 0
+            dates.append(
+                {
+                    "date": d,
+                    "storage": "mongo",
+                    "lastModified": lm.isoformat() if hasattr(lm, "isoformat") else None,
+                    "has_trace": has_trace,
+                }
+            )
         return {"dates": dates, "total": len(dates)}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("list_reports error")
         raise HTTPException(status_code=500, detail=str(e))
@@ -241,11 +250,17 @@ def list_reports(x_api_key: str = Header(default="")):
 
 @app.get("/reports/{date}", tags=["Reports"])
 def get_report(date: str, x_api_key: str = Header(default="")):
-    """Report.json completo para una fecha (YYYY-MM-DD)."""
+    """Reporte diario completo desde MongoDB (coleccion reports)."""
     check_api_key(x_api_key)
     if not date or len(date) != 10:
         raise HTTPException(status_code=400, detail="Formato: YYYY-MM-DD")
-    return _read_s3_json(f"results/{date}/report.json")
+    db = _require_mongo()
+    doc = db["reports"].find_one({"report_date": date})
+    if not doc:
+        raise HTTPException(
+            status_code=404, detail=f"No hay reporte en MongoDB para {date}"
+        )
+    return _serialize_doc(doc)
 
 
 # ─── Trazabilidad bayesiana (NUEVO) ───────────────────────────────────────────
@@ -256,12 +271,12 @@ def get_trace(date: str, x_api_key: str = Header(default="")):
     """
     Traza bayesiana completa del dia: configuracion del modelo, evidencias raw,
     estados discretizados, probabilidades y razonamiento por ticker.
-    Generado por lambda_bayesian en results/{date}/bayesian_trace.json
+    Generado por lambda_bayesian en MongoDB (coleccion bayesian_traces).
     """
     check_api_key(x_api_key)
     if not date or len(date) != 10:
         raise HTTPException(status_code=400, detail="Formato: YYYY-MM-DD")
-    return _read_s3_json(f"results/{date}/bayesian_trace.json")
+    return _bayesian_trace_for_date(date)
 
 
 @app.get("/trace/{date}/{ticker}", tags=["Trazabilidad"])
@@ -272,7 +287,7 @@ def get_trace_ticker(date: str, ticker: str, x_api_key: str = Header(default="")
     probabilidades posteriores y razonamiento textual.
     """
     check_api_key(x_api_key)
-    trace = _read_s3_json(f"results/{date}/bayesian_trace.json")
+    trace = _bayesian_trace_for_date(date)
     ticker_upper = ticker.upper()
     if ticker_upper not in trace.get("tickers", {}):
         available = list(trace.get("tickers", {}).keys())
@@ -312,20 +327,17 @@ def get_model_config(
     try:
         # Encontrar el trace mas reciente si no se especifica fecha
         if not date:
-            paginator = s3.get_paginator("list_objects_v2")
-            dates_found = []
-            for page in paginator.paginate(
-                Bucket=DATALAKE_BUCKET, Prefix="results/", Delimiter="/"
-            ):
-                for cp in page.get("CommonPrefixes", []):
-                    d = cp.get("Prefix", "").replace("results/", "").rstrip("/")
-                    if len(d) == 10:
-                        dates_found.append(d)
+            db = _require_mongo()
+            dates_found = [
+                d
+                for d in db["bayesian_traces"].distinct("batch_date")
+                if d and len(str(d)) == 10
+            ]
             if not dates_found:
                 raise HTTPException(status_code=404, detail="No hay traces disponibles")
-            date = sorted(dates_found, reverse=True)[0]
+            date = sorted([str(x)[:10] for x in dates_found], reverse=True)[0]
 
-        trace = _read_s3_json(f"results/{date}/bayesian_trace.json")
+        trace = _bayesian_trace_for_date(date)
         return {
             "source_date": date,
             "schema_version": trace.get("schema_version"),
@@ -350,7 +362,7 @@ def get_sentiment_detail(date: str, ticker: str, x_api_key: str = Header(default
     """
     check_api_key(x_api_key)
     try:
-        trace = _read_s3_json(f"results/{date}/bayesian_trace.json")
+        trace = _bayesian_trace_for_date(date)
         ticker_upper = ticker.upper()
         ticker_data = trace.get("tickers", {}).get(ticker_upper)
         if not ticker_data:
@@ -388,7 +400,7 @@ def get_indicators_detail(date: str, ticker: str, x_api_key: str = Header(defaul
     """
     check_api_key(x_api_key)
     try:
-        trace = _read_s3_json(f"results/{date}/bayesian_trace.json")
+        trace = _bayesian_trace_for_date(date)
         ticker_upper = ticker.upper()
         ticker_data = trace.get("tickers", {}).get(ticker_upper)
         if not ticker_data:
@@ -429,47 +441,10 @@ def list_files(
     x_api_key: str = Header(default=""),
 ):
     check_api_key(x_api_key)
-    try:
-        kwargs = {
-            "Bucket": DATALAKE_BUCKET,
-            "Prefix": prefix,
-            "MaxKeys": maxKeys,
-            "Delimiter": delimiter,
-        }
-        if continuationToken:
-            kwargs["ContinuationToken"] = continuationToken
-        resp = s3.list_objects_v2(**kwargs)
-        folders = [
-            {
-                "key": cp["Prefix"],
-                "name": cp["Prefix"].replace(prefix, "").rstrip("/"),
-                "isFolder": True,
-                "size": 0,
-            }
-            for cp in resp.get("CommonPrefixes", [])
-        ]
-        files = [
-            {
-                "key": obj["Key"],
-                "name": obj["Key"].split("/")[-1],
-                "isFolder": False,
-                "size": obj["Size"],
-                "lastModified": obj["LastModified"].isoformat(),
-                "etag": obj.get("ETag", "").strip('"'),
-                "storageClass": obj.get("StorageClass", "STANDARD"),
-            }
-            for obj in resp.get("Contents", [])
-            if obj["Key"] != prefix
-        ]
-        return {
-            "items": folders + files,
-            "prefix": prefix,
-            "isTruncated": resp.get("IsTruncated", False),
-            "nextContinuationToken": resp.get("NextContinuationToken"),
-        }
-    except Exception as e:
-        logger.exception("list_files error")
-        raise HTTPException(status_code=500, detail=str(e))
+    raise HTTPException(
+        status_code=410,
+        detail="Descontinuado: el datalake ya no usa S3. Usa GET /mongo/reports, /mongo/stats y GET /raw/*.",
+    )
 
 
 @app.get("/files/presign", tags=["S3"])
@@ -479,16 +454,10 @@ def presign(
     x_api_key: str = Header(default=""),
 ):
     check_api_key(x_api_key)
-    if not key:
-        raise HTTPException(status_code=400, detail="Parametro 'key' requerido")
-    try:
-        url = s3.generate_presigned_url(
-            "get_object", Params={"Bucket": DATALAKE_BUCKET, "Key": key}, ExpiresIn=ttl
-        )
-        return {"url": url, "expiresInSeconds": ttl}
-    except Exception as e:
-        logger.exception("presign error")
-        raise HTTPException(status_code=500, detail=str(e))
+    raise HTTPException(
+        status_code=410,
+        detail="Descontinuado: no hay URLs firmadas S3. Lee datos via GET /reports y /trace.",
+    )
 
 
 # ─── Tickers ──────────────────────────────────────────────────────────────────
@@ -496,16 +465,44 @@ def presign(
 
 @app.get("/tickers", tags=["Tickers"])
 def list_tickers(x_api_key: str = Header(default="")):
-    """Lista los ETFs del universo de inversion (tfm-unir-config/etf_universe.json)."""
+    """Lista los ETFs del universo (coleccion etf_universe en MongoDB)."""
     check_api_key(x_api_key)
+    if not get_etf_tickers:
+        raise HTTPException(status_code=503, detail="mongo_utils no disponible")
     try:
-        resp = s3.get_object(Bucket=CONFIG_BUCKET, Key="etf_universe.json")
-        data = json.loads(resp["Body"].read().decode("utf-8"))
-        tickers = data.get("tickers", data) if isinstance(data, dict) else data
-        return {"tickers": tickers, "total": len(tickers)}
+        tickers = get_etf_tickers()  # type: ignore[misc]
+        return {"tickers": tickers, "total": len(tickers), "source": "mongo"}
     except Exception as e:
         logger.exception("list_tickers error")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class EtfUniverseBody(BaseModel):
+    tickers: List[str]
+
+
+@app.get("/mongo/etf-universe", tags=["MongoDB"])
+def mongo_get_etf_universe(x_api_key: str = Header(default="")):
+    """Devuelve el universo ETF almacenado en MongoDB."""
+    check_api_key(x_api_key)
+    if not get_etf_tickers:
+        raise HTTPException(status_code=503, detail="mongo_utils no disponible")
+    tickers = get_etf_tickers()  # type: ignore[misc]
+    return {"tickers": tickers, "total": len(tickers)}
+
+
+@app.post("/mongo/etf-universe", tags=["MongoDB"])
+def mongo_post_etf_universe(
+    body: EtfUniverseBody, x_api_key: str = Header(default="")
+):
+    """Reemplaza el universo ETF en MongoDB (coleccion etf_universe, documento default)."""
+    check_api_key(x_api_key)
+    if not upsert_etf_universe:
+        raise HTTPException(status_code=503, detail="mongo_utils no disponible")
+    if not body.tickers:
+        raise HTTPException(status_code=400, detail="La lista tickers no puede estar vacia")
+    upsert_etf_universe(body.tickers)  # type: ignore[misc]
+    return {"ok": True, "total": len(body.tickers)}
 
 
 # ─── Raw data: noticias y OHLCV ───────────────────────────────────────────────
@@ -515,28 +512,25 @@ def list_tickers(x_api_key: str = Header(default="")):
 def get_news(date: str, ticker: str, x_api_key: str = Header(default="")):
     """
     Noticias raw de Finnhub para un ticker en una fecha concreta.
-    Fuente: s3://tfm-unir-datalake/raw/{date}/news.json
-    Incluye: headline, url, datetime, source para cada articulo.
+    Fuente: MongoDB coleccion raw_news.
     """
     check_api_key(x_api_key)
     if not date or len(date) != 10:
         raise HTTPException(status_code=400, detail="Formato de fecha: YYYY-MM-DD")
+    if not read_raw_news_ticker:
+        raise HTTPException(status_code=503, detail="mongo_utils no disponible")
     try:
-        resp = s3.get_object(Bucket=DATALAKE_BUCKET, Key=f"raw/{date}/news.json")
-        all_news = json.loads(resp["Body"].read().decode("utf-8"))
         ticker_u = ticker.upper()
-        articles = all_news.get(ticker_u, [])
+        articles = read_raw_news_ticker(date, ticker_u)  # type: ignore[misc]
         return {
             "date": date,
             "ticker": ticker_u,
             "articles": articles,
             "total": len(articles),
-            "all_tickers_in_file": list(all_news.keys()),
+            "source": "mongo",
         }
-    except ClientError as e:
-        if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
-            raise HTTPException(status_code=404, detail=f"No hay news.json para {date}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("get_news error")
         raise HTTPException(status_code=500, detail=str(e))
@@ -550,64 +544,48 @@ def get_ohlcv(
     x_api_key: str = Header(default=""),
 ):
     """
-    Datos OHLCV (Open/High/Low/Close/Volume) para un ticker en una fecha concreta.
-    Fuente: s3://tfm-unir-datalake/raw/{date}/ohlcv.csv
-    Devuelve hasta 'limit' filas (por defecto 90, los ultimos 90 dias).
+    Datos OHLCV para un ticker en una fecha de ingestion.
+    Fuente: MongoDB coleccion ohlcv.
     """
     check_api_key(x_api_key)
     if not date or len(date) != 10:
         raise HTTPException(status_code=400, detail="Formato de fecha: YYYY-MM-DD")
+    if not read_ohlcv_ticker:
+        raise HTTPException(status_code=503, detail="mongo_utils no disponible")
     try:
-        resp = s3.get_object(Bucket=DATALAKE_BUCKET, Key=f"raw/{date}/ohlcv.csv")
-        content = resp["Body"].read().decode("utf-8")
-
-        reader = csv.DictReader(io.StringIO(content))
         ticker_u = ticker.upper()
-        rows = []
-        for row in reader:
-            row_ticker = row.get("Ticker", row.get("ticker", "")).upper()
-            if row_ticker == ticker_u:
-                # Normalizar columnas a minuscula
-                clean = {k.strip(): v for k, v in row.items()}
-                rows.append(
-                    {
-                        "date": clean.get("Date", clean.get("date", "")),
-                        "open": float(clean.get("Open", clean.get("open", 0) or 0)),
-                        "high": float(clean.get("High", clean.get("high", 0) or 0)),
-                        "low": float(clean.get("Low", clean.get("low", 0) or 0)),
-                        "close": float(clean.get("Close", clean.get("close", 0) or 0)),
-                        "volume": float(
-                            clean.get("Volume", clean.get("volume", 0) or 0)
-                        ),
-                    }
-                )
-
-        # Ordenar por fecha desc y limitar
-        rows.sort(key=lambda r: r["date"], reverse=True)
-        rows = rows[:limit]
-        rows.sort(key=lambda r: r["date"])  # devolver cronologico
-
+        rows = read_ohlcv_ticker(date, ticker_u)  # type: ignore[misc]
         if not rows:
             raise HTTPException(
                 status_code=404,
-                detail=f"Ticker '{ticker_u}' no encontrado en ohlcv.csv de {date}. "
-                f"Verifica que el ticker existe en el universo ETF.",
+                detail=f"No hay OHLCV en MongoDB para {ticker_u} en {date}",
             )
-
-        latest = rows[-1] if rows else {}
+        norm = []
+        for r in rows:
+            norm.append(
+                {
+                    "date": r.get("date", ""),
+                    "open": float(r.get("open", 0) or 0),
+                    "high": float(r.get("high", 0) or 0),
+                    "low": float(r.get("low", 0) or 0),
+                    "close": float(r.get("close", 0) or 0),
+                    "volume": float(r.get("volume", 0) or 0),
+                }
+            )
+        norm.sort(key=lambda x: x["date"], reverse=True)
+        norm = norm[:limit]
+        norm.sort(key=lambda x: x["date"])
+        latest = norm[-1] if norm else {}
         return {
             "date": date,
             "ticker": ticker_u,
-            "records": len(rows),
+            "records": len(norm),
             "latest": latest,
-            "data": rows,
+            "data": norm,
+            "source": "mongo",
         }
     except HTTPException:
         raise
-    except ClientError as e:
-        if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
-            raise HTTPException(status_code=404, detail=f"No hay ohlcv.csv para {date}")
-        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         logger.exception("get_ohlcv error")
         raise HTTPException(status_code=500, detail=str(e))
@@ -839,32 +817,10 @@ def get_instrument_profile(symbol: str, x_api_key: str = Header(default="")):
 @app.get("/stats", tags=["S3"])
 def stats(x_api_key: str = Header(default="")):
     check_api_key(x_api_key)
-    try:
-        prefixes = {"results": "results/", "raw": "raw/"}
-        total_files, total_bytes, last_updated = 0, 0, None
-        breakdown = []
-        for label, pref in prefixes.items():
-            pf, pb = 0, 0
-            paginator = s3.get_paginator("list_objects_v2")
-            for page in paginator.paginate(Bucket=DATALAKE_BUCKET, Prefix=pref):
-                for obj in page.get("Contents", []):
-                    pf += 1
-                    pb += obj["Size"]
-                    if last_updated is None or obj["LastModified"] > last_updated:
-                        last_updated = obj["LastModified"]
-            breakdown.append({"prefix": label, "fileCount": pf, "sizeBytes": pb})
-            total_files += pf
-            total_bytes += pb
-        return {
-            "bucket": DATALAKE_BUCKET,
-            "totalFiles": total_files,
-            "totalBytes": total_bytes,
-            "lastUpdated": last_updated.isoformat() if last_updated else None,
-            "breakdown": breakdown,
-        }
-    except Exception as e:
-        logger.exception("stats error")
-        raise HTTPException(status_code=500, detail=str(e))
+    raise HTTPException(
+        status_code=410,
+        detail="Descontinuado: usa GET /mongo/stats para conteos por coleccion.",
+    )
 
 
 # ─── MongoDB endpoints ────────────────────────────────────────────────────────
@@ -1000,8 +956,12 @@ def mongo_stats(x_api_key: str = Header(default="")):
     return {
         "database": MONGODB_DB,
         "collections": {
+            "etf_universe": db["etf_universe"].count_documents({}),
+            "raw_news": db["raw_news"].count_documents({}),
+            "ohlcv": db["ohlcv"].count_documents({}),
             "news": db["news"].count_documents({}),
             "bayesian_reports": db["bayesian_reports"].count_documents({}),
+            "bayesian_traces": db["bayesian_traces"].count_documents({}),
             "reports": db["reports"].count_documents({}),
         },
     }
@@ -1025,4 +985,10 @@ def mongo_setup_indexes(x_api_key: str = Header(default="")):
     created.append("bayesian_reports: 3 indices (1 unico)")
     db["reports"].create_index([("report_date", ASCENDING)], unique=True)
     created.append("reports: 1 indice unico")
+    db["bayesian_traces"].create_index([("batch_date", ASCENDING)], unique=True)
+    created.append("bayesian_traces: indice unico batch_date")
+    db["raw_news"].create_index([("batch_date", ASCENDING), ("ticker", ASCENDING)])
+    created.append("raw_news: batch_date+ticker")
+    db["ohlcv"].create_index([("batch_date", ASCENDING), ("ticker", ASCENDING)])
+    created.append("ohlcv: batch_date+ticker")
     return {"message": "Indices creados correctamente", "details": created}

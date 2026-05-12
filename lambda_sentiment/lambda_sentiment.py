@@ -11,8 +11,6 @@ from huggingface_hub import InferenceClient
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Inicializamos clientes de AWS globales (boto3)
-s3_client = boto3.client('s3')
 secrets_client = boto3.client('secretsmanager')
 rds_client = boto3.client('rds')
 
@@ -93,29 +91,23 @@ def connect_to_aurora(aurora_creds):
         database=dbname,
     )
 
-def read_news_from_s3(batch_date):
-    # ── 1. MongoDB PRIMARY ──────────────────────────────────────────────────
-    if _mongo_read_news:
-        try:
-            news = _mongo_read_news(batch_date)
-            if news:
-                logger.info(f"Noticias cargadas desde MongoDB para {batch_date} ({len(news)} tickers)")
-                return news
-            logger.info("MongoDB no tiene noticias para esta fecha, cayendo a S3")
-        except Exception as exc:
-            logger.warning(f"MongoDB read_raw_news falló, usando S3: {exc}")
-
-    # ── 2. S3 FALLBACK ───────────────────────────────────────────────────────
-    try:
-        response = s3_client.get_object(
-            Bucket='tfm-unir-datalake',
-            Key=f'raw/{batch_date}/news.json'
+def read_news_for_batch(batch_date):
+    if not _mongo_read_news:
+        raise RuntimeError(
+            "mongo_utils no disponible: se requiere read_raw_news desde MongoDB."
         )
-        logger.info(f"Noticias cargadas desde S3 (fallback) para {batch_date}")
-        return json.loads(response['Body'].read())
-    except Exception as e:
-        logger.error(f"Error reading news from S3: {str(e)}")
+    try:
+        news = _mongo_read_news(batch_date)
+    except Exception as exc:
+        logger.error(f"MongoDB read_raw_news falló: {exc}")
         raise
+    if not news:
+        raise ValueError(
+            f"No hay noticias en MongoDB (raw_news) para batch_date={batch_date}. "
+            "Ejecuta antes la lambda de ingestion."
+        )
+    logger.info(f"Noticias cargadas desde MongoDB para {batch_date} ({len(news)} tickers)")
+    return news
 
 def analyze_sentiment(headline, hf_client):
     # Hacemos hasta 3 intentos por si el modelo está dormido (Cold Start)
@@ -206,7 +198,7 @@ def handler(event, context):
         
         ctx = resolve_pipeline_context(event)
         today = ctx['batch_date']
-        news_data = read_news_from_s3(today)
+        news_data = read_news_for_batch(today)
 
         connection = connect_to_aurora(aurora_creds)
 

@@ -6,24 +6,28 @@ Todas las escrituras son best-effort; un fallo en MongoDB NUNCA cancela
 el pipeline principal.
 
 Colecciones en la BD 'tfm':
+  etf_universe      → lista de tickers del universo (documento _id 'default')
   raw_news          → articulos Finnhub sin clasificar (pre-FinBERT)
-  ohlcv             → datos OHLCV diarios de yfinance (reemplaza raw/*.csv)
+  ohlcv             → datos OHLCV diarios de yfinance
   news              → articulos con scoring FinBERT completo
   bayesian_reports  → traza por ticker: raw values, discretizacion, inferencia
+  bayesian_traces   → JSON completo de traza bayesiana por batch_date (API /trace)
   reports           → reporte diario completo (backtesting, metricas, senales)
 
 Indices recomendados (ejecutar via POST /mongo/setup-indexes):
+  etf_universe:     {_id:1}
   raw_news:    {batch_date:1, ticker:1}
   ohlcv:       {batch_date:1, ticker:1, date:1}  (unico)
   news:        {batch_date:1, ticker:1}, {ticker:1, batch_date:-1}, headline:text
   bayesian_reports: {batch_date:1, ticker:1} unico, {ticker:1, batch_date:-1}
+  bayesian_traces:  {batch_date:1} unico
   reports:     {report_date:1} unico
 """
 import json
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +219,93 @@ def read_ohlcv_ticker(batch_date: str, ticker: str) -> list:
     except Exception as exc:
         logger.warning(f"MongoDB read_ohlcv_ticker failed ({ticker}): {exc}")
         return []
+
+
+# ─── etf_universe: lista editable de tickers (sustituye etf_universe.json en S3) ─
+
+_ETF_DOC_ID = "default"
+
+
+def get_etf_tickers() -> List[str]:
+    """Devuelve tickers en mayusculas; lista vacia si Mongo no hay datos."""
+    db = _get_db()
+    if db is None:
+        return []
+    try:
+        doc = db["etf_universe"].find_one({"_id": _ETF_DOC_ID})
+        if not doc:
+            doc = db["etf_universe"].find_one({})
+        if not doc:
+            return []
+        raw = doc.get("tickers", [])
+        if not isinstance(raw, list):
+            return []
+        return [str(t).strip().upper() for t in raw if t]
+    except Exception as exc:
+        logger.warning(f"MongoDB get_etf_tickers failed: {exc}")
+        return []
+
+
+def upsert_etf_universe(tickers: List[str], doc_id: str = _ETF_DOC_ID) -> None:
+    """Guarda el universo ETF (reemplaza configuracion en bucket de config)."""
+    try:
+        db = _get_db()
+        if db is None:
+            return
+        now = datetime.now(timezone.utc)
+        clean = [str(t).strip().upper() for t in tickers if t]
+        db["etf_universe"].update_one(
+            {"_id": doc_id},
+            {
+                "$set": {
+                    "_id": doc_id,
+                    "tickers": clean,
+                    "count": len(clean),
+                    "updated_at": now,
+                },
+                "$setOnInsert": {"created_at": now},
+            },
+            upsert=True,
+        )
+    except Exception as exc:
+        logger.warning(f"MongoDB upsert_etf_universe failed: {exc}")
+
+
+# ─── bayesian_traces: JSON completo por dia (sustituye results/.../bayesian_trace.json)
+
+def upsert_bayesian_trace(batch_date: str, trace: Dict[str, Any]) -> None:
+    """Persiste la traza bayesiana completa (schema_version, tickers, model_config, ...)."""
+    try:
+        db = _get_db()
+        if db is None:
+            return
+        now = datetime.now(timezone.utc)
+        db["bayesian_traces"].update_one(
+            {"batch_date": batch_date},
+            {
+                "$set": {
+                    "batch_date": batch_date,
+                    "trace": trace,
+                    "updated_at": now,
+                },
+                "$setOnInsert": {"created_at": now},
+            },
+            upsert=True,
+        )
+    except Exception as exc:
+        logger.warning(f"MongoDB upsert_bayesian_trace failed ({batch_date}): {exc}")
+
+
+def read_bayesian_trace(batch_date: str) -> Optional[Dict[str, Any]]:
+    db = _get_db()
+    if db is None:
+        return None
+    try:
+        doc = db["bayesian_traces"].find_one({"batch_date": batch_date}, {"_id": 0, "trace": 1})
+        return doc.get("trace") if doc else None
+    except Exception as exc:
+        logger.warning(f"MongoDB read_bayesian_trace failed: {exc}")
+        return None
 
 
 # ─── news: articulos con scoring FinBERT ─────────────────────────────────────

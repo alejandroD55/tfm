@@ -1,5 +1,5 @@
 # ─── TFM Dashboard API ────────────────────────────────────────────────────────
-# Pod EKS: FastAPI que sirve los datos del datalake S3
+# Pod EKS: FastAPI (MongoDB como fuente de datos; S3 deshabilitado en endpoints legacy)
 FROM python:3.11-slim AS base
 
 WORKDIR /app
@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # ── Copiar código fuente ───────────────────────────────────────────────────────
 COPY infrastructure/k8s/api/main.py .
+COPY shared/mongo_utils.py .
 
 # ── Usuario no-root ────────────────────────────────────────────────────────────
 RUN useradd -m -u 1001 appuser && chown -R appuser:appuser /app

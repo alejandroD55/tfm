@@ -8,14 +8,12 @@ import os
 from datetime import datetime, timedelta
 import pandas as pd
 import logging
-from io import StringIO
 
 # Setup logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # AWS clients
-s3_client = boto3.client('s3')
 secrets_client = boto3.client('secretsmanager')
 rds_client = boto3.client('rds')
 
@@ -23,10 +21,12 @@ rds_client = boto3.client('rds')
 try:
     from mongo_utils import upsert_raw_news as _mongo_upsert_raw_news
     from mongo_utils import upsert_ohlcv_bulk as _mongo_upsert_ohlcv
+    from mongo_utils import get_etf_tickers as _mongo_get_etf_tickers
     logger.info("mongo_utils (ingestion) cargado")
 except ImportError:
     _mongo_upsert_raw_news = None
-    _mongo_upsert_ohlcv   = None
+    _mongo_upsert_ohlcv = None
+    _mongo_get_etf_tickers = None
 
 
 def connect_to_aurora(aurora_creds):
@@ -113,15 +113,20 @@ def get_secret(secret_name):
 
 
 def read_etf_config():
-    """Read ETF configuration from S3"""
-    try:
-        response = s3_client.get_object(Bucket='tfm-unir-config', Key='etf_universe.json')
-        config = json.loads(response['Body'].read())
-        return config.get('tickers', [])
-    except Exception as e:
-        logger.error(f"Error reading ETF config: {str(e)}")
-        raise
-    
+    """Lee el universo ETF desde MongoDB (coleccion etf_universe, documento default)."""
+    if not _mongo_get_etf_tickers:
+        raise RuntimeError(
+            "mongo_utils no disponible: la imagen Lambda debe incluir mongo_utils.py"
+        )
+    tickers = _mongo_get_etf_tickers()
+    if not tickers:
+        raise ValueError(
+            "etf_universe vacio en MongoDB. Crea el documento con la API "
+            "(POST /mongo/etf-universe) o inserta en la coleccion etf_universe "
+            '({_id: "default", tickers: ["SPY", "QQQ", ...]}).'
+        )
+    return tickers
+
 
 def download_ohlcv_data(tickers):
     """Download OHLCV data for the last 90 days using yfinance"""
@@ -187,25 +192,6 @@ def download_news(tickers, finnhub_key):
         return news_data
     except Exception as e:
         logger.error(f"Error in download_news: {str(e)}")
-        raise
-
-
-def save_to_s3(data, bucket, key, is_json=True):
-    """Save data to S3 bucket"""
-    try:
-        if is_json:
-            content = json.dumps(data)
-        else:
-            content = data
-
-        s3_client.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=content
-        )
-        logger.info(f"Saved data to s3://{bucket}/{key}")
-    except Exception as e:
-        logger.error(f"Error saving to S3: {str(e)}")
         raise
 
 
@@ -313,40 +299,33 @@ def handler(event, context):
 
         today = batch_date
 
-        # ── MongoDB PRIMARY: guardar OHLCV y news en MongoDB ─────────────────
-        # MongoDB es ahora la fuente principal de datos raw.
-        # S3 queda como backup (se puede eliminar cuando MongoDB este validado).
-        if _mongo_upsert_ohlcv:
-            for ticker_sym, ticker_df in ohlcv_data.items():
-                rows = []
-                for idx, row in ticker_df.iterrows():
-                    rows.append({
-                        "date":   str(idx.date()) if hasattr(idx, 'date') else str(idx),
-                        "open":   float(row.get("Open", 0) or 0),
-                        "high":   float(row.get("High", 0) or 0),
-                        "low":    float(row.get("Low",  0) or 0),
-                        "close":  float(row.get("Close",0) or 0),
-                        "volume": float(row.get("Volume",0) or 0),
-                    })
-                _mongo_upsert_ohlcv(today, ticker_sym, rows)
-            logger.info(f"MongoDB: OHLCV guardado para {len(ohlcv_data)} tickers")
+        # ── MongoDB: fuente unica de raw OHLCV y noticias ─────────────────────
+        if not (_mongo_upsert_ohlcv and _mongo_upsert_raw_news):
+            raise RuntimeError(
+                "MongoDB helpers no cargados: la imagen debe incluir mongo_utils "
+                "con upsert_ohlcv_bulk y upsert_raw_news."
+            )
+        for ticker_sym, ticker_df in ohlcv_data.items():
+            rows = []
+            for idx, row in ticker_df.iterrows():
+                rows.append({
+                    "date":   str(idx.date()) if hasattr(idx, 'date') else str(idx),
+                    "open":   float(row.get("Open", 0) or 0),
+                    "high":   float(row.get("High", 0) or 0),
+                    "low":    float(row.get("Low",  0) or 0),
+                    "close":  float(row.get("Close",0) or 0),
+                    "volume": float(row.get("Volume",0) or 0),
+                })
+            _mongo_upsert_ohlcv(today, ticker_sym, rows)
+        logger.info(f"MongoDB: OHLCV guardado para {len(ohlcv_data)} tickers")
 
-        if _mongo_upsert_raw_news:
-            for ticker_sym, articles in news_data.items():
-                if articles:
-                    _mongo_upsert_raw_news(today, ticker_sym, articles)
-            logger.info(f"MongoDB: noticias guardadas para {sum(1 for a in news_data.values() if a)} tickers")
+        for ticker_sym, articles in news_data.items():
+            if articles:
+                _mongo_upsert_raw_news(today, ticker_sym, articles)
+        logger.info(f"MongoDB: noticias guardadas para {sum(1 for a in news_data.values() if a)} tickers")
 
-        # ── S3 BACKUP: mantener escritura S3 durante la transicion ───────────
-        # Una vez validado MongoDB, puedes comentar o eliminar este bloque.
-        csv_buffer = StringIO()
-        combined_ohlcv.to_csv(csv_buffer)
-        ohlcv_key = f"raw/{today}/ohlcv.csv"
-        save_to_s3(csv_buffer.getvalue(), 'tfm-unir-datalake', ohlcv_key, is_json=False)
-
-        news_key = f"raw/{today}/news.json"
-        save_to_s3(news_data, 'tfm-unir-datalake', news_key, is_json=True)
-        # ─────────────────────────────────────────────────────────────────────
+        ohlcv_key = f"mongo:ohlcv/{today}"
+        news_key = f"mongo:raw_news/{today}"
 
         # Connect to Aurora and insert batch log
         connection = connect_to_aurora(aurora_creds)
