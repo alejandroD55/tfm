@@ -20,14 +20,16 @@ MODEL_ID = "ProsusAI/finbert"
 # ── MongoDB helper ────────────────────────────────────────────────────────────
 try:
     from mongo_utils import (
-        upsert_news   as _mongo_upsert_news,
-        read_raw_news as _mongo_read_news,
+        upsert_news          as _mongo_upsert_news,
+        read_raw_news        as _mongo_read_raw_news,
+        read_filtered_news   as _mongo_read_filtered_news,
     )
     logger.info("mongo_utils (sentiment) cargado")
 except ImportError:
     logger.warning("mongo_utils no disponible")
-    _mongo_upsert_news = None
-    _mongo_read_news   = None
+    _mongo_upsert_news         = None
+    _mongo_read_raw_news       = None
+    _mongo_read_filtered_news  = None
 
 def resolve_batch_date(event):
     raw_date = (event or {}).get('batch_date') or (event or {}).get('date')
@@ -92,21 +94,57 @@ def connect_to_aurora(aurora_creds):
     )
 
 def read_news_for_batch(batch_date):
-    if not _mongo_read_news:
+    """
+    Lee noticias para FinBERT con prioridad:
+      1. news_filtered (titulares ya limpios por lambda_news_filter vía Bedrock)
+      2. raw_news (fallback si el filtro no se ejecutó o falló)
+    Devuelve {ticker: [{"headline": str, ...}, ...]}
+    """
+    # ── Intento 1: noticias filtradas ────────────────────────────────────────
+    if _mongo_read_filtered_news:
+        try:
+            filtered = _mongo_read_filtered_news(batch_date)
+            if filtered:
+                # Convierte {ticker: {headlines: [...], daily_context: str}}
+                # al formato que espera el loop de FinBERT: {ticker: [article_dict]}
+                result = {}
+                for ticker, data in filtered.items():
+                    articles = [
+                        {"headline": h, "source": "bedrock_filtered", "datetime": batch_date}
+                        for h in data.get("headlines", [])
+                        if h.strip()
+                    ]
+                    if articles:
+                        result[ticker] = articles
+                if result:
+                    logger.info(
+                        f"Usando news_filtered para {batch_date} "
+                        f"({len(result)} tickers, titulares ya preprocesados por Bedrock)"
+                    )
+                    return result
+                logger.warning("news_filtered vacío — cayendo a raw_news")
+        except Exception as exc:
+            logger.warning(f"Error leyendo news_filtered, usando raw_news: {exc}")
+
+    # ── Intento 2: noticias crudas ────────────────────────────────────────────
+    if not _mongo_read_raw_news:
         raise RuntimeError(
-            "mongo_utils no disponible: se requiere read_raw_news desde MongoDB."
+            "mongo_utils no disponible: no se puede leer noticias desde MongoDB."
         )
     try:
-        news = _mongo_read_news(batch_date)
+        news = _mongo_read_raw_news(batch_date)
     except Exception as exc:
         logger.error(f"MongoDB read_raw_news falló: {exc}")
         raise
     if not news:
         raise ValueError(
-            f"No hay noticias en MongoDB (raw_news) para batch_date={batch_date}. "
-            "Ejecuta antes la lambda de ingestion."
+            f"No hay noticias en MongoDB (raw_news ni news_filtered) para batch_date={batch_date}. "
+            "Ejecuta antes lambda_ingestion y lambda_news_filter."
         )
-    logger.info(f"Noticias cargadas desde MongoDB para {batch_date} ({len(news)} tickers)")
+    logger.info(
+        f"Usando raw_news para {batch_date} ({len(news)} tickers) — "
+        "considera ejecutar lambda_news_filter para mejorar la calidad del análisis"
+    )
     return news
 
 def analyze_sentiment(headline, hf_client):

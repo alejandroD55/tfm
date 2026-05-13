@@ -5,7 +5,10 @@ import yfinance as yf
 import requests
 import psycopg2
 import os
+import time
+import hashlib
 from datetime import datetime, timedelta
+from newsapi import NewsApiClient
 import pandas as pd
 import logging
 
@@ -159,40 +162,224 @@ def download_ohlcv_data(tickers):
         raise
 
 
-def download_news(tickers, finnhub_key):
-    """Download financial news for each ticker from Finnhub API"""
-    try:
-        news_data = {}
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=1)
+# ─── Keywords por ticker para mejorar la búsqueda en NewsAPI ─────────────────
+# Para ETFs genéricos se usa el símbolo directamente. Para los más conocidos
+# añadimos términos adicionales para maximizar cobertura.
+ETF_SEARCH_TERMS = {
+    "SPY":  "SPY S&P 500 ETF",
+    "QQQ":  "QQQ Nasdaq 100 ETF",
+    "GLD":  "GLD gold ETF",
+    "SLV":  "SLV silver ETF",
+    "TLT":  "TLT treasury bonds ETF",
+    "IWM":  "IWM Russell 2000 ETF",
+    "EEM":  "EEM emerging markets ETF",
+    "XLF":  "XLF financial sector ETF",
+    "XLE":  "XLE energy sector ETF",
+    "XLK":  "XLK technology sector ETF",
+    "VNQ":  "VNQ real estate REIT ETF",
+    "USO":  "USO oil ETF crude",
+    "DIA":  "DIA Dow Jones ETF",
+    "IAU":  "IAU gold ETF",
+    "AGG":  "AGG bond ETF fixed income",
+}
 
-        start_date_str = start_date.strftime('%Y-%m-%d')
-        end_date_str = end_date.strftime('%Y-%m-%d')
 
-        for ticker in tickers:
-            try:
-                url = 'https://finnhub.io/api/v1/company-news'
-                params = {
-                    'symbol': ticker,
-                    'from': start_date_str,
-                    'to': end_date_str,
-                    'token': finnhub_key
-                }
-                response = requests.get(url, params=params, timeout=10)
-                if response.status_code == 200:
-                    news_data[ticker] = response.json()
-                    logger.info(f"Downloaded news for {ticker}")
-                else:
-                    logger.warning(f"API error for {ticker}: {response.status_code}")
-                    news_data[ticker] = []
-            except Exception as e:
-                logger.error(f"Error downloading news for {ticker}: {str(e)}")
-                news_data[ticker] = []
+def _article_fingerprint(headline: str, url: str) -> str:
+    """Hash único para deduplicar artículos entre fuentes."""
+    key = (url or headline or "").strip().lower()
+    return hashlib.md5(key.encode()).hexdigest()
 
-        return news_data
-    except Exception as e:
-        logger.error(f"Error in download_news: {str(e)}")
-        raise
+
+def _normalize_article(headline: str, url: str, source: str,
+                        published_at, summary: str = "") -> dict:
+    """Convierte cualquier artículo al formato estándar del pipeline."""
+    if isinstance(published_at, (int, float)):
+        dt_str = datetime.utcfromtimestamp(published_at).strftime("%Y-%m-%dT%H:%M:%SZ")
+    elif isinstance(published_at, datetime):
+        dt_str = published_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+    else:
+        dt_str = str(published_at or "")
+
+    return {
+        "headline": headline.strip() if headline else "",
+        "url":      url or "",
+        "source":   source or "unknown",
+        "datetime": dt_str,
+        "summary":  summary or "",
+    }
+
+
+# ─── Fuente 1: Finnhub ────────────────────────────────────────────────────────
+
+def _news_from_finnhub(tickers: list, finnhub_key: str) -> dict:
+    end_date   = datetime.now()
+    start_date = end_date - timedelta(days=1)
+    result     = {}
+
+    for ticker in tickers:
+        try:
+            resp = requests.get(
+                "https://finnhub.io/api/v1/company-news",
+                params={
+                    "symbol": ticker,
+                    "from":   start_date.strftime("%Y-%m-%d"),
+                    "to":     end_date.strftime("%Y-%m-%d"),
+                    "token":  finnhub_key,
+                },
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                articles = []
+                for item in resp.json():
+                    art = _normalize_article(
+                        headline    = item.get("headline", ""),
+                        url         = item.get("url", ""),
+                        source      = item.get("source", "finnhub"),
+                        published_at= item.get("datetime"),
+                        summary     = item.get("summary", ""),
+                    )
+                    if art["headline"]:
+                        articles.append(art)
+                result[ticker] = articles
+                logger.info(f"Finnhub: {len(articles)} artículos para {ticker}")
+            else:
+                logger.warning(f"Finnhub HTTP {resp.status_code} para {ticker}")
+                result[ticker] = []
+        except Exception as exc:
+            logger.error(f"Finnhub error para {ticker}: {exc}")
+            result[ticker] = []
+
+    return result
+
+
+# ─── Fuente 2: Yahoo Finance ──────────────────────────────────────────────────
+
+def _news_from_yfinance(tickers: list) -> dict:
+    result = {}
+    for ticker in tickers:
+        try:
+            raw = yf.Ticker(ticker).news or []
+            articles = []
+            for item in raw:
+                # yfinance ≥0.2.x anida el contenido en item["content"]
+                content  = item.get("content", item)
+                headline = (content.get("title") or item.get("title") or "").strip()
+                url_data = content.get("canonicalUrl") or {}
+                url      = url_data.get("url") if isinstance(url_data, dict) else content.get("url", "")
+                provider = content.get("provider") or {}
+                source   = provider.get("displayName") if isinstance(provider, dict) else "yahoo_finance"
+                pub_date = content.get("pubDate") or item.get("providerPublishTime") or ""
+
+                art = _normalize_article(
+                    headline    = headline,
+                    url         = url or item.get("link", ""),
+                    source      = source or "yahoo_finance",
+                    published_at= pub_date,
+                )
+                if art["headline"]:
+                    articles.append(art)
+
+            result[ticker] = articles
+            logger.info(f"YFinance: {len(articles)} artículos para {ticker}")
+        except Exception as exc:
+            logger.error(f"YFinance error para {ticker}: {exc}")
+            result[ticker] = []
+
+    return result
+
+
+# ─── Fuente 3: NewsAPI ────────────────────────────────────────────────────────
+
+def _news_from_newsapi(tickers: list, newsapi_key: str) -> dict:
+    client = NewsApiClient(api_key=newsapi_key)
+    result = {}
+    end_date   = datetime.now()
+    start_date = end_date - timedelta(days=1)
+
+    for ticker in tickers:
+        try:
+            query = ETF_SEARCH_TERMS.get(ticker, ticker)
+            resp  = client.get_everything(
+                q          = query,
+                from_param = start_date.strftime("%Y-%m-%dT%H:%M:%S"),
+                to         = end_date.strftime("%Y-%m-%dT%H:%M:%S"),
+                language   = "en",
+                sort_by    = "relevancy",
+                page_size  = 20,
+            )
+            articles = []
+            for item in (resp.get("articles") or []):
+                art = _normalize_article(
+                    headline    = item.get("title", ""),
+                    url         = item.get("url", ""),
+                    source      = (item.get("source") or {}).get("name", "newsapi"),
+                    published_at= item.get("publishedAt", ""),
+                    summary     = item.get("description", ""),
+                )
+                # NewsAPI incluye títulos genéricos "[Removed]" cuando el artículo
+                # ya no está disponible — los filtramos
+                if art["headline"] and art["headline"] != "[Removed]":
+                    articles.append(art)
+
+            result[ticker] = articles
+            logger.info(f"NewsAPI: {len(articles)} artículos para {ticker}")
+            time.sleep(0.2)   # respetar rate limit (max 1 req/seg en plan gratuito)
+
+        except Exception as exc:
+            logger.error(f"NewsAPI error para {ticker}: {exc}")
+            result[ticker] = []
+
+    return result
+
+
+# ─── Agregador con deduplicación ──────────────────────────────────────────────
+
+def download_news(tickers: list, finnhub_key: str, newsapi_key: str = "") -> dict:
+    """
+    Agrega noticias de Finnhub + Yahoo Finance + NewsAPI para cada ticker.
+    Deduplica por URL (primero) y por titular exacto (segundo).
+    Devuelve {ticker: [article_dict, ...]} en formato normalizado.
+    """
+    logger.info(f"Descargando noticias — fuentes: Finnhub, YFinance"
+                + (", NewsAPI" if newsapi_key else ""))
+
+    finnhub_news  = _news_from_finnhub(tickers, finnhub_key)
+    yfinance_news = _news_from_yfinance(tickers)
+    newsapi_news  = _news_from_newsapi(tickers, newsapi_key) if newsapi_key else {}
+
+    merged = {}
+    for ticker in tickers:
+        seen_fps  = set()
+        seen_titles = set()
+        combined  = []
+
+        # Orden de prioridad: Finnhub (más financiero) → YFinance → NewsAPI
+        all_articles = (
+            finnhub_news.get(ticker, []) +
+            yfinance_news.get(ticker, []) +
+            newsapi_news.get(ticker, [])
+        )
+
+        for art in all_articles:
+            fp    = _article_fingerprint(art["headline"], art["url"])
+            title = art["headline"].lower().strip()
+
+            if fp in seen_fps or title in seen_titles:
+                continue   # duplicado — saltar
+
+            seen_fps.add(fp)
+            seen_titles.add(title)
+            combined.append(art)
+
+        merged[ticker] = combined
+        logger.info(
+            f"{ticker}: {len(combined)} artículos únicos "
+            f"(Finnhub={len(finnhub_news.get(ticker,[]))}, "
+            f"YFinance={len(yfinance_news.get(ticker,[]))}, "
+            f"NewsAPI={len(newsapi_news.get(ticker,[]))})"
+        )
+
+    return merged
 
 
 def insert_batch_log(connection, batch_date, run_id, trigger_type, execution_name, requested_tickers, status, tickers_processed):
@@ -265,7 +452,15 @@ def handler(event, context):
 
         # Get configurations
         aurora_creds = get_secret('aurora/credentials')
-        finnhub_key = get_secret('finnhub/api_key')['api_key']
+        finnhub_key  = get_secret('finnhub/api_key')['api_key']
+
+        # NewsAPI key — opcional: si no existe el secreto, se omite esa fuente
+        newsapi_key = ""
+        try:
+            newsapi_key = get_secret('newsapi/api_key')['api_key']
+            logger.info("NewsAPI key cargada correctamente")
+        except Exception:
+            logger.warning("Secreto newsapi/api_key no encontrado — fuente NewsAPI desactivada")
 
         # Read ETF configuration (universe completo)
         all_tickers = read_etf_config()
@@ -289,8 +484,8 @@ def handler(event, context):
         # Download OHLCV data
         ohlcv_data = download_ohlcv_data(tickers)
 
-        # Download news
-        news_data = download_news(tickers, finnhub_key)
+        # Download news (Finnhub + YFinance + NewsAPI)
+        news_data = download_news(tickers, finnhub_key, newsapi_key)
 
         # Combine all OHLCV data into a single DataFrame
         if not ohlcv_data:

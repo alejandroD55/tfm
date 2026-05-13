@@ -34,6 +34,35 @@
           "BackoffRate": 2
         }
       ],
+      "Next": "lambda_news_filter"
+    },
+    "lambda_news_filter": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "lambda_news_filter",
+        "Payload": {
+          "pipeline_context.$": "$.pipeline_context"
+        }
+      },
+      "TimeoutSeconds": 300,
+      "ResultPath": "$.news_filter_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "parallel_analysis",
+          "ResultPath": "$.news_filter_error",
+          "Comment": "Si el filtro falla, continúa con raw_news — el pipeline no se detiene"
+        }
+      ],
       "Next": "parallel_analysis"
     },
     "parallel_analysis": {

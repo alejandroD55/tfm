@@ -1,0 +1,20 @@
+# ─── Lambda News Filter ───────────────────────────────────────────────────────
+# Lee raw_news de MongoDB → Descarga artículo completo → Resume con Claude Haiku
+# → Guarda resúmenes en news_filtered para FinBERT
+FROM public.ecr.aws/lambda/python:3.11
+
+LABEL maintainer="tfm-trading" \
+      lambda="lambda_news_filter" \
+      version="2.0"
+
+# lxml y otras deps nativas de trafilatura necesitan compiladores
+RUN dnf install -y gcc gcc-c++ libxml2-devel libxslt-devel && \
+    dnf clean all
+
+COPY lambda_news_filter/requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
+RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
+
+COPY lambda_news_filter/lambda_news_filter.py ${LAMBDA_TASK_ROOT}/
+COPY shared/mongo_utils.py ${LAMBDA_TASK_ROOT}/
+
+CMD ["lambda_news_filter.handler"]

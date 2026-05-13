@@ -308,6 +308,53 @@ def read_bayesian_trace(batch_date: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+# ─── news_filtered: titulares limpios generados por Bedrock ──────────────────
+
+def upsert_filtered_news(batch_date: str, ticker: str, filtered_headlines: list, daily_context: str = ""):
+    """Guarda los titulares ya filtrados/normalizados por Claude Haiku para un ticker."""
+    try:
+        db = _get_db()
+        if db is None:
+            return
+        now = datetime.now(timezone.utc)
+        doc = {
+            "batch_date":          batch_date,
+            "ticker":              ticker.upper(),
+            "filtered_headlines":  filtered_headlines,
+            "daily_context":       daily_context,
+            "headline_count":      len(filtered_headlines),
+            "updated_at":          now,
+        }
+        db["news_filtered"].update_one(
+            {"batch_date": batch_date, "ticker": ticker.upper()},
+            {"$set": doc, "$setOnInsert": {"created_at": now}},
+            upsert=True,
+        )
+    except Exception as exc:
+        logger.warning(f"MongoDB upsert_filtered_news failed ({ticker}): {exc}")
+
+
+def read_filtered_news(batch_date: str) -> dict:
+    """Devuelve {ticker: {"headlines": [...], "daily_context": str}} desde news_filtered."""
+    try:
+        db = _get_db()
+        if db is None:
+            return {}
+        docs = list(db["news_filtered"].find({"batch_date": batch_date}))
+        result = {}
+        for doc in docs:
+            ticker = doc.get("ticker", "")
+            if ticker:
+                result[ticker] = {
+                    "headlines":     doc.get("filtered_headlines", []),
+                    "daily_context": doc.get("daily_context", ""),
+                }
+        return result
+    except Exception as exc:
+        logger.warning(f"MongoDB read_filtered_news failed: {exc}")
+        return {}
+
+
 # ─── news: articulos con scoring FinBERT ─────────────────────────────────────
 
 def upsert_news(batch_date: str, ticker: str, article: dict, sentiment_data: dict):
