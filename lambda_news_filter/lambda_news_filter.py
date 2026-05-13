@@ -20,19 +20,25 @@ import os
 import logging
 import requests
 import trafilatura
-from datetime import datetime, timezone
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-bedrock        = boto3.client("bedrock-runtime", region_name=os.getenv("AWS_REGION", "eu-north-1"))
+bedrock = boto3.client(
+    "bedrock-runtime", region_name=os.getenv("AWS_REGION", "eu-north-1")
+)
 secrets_client = boto3.client("secretsmanager")
 
-BEDROCK_MODEL_ID   = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
-FETCH_TIMEOUT_S    = int(os.getenv("FETCH_TIMEOUT_S", "8"))     # seg. máx. por petición HTTP
-MAX_CHARS_TO_MODEL = int(os.getenv("MAX_CHARS_TO_MODEL", "6000"))  # tokens aprox. → ~1500 tokens
-MAX_WORKERS        = int(os.getenv("MAX_WORKERS", "5"))          # descargas en paralelo
+BEDROCK_MODEL_ID = os.getenv(
+    "BEDROCK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0"
+)
+FETCH_TIMEOUT_S = int(os.getenv("FETCH_TIMEOUT_S", "8"))  # seg. máx. por petición HTTP
+MAX_CHARS_TO_MODEL = int(
+    os.getenv("MAX_CHARS_TO_MODEL", "6000")
+)  # tokens aprox. → ~1500 tokens
+MAX_WORKERS = int(os.getenv("MAX_WORKERS", "5"))  # descargas en paralelo
 
 HEADERS = {
     "User-Agent": (
@@ -43,17 +49,19 @@ HEADERS = {
 
 try:
     from mongo_utils import (
-        read_raw_news        as _mongo_read_raw,
+        read_raw_news as _mongo_read_raw,
         upsert_filtered_news as _mongo_upsert_filtered,
     )
+
     logger.info("mongo_utils (news_filter) cargado OK")
 except ImportError:
     logger.warning("mongo_utils no disponible")
-    _mongo_read_raw        = None
+    _mongo_read_raw = None
     _mongo_upsert_filtered = None
 
 
 # ─── Contexto del pipeline ────────────────────────────────────────────────────
+
 
 def resolve_batch_date(event):
     raw = (event or {}).get("batch_date") or (event or {}).get("date")
@@ -61,19 +69,26 @@ def resolve_batch_date(event):
 
 
 def resolve_pipeline_context(event):
-    ctx     = (event or {}).get("pipeline_context", {}) if isinstance(event, dict) else {}
+    ctx = (event or {}).get("pipeline_context", {}) if isinstance(event, dict) else {}
     request = ctx.get("request", {}) if isinstance(ctx, dict) else {}
     if not isinstance(request, dict):
         request = {}
-    batch_date   = resolve_batch_date(request) if request.get("batch_date") else resolve_batch_date(ctx)
-    run_id       = ctx.get("run_id") or (event or {}).get("run_id") or f"legacy-{batch_date}"
+    batch_date = (
+        resolve_batch_date(request)
+        if request.get("batch_date")
+        else resolve_batch_date(ctx)
+    )
+    run_id = ctx.get("run_id") or (event or {}).get("run_id") or f"legacy-{batch_date}"
     trigger_type = request.get("trigger_type")
     if trigger_type not in ("manual", "scheduled"):
-        trigger_type = "manual" if request.get("ticker") or request.get("tickers") else "scheduled"
+        trigger_type = (
+            "manual" if request.get("ticker") or request.get("tickers") else "scheduled"
+        )
     return {"batch_date": batch_date, "run_id": run_id, "trigger_type": trigger_type}
 
 
 # ─── Descarga y extracción del artículo ──────────────────────────────────────
+
 
 def fetch_article_text(url: str) -> tuple[str, str]:
     """
@@ -85,7 +100,9 @@ def fetch_article_text(url: str) -> tuple[str, str]:
         return "", "no_url"
 
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=FETCH_TIMEOUT_S, allow_redirects=True)
+        resp = requests.get(
+            url, headers=HEADERS, timeout=FETCH_TIMEOUT_S, allow_redirects=True
+        )
         resp.raise_for_status()
 
         # trafilatura extrae el texto principal ignorando nav, ads, footers, etc.
@@ -94,7 +111,7 @@ def fetch_article_text(url: str) -> tuple[str, str]:
             include_comments=False,
             include_tables=False,
             no_fallback=False,
-            favor_precision=True,   # prioriza precisión sobre cobertura
+            favor_precision=True,  # prioriza precisión sobre cobertura
         )
 
         if text and len(text.strip()) > 100:
@@ -126,9 +143,13 @@ Tu única función es condensar fielmente lo que dice el artículo, sin añadir 
 Responde SIEMPRE con un JSON válido y nada más. Sin markdown, sin explicaciones."""
 
 
-def build_summary_prompt(ticker: str, headline: str, article_text: str, source: str) -> str:
+def build_summary_prompt(
+    ticker: str, headline: str, article_text: str, source: str
+) -> str:
     content = article_text[:MAX_CHARS_TO_MODEL] if article_text else headline
-    content_type = "artículo completo" if article_text else "titular (artículo no accesible)"
+    content_type = (
+        "artículo completo" if article_text else "titular (artículo no accesible)"
+    )
 
     return f"""Activo: {ticker}
 Fuente: {source}
@@ -159,15 +180,21 @@ Devuelve ÚNICAMENTE este JSON:
 
 # ─── Llamada a Bedrock ────────────────────────────────────────────────────────
 
-def summarize_with_bedrock(ticker: str, headline: str, article_text: str, source: str) -> dict:
+
+def summarize_with_bedrock(
+    ticker: str, headline: str, article_text: str, source: str
+) -> dict:
     """Llama a Claude Haiku y devuelve el JSON parseado."""
     body = {
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens":        1024,
-        "temperature":       0.0,
-        "system":            SYSTEM_PROMPT,
+        "max_tokens": 1024,
+        "temperature": 0.0,
+        "system": SYSTEM_PROMPT,
         "messages": [
-            {"role": "user", "content": build_summary_prompt(ticker, headline, article_text, source)}
+            {
+                "role": "user",
+                "content": build_summary_prompt(ticker, headline, article_text, source),
+            }
         ],
     }
     try:
@@ -177,7 +204,7 @@ def summarize_with_bedrock(ticker: str, headline: str, article_text: str, source
             accept="application/json",
             body=json.dumps(body),
         )
-        raw  = json.loads(resp["body"].read())
+        raw = json.loads(resp["body"].read())
         text = raw["content"][0]["text"].strip()
 
         # Limpia posibles bloques ```json
@@ -189,24 +216,27 @@ def summarize_with_bedrock(ticker: str, headline: str, article_text: str, source
         return json.loads(text)
 
     except json.JSONDecodeError as exc:
-        logger.warning(f"Bedrock devolvió JSON inválido para {ticker}/{headline[:40]}: {exc}")
+        logger.warning(
+            f"Bedrock devolvió JSON inválido para {ticker}/{headline[:40]}: {exc}"
+        )
         return {
-            "summary":        headline,   # fallback al titular original
-            "relevance":      "medium",
-            "key_facts":      [],
+            "summary": headline,  # fallback al titular original
+            "relevance": "medium",
+            "key_facts": [],
             "content_source": "fallback_parse_error",
         }
     except Exception as exc:
         logger.warning(f"Error Bedrock para {ticker}: {type(exc).__name__}")
         return {
-            "summary":        headline,
-            "relevance":      "medium",
-            "key_facts":      [],
+            "summary": headline,
+            "relevance": "medium",
+            "key_facts": [],
             "content_source": "fallback_bedrock_error",
         }
 
 
 # ─── Procesamiento de un artículo individual ─────────────────────────────────
+
 
 def process_article(ticker: str, article: dict) -> dict:
     """
@@ -214,8 +244,8 @@ def process_article(ticker: str, article: dict) -> dict:
     Siempre devuelve un dict con el resultado, nunca lanza excepción.
     """
     headline = article.get("headline") or article.get("title") or ""
-    url      = article.get("url") or ""
-    source   = article.get("source") or "unknown"
+    url = article.get("url") or ""
+    source = article.get("source") or "unknown"
 
     # 1. Intentar descargar el artículo completo
     article_text, fetch_method = fetch_article_text(url)
@@ -223,25 +253,28 @@ def process_article(ticker: str, article: dict) -> dict:
     if article_text:
         logger.info(f"  [{ticker}] Artículo descargado ({fetch_method}): {url[:60]}...")
     else:
-        logger.info(f"  [{ticker}] No accesible ({fetch_method}), usando titular: {headline[:60]}...")
+        logger.info(
+            f"  [{ticker}] No accesible ({fetch_method}), usando titular: {headline[:60]}..."
+        )
 
     # 2. Resumir con Claude Haiku
     result = summarize_with_bedrock(ticker, headline, article_text, source)
 
     return {
         "original_headline": headline,
-        "url":               url,
-        "source":            source,
-        "summary":           result.get("summary", headline),
-        "relevance":         result.get("relevance", "medium"),
-        "key_facts":         result.get("key_facts", []),
-        "content_source":    result.get("content_source", "unknown"),
-        "fetch_method":      fetch_method,
-        "datetime":          article.get("datetime", ""),
+        "url": url,
+        "source": source,
+        "summary": result.get("summary", headline),
+        "relevance": result.get("relevance", "medium"),
+        "key_facts": result.get("key_facts", []),
+        "content_source": result.get("content_source", "unknown"),
+        "fetch_method": fetch_method,
+        "datetime": article.get("datetime", ""),
     }
 
 
-# ─── Leer noticias crudas ─────────────────────────────────────────────────────
+# ─── Leer noticias ─────────────────────────────────────────────────────
+
 
 def read_raw_news(batch_date: str) -> dict:
     if not _mongo_read_raw:
@@ -257,9 +290,10 @@ def read_raw_news(batch_date: str) -> dict:
 
 # ─── Handler principal ────────────────────────────────────────────────────────
 
+
 def handler(event, context):
     logger.info("lambda_news_filter iniciado (modo: lectura completa de artículos)")
-    ctx   = resolve_pipeline_context(event)
+    ctx = resolve_pipeline_context(event)
     today = ctx["batch_date"]
 
     try:
@@ -271,14 +305,16 @@ def handler(event, context):
         logger.warning(f"No hay noticias crudas para {today}")
         return {
             "statusCode": 200,
-            "body": json.dumps({"message": "Sin noticias que procesar", "batch_date": today}),
+            "body": json.dumps(
+                {"message": "Sin noticias que procesar", "batch_date": today}
+            ),
         }
 
-    total_articles     = 0
+    total_articles = 0
     full_article_count = 0
-    headline_fallback  = 0
-    per_ticker_stats   = {}
-    errors             = []
+    headline_fallback = 0
+    per_ticker_stats = {}
+    errors = []
 
     for ticker, articles in raw_news.items():
         if not articles:
@@ -290,8 +326,7 @@ def handler(event, context):
         # Descarga en paralelo para reducir latencia total
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             futures = {
-                executor.submit(process_article, ticker, art): art
-                for art in articles
+                executor.submit(process_article, ticker, art): art for art in articles
             }
             for future in as_completed(futures):
                 try:
@@ -311,8 +346,10 @@ def handler(event, context):
         low_relevance_removed = len(processed) - len(relevant)
 
         # Preparar para MongoDB: solo los summaries (texto limpio para FinBERT)
-        summaries      = [p["summary"] for p in relevant if p.get("summary")]
-        daily_context  = f"{len(relevant)} relevant articles processed for {ticker} on {today}."
+        summaries = [p["summary"] for p in relevant if p.get("summary")]
+        daily_context = (
+            f"{len(relevant)} relevant articles processed for {ticker} on {today}."
+        )
 
         if _mongo_upsert_filtered:
             try:
@@ -322,12 +359,16 @@ def handler(event, context):
                 errors.append(ticker)
 
         per_ticker_stats[ticker] = {
-            "articles_in":           len(articles),
-            "articles_processed":    len(processed),
-            "full_article_read":     sum(1 for p in processed if p["fetch_method"] in ("trafilatura",)),
-            "headline_fallback":     sum(1 for p in processed if p["fetch_method"] not in ("trafilatura",)),
+            "articles_in": len(articles),
+            "articles_processed": len(processed),
+            "full_article_read": sum(
+                1 for p in processed if p["fetch_method"] in ("trafilatura",)
+            ),
+            "headline_fallback": sum(
+                1 for p in processed if p["fetch_method"] not in ("trafilatura",)
+            ),
             "low_relevance_removed": low_relevance_removed,
-            "summaries_to_finbert":  len(summaries),
+            "summaries_to_finbert": len(summaries),
         }
         logger.info(
             f"{ticker}: {len(articles)} artículos → "
@@ -337,19 +378,23 @@ def handler(event, context):
             f"{len(summaries)} resúmenes enviados a FinBERT"
         )
 
-    read_pct = round(full_article_count / total_articles * 100, 1) if total_articles else 0
+    read_pct = (
+        round(full_article_count / total_articles * 100, 1) if total_articles else 0
+    )
 
     return {
         "statusCode": 200,
-        "body": json.dumps({
-            "message":             "Procesamiento de artículos completado",
-            "batch_date":          today,
-            "tickers_processed":   len(per_ticker_stats),
-            "total_articles":      total_articles,
-            "full_article_read":   full_article_count,
-            "headline_fallback":   headline_fallback,
-            "full_read_pct":       read_pct,
-            "per_ticker":          per_ticker_stats,
-            "errors":              errors,
-        }),
+        "body": json.dumps(
+            {
+                "message": "Procesamiento de artículos completado",
+                "batch_date": today,
+                "tickers_processed": len(per_ticker_stats),
+                "total_articles": total_articles,
+                "full_article_read": full_article_count,
+                "headline_fallback": headline_fallback,
+                "full_read_pct": read_pct,
+                "per_ticker": per_ticker_stats,
+                "errors": errors,
+            }
+        ),
     }

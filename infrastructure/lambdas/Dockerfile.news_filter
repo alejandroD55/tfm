@@ -8,8 +8,8 @@ LABEL maintainer="tfm-trading" \
       version="2.0"
 
 # lxml y otras deps nativas de trafilatura necesitan compiladores
-RUN dnf install -y gcc gcc-c++ libxml2-devel libxslt-devel && \
-    dnf clean all
+RUN yum install -y gcc gcc-c++ libxml2-devel libxslt-devel && \
+    yum clean all
 
 COPY lambda_news_filter/requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
 RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
