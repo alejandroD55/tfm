@@ -366,11 +366,69 @@
           <td mat-cell *matCellDef="let row" [attr.colspan]="displayedColumns.length" class="detail-cell">
             <div class="detail-row" [class.expanded]="expandedRows.has(row.ticker)">
               <div class="exp-panel">
+
+                <!-- ── FILA 1: Justificación + FinBERT ── -->
                 <div class="exp-grid">
 
                   <div class="exp-card">
                     <h4><mat-icon>account_tree</mat-icon> Justificación de la IA para {{ row.ticker }}</h4>
 
+                    <!-- Score de confianza compuesto -->
+                    <div class="composite-score-block">
+                      <div class="cs-gauge-wrap">
+                        <svg class="cs-ring" viewBox="0 0 80 80">
+                          <circle class="cs-track" cx="40" cy="40" r="34" fill="none" stroke-width="7"/>
+                          <circle class="cs-fill {{ getCompositeClass(getCompositeScore(row)) }}"
+                            cx="40" cy="40" r="34" fill="none" stroke-width="7"
+                            stroke-dasharray="213.6"
+                            [attr.stroke-dashoffset]="213.6 - (213.6 * getCompositeScore(row) / 100)"
+                            stroke-linecap="round"
+                            transform="rotate(-90 40 40)"/>
+                        </svg>
+                        <div class="cs-center">
+                          <span class="cs-num">{{ getCompositeScore(row) }}</span>
+                          <span class="cs-of">/100</span>
+                        </div>
+                      </div>
+                      <div class="cs-meta">
+                        <div class="cs-label-badge {{ getCompositeClass(getCompositeScore(row)) }}">
+                          Confianza {{ getCompositeLabel(getCompositeScore(row)) }}
+                        </div>
+                        <div class="cs-factors">
+                          <div class="csf-row">
+                            <span class="csf-name">Prob. alcista</span>
+                            <div class="csf-bar-wrap"><div class="csf-bar" [style.width.%]="row.prob_up*100"></div></div>
+                            <span class="csf-val">{{ (row.prob_up*100)|number:'1.0-0' }}%</span>
+                          </div>
+                          <div class="csf-row">
+                            <span class="csf-name">Tasa de acierto</span>
+                            <div class="csf-bar-wrap"><div class="csf-bar" [style.width.%]="row.win_rate*100"></div></div>
+                            <span class="csf-val">{{ (row.win_rate*100)|number:'1.0-0' }}%</span>
+                          </div>
+                          <div class="csf-row">
+                            <span class="csf-name">Alpha vs mercado</span>
+                            <div class="csf-bar-wrap">
+                              <div class="csf-bar" [class.neg-bar]="(row.alpha_vs_benchmark??0)<0"
+                                [style.width.%]="(((row.alpha_vs_benchmark??0)+0.5)*100)"></div>
+                            </div>
+                            <span class="csf-val" [class.pos]="(row.alpha_vs_benchmark??0)>0" [class.neg]="(row.alpha_vs_benchmark??0)<0">
+                              {{ (row.alpha_vs_benchmark??0)>0?'+':'' }}{{ ((row.alpha_vs_benchmark??0)*100)|number:'1.1-1' }}%
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Por qué ahora -->
+                    <div class="why-now-block">
+                      <div class="wn-header">
+                        <mat-icon>bolt</mat-icon>
+                        <span>Por qué ahora</span>
+                      </div>
+                      <p class="wn-text">{{ buildWhyNow(row) }}</p>
+                    </div>
+
+                    <!-- Cadena de decisión -->
                     <div class="dec-chain">
                       <div class="dec-node {{ sentimentClass(row.evidence.sentiment) }}">
                         <span class="dec-cap">Sentimiento</span>
@@ -402,9 +460,9 @@
                     <div class="explainer">
                       <mat-icon>info</mat-icon>
                       <span>
-                        <strong>Razonamiento Bayesiano:</strong> Se emite orden de 
-                        {{ row.signal === 'BUY' ? 'COMPRAR' : row.signal === 'SELL' ? 'PASAR A LIQUIDEZ' : 'MANTENER' }} 
-                        porque la combinación actual de indicadores y noticias produce una confianza alcista del 
+                        <strong>Razonamiento Bayesiano:</strong> Se emite orden de
+                        {{ row.signal === 'BUY' ? 'COMPRAR' : row.signal === 'SELL' ? 'PASAR A LIQUIDEZ' : 'MANTENER' }}
+                        porque la combinación actual de indicadores y noticias produce una confianza alcista del
                         <strong>{{ (row.prob_up*100)|number:'1.1-1' }}%</strong>.
                       </span>
                     </div>
@@ -412,7 +470,7 @@
 
                   <div class="exp-card">
                     <h4><mat-icon>article</mat-icon> Análisis de Titulares de Hoy (FinBERT)</h4>
-                    
+
                     @if (isTraceLoading(row.ticker)) {
                       <div class="trace-loading">
                         <mat-spinner diameter="30"></mat-spinner>
@@ -430,7 +488,7 @@
                           </div>
                         }
                       </div>
-                      
+
                       <div class="headlines-list">
                         <p class="hl-title">Titulares más relevantes clasificados por FinBERT:</p>
                         @for (h of getTickerTrace(row.ticker)?.sentiment_detail?.headlines_sample?.slice(0, 3); track $index) {
@@ -447,6 +505,38 @@
                   </div>
 
                 </div>
+
+                <!-- ── FILA 2: Recomendaciones por perfil de riesgo ── -->
+                <div class="risk-profiles-section">
+                  <div class="rp-header">
+                    <mat-icon>manage_accounts</mat-icon>
+                    <span>Recomendaciones por Perfil de Riesgo</span>
+                  </div>
+                  <div class="rp-grid">
+                    @for (profile of getRiskProfiles(row); track profile.type) {
+                      <div class="rp-card" [class.rp-suitable]="profile.suitable" [class.rp-not-suitable]="!profile.suitable">
+                        <div class="rp-card-head">
+                          <div class="rp-icon-wrap" [style.background]="profile.suitable ? profile.color + '18' : 'var(--slate-100)'"
+                               [style.border-color]="profile.suitable ? profile.color + '40' : 'var(--border)'">
+                            <mat-icon [style.color]="profile.suitable ? profile.color : 'var(--slate-400)'">{{ profile.icon }}</mat-icon>
+                          </div>
+                          <div>
+                            <div class="rp-label">{{ profile.label }}</div>
+                            <div class="rp-suitability" [class.ok]="profile.suitable" [class.ko]="!profile.suitable">
+                              <mat-icon>{{ profile.suitable ? 'check_circle' : 'cancel' }}</mat-icon>
+                              {{ profile.suitable ? 'Señal adecuada' : 'No recomendado' }}
+                            </div>
+                          </div>
+                        </div>
+                        <div class="rp-action" [style.border-left-color]="profile.suitable ? profile.color : 'var(--slate-300)'">
+                          <strong>{{ profile.action }}</strong>
+                        </div>
+                        <p class="rp-rationale">{{ profile.rationale }}</p>
+                      </div>
+                    }
+                  </div>
+                </div>
+
               </div>
             </div>
           </td>

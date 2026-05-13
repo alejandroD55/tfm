@@ -244,4 +244,121 @@ export class SignalsComponent implements OnInit, AfterViewInit {
   }
   trendClass(v: TrendState)          { return `ev-${v}`; }
   volClass(v: VolatilityState)       { return v === 'low' ? 'ev-low-vol' : 'ev-high-vol'; }
+
+  // ─── Decision-Ready Layer ────────────────────────────────────────────────
+
+  getCompositeScore(row: TickerView): number {
+    const probScore  = row.prob_up * 100;
+    const wrScore    = row.win_rate * 100;
+    const alphaScore = Math.min(Math.max(((row.alpha_vs_benchmark ?? 0) + 0.5) * 100, 0), 100);
+    return Math.round(0.40 * probScore + 0.30 * wrScore + 0.30 * alphaScore);
+  }
+
+  getCompositeLabel(score: number): string {
+    if (score >= 70) return 'Muy Alta';
+    if (score >= 55) return 'Alta';
+    if (score >= 40) return 'Media';
+    return 'Baja';
+  }
+
+  getCompositeClass(score: number): string {
+    if (score >= 70) return 'comp-high';
+    if (score >= 55) return 'comp-mid-high';
+    if (score >= 40) return 'comp-mid';
+    return 'comp-low';
+  }
+
+  buildWhyNow(row: TickerView): string {
+    const signalLabel = row.signal === 'BUY' ? 'COMPRAR' : row.signal === 'SELL' ? 'CASH (Liquidez)' : 'MANTENER';
+    const bullishFlags = [
+      row.evidence.sentiment === 'bullish',
+      row.evidence.trend === 'uptrend',
+      row.evidence.rsi === 'oversold',
+      row.evidence.volatility === 'low',
+    ];
+    const bullishCount = bullishFlags.filter(Boolean).length;
+
+    const factors: string[] = [];
+    if (row.evidence.sentiment === 'bullish')  factors.push('sentimiento alcista en titulares financieros (FinBERT)');
+    else if (row.evidence.sentiment === 'bearish') factors.push('sentimiento bajista en noticias del sector (FinBERT)');
+    else factors.push('sentimiento neutral en medios financieros (FinBERT)');
+
+    if (row.evidence.trend === 'uptrend')  factors.push('tendencia alcista confirmada por medias móviles (SMA20 > SMA50)');
+    else factors.push('tendencia bajista en medias móviles (SMA20 < SMA50)');
+
+    if (row.evidence.rsi === 'oversold')        factors.push('RSI en zona de sobreventa — posible rebote técnico inminente');
+    else if (row.evidence.rsi === 'overbought') factors.push('RSI en sobrecompra — señal de precaución ante posible corrección');
+    else factors.push('RSI en zona neutral sin presión técnica dominante');
+
+    if (row.evidence.volatility === 'low') factors.push('volatilidad comprimida — condiciones de entrada favorables');
+    else factors.push('volatilidad elevada — mayor incertidumbre en la ejecución');
+
+    let text = `${row.ticker} genera señal ${signalLabel} con ${bullishCount} de 4 condiciones favorables alineadas: `;
+    text += factors.slice(0, 3).join('; ') + '. ';
+
+    if (row.trades_closed > 0) {
+      const wr = Math.round(row.win_rate * 100);
+      const alpha = row.alpha_vs_benchmark ?? 0;
+      const alphaStr = alpha >= 0 ? `+${(alpha * 100).toFixed(1)}%` : `${(alpha * 100).toFixed(1)}%`;
+      text += `En ${row.trades_closed} ciclos históricos, el modelo acertó el ${wr}% de las operaciones `;
+      text += `con un alpha de ${alphaStr} frente al benchmark de mercado.`;
+    } else {
+      text += 'No hay ciclos históricos cerrados para este activo en el periodo analizado.';
+    }
+    return text;
+  }
+
+  getRiskProfiles(row: TickerView): { type: string; label: string; icon: string; color: string; action: string; rationale: string; suitable: boolean }[] {
+    const score = this.getCompositeScore(row);
+    const isBuy  = row.signal === 'BUY';
+    const isHold = row.signal === 'HOLD';
+    const isSell = row.signal === 'SELL';
+
+    return [
+      {
+        type: 'conservative',
+        label: 'Perfil Conservador',
+        icon: 'shield',
+        color: '#3B82F6',
+        action: isBuy && score >= 70 && row.win_rate >= 0.55
+          ? 'Entrada permitida — señal sólida'
+          : isHold ? 'Mantener posición si ya invertido'
+          : 'No actuar — esperar señal más clara',
+        rationale: isBuy && score >= 70 && row.win_rate >= 0.55
+          ? `Confianza compuesta ${score}/100 y tasa de acierto ${Math.round(row.win_rate*100)}% superan los umbrales mínimos para perfil conservador (≥70 y ≥55%).`
+          : `La confianza compuesta (${score}/100) o la tasa de acierto (${Math.round(row.win_rate*100)}%) no alcanzan los umbrales requeridos para asumir riesgo.`,
+        suitable: isBuy && score >= 70 && row.win_rate >= 0.55,
+      },
+      {
+        type: 'moderate',
+        label: 'Perfil Moderado',
+        icon: 'balance',
+        color: '#F59E0B',
+        action: isBuy && score >= 55
+          ? 'Entrada recomendada — relación riesgo/beneficio positiva'
+          : isHold ? 'Mantener con stop-loss ajustado'
+          : 'Reducir exposición o no entrar',
+        rationale: isBuy && score >= 55
+          ? `Confianza compuesta ${score}/100 con probabilidad alcista del ${Math.round(row.prob_up*100)}%. Adecuado para posición de tamaño estándar.`
+          : `Señal ${row.signal} con confianza ${score}/100. El perfil moderado requiere ≥55 de confianza compuesta para abrir posición.`,
+        suitable: isBuy && score >= 55,
+      },
+      {
+        type: 'aggressive',
+        label: 'Perfil Agresivo',
+        icon: 'rocket_launch',
+        color: '#EF4444',
+        action: isBuy
+          ? 'Entrada directa siguiendo señal del modelo'
+          : isHold ? 'Mantener con trailing stop'
+          : 'Salir del mercado y buscar alternativas',
+        rationale: isBuy
+          ? `Probabilidad alcista del ${Math.round(row.prob_up*100)}%. El perfil agresivo ejecuta cualquier señal BUY del modelo sin filtros adicionales de confianza.`
+          : isSell
+          ? `El modelo recomienda CASH. El perfil agresivo prioriza preservar capital y esperar mejor punto de reentrada.`
+          : `Señal MANTENER — el perfil agresivo conserva posición existente pero activa trailing stop del 3%.`,
+        suitable: isBuy,
+      },
+    ];
+  }
 }
