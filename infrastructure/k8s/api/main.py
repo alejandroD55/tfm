@@ -926,6 +926,59 @@ def mongo_news_by_date_ticker(date: str, ticker: str, x_api_key: str = Header(de
     return {"date": date, "ticker": ticker.upper(), "total": len(docs), "articles": docs}
 
 
+@app.get("/mongo/news-detail/{date}/{ticker}", tags=["MongoDB"])
+def mongo_news_detail(date: str, ticker: str, x_api_key: str = Header(default="")):
+    """
+    Detalle completo de noticias para un ticker y fecha:
+    - Artículos con scoring FinBERT (headline, url, source, sentiment, confidence)
+    - Resúmenes generados por lambda_news_filter (Bedrock)
+    - Joined por posición cuando coincide el número de artículos
+    """
+    check_api_key(x_api_key)
+    db = _require_mongo()
+    ticker_upper = ticker.upper()
+
+    # Noticias con scoring FinBERT
+    raw_articles = [
+        _serialize_doc(d) for d in
+        db["news"].find({"batch_date": date, "ticker": ticker_upper}).sort("confidence", -1)
+    ]
+
+    # Resúmenes de Bedrock (news_filtered)
+    filtered_doc = db["news_filtered"].find_one({"batch_date": date, "ticker": ticker_upper})
+    bedrock_summaries = []
+    daily_context = ""
+    if filtered_doc:
+        bedrock_summaries = filtered_doc.get("filtered_headlines", [])
+        daily_context     = filtered_doc.get("daily_context", "")
+
+    # Enriquecer cada artículo con su resumen Bedrock si existe
+    # La colección news almacena el headline original; news_filtered los resúmenes en orden
+    # Intentamos mapear por índice cuando las listas tienen el mismo tamaño,
+    # o dejamos el campo vacío si no hay correspondencia
+    articles_out = []
+    for i, art in enumerate(raw_articles):
+        bedrock_summary = bedrock_summaries[i] if i < len(bedrock_summaries) else ""
+        articles_out.append({
+            "headline":       art.get("headline", ""),
+            "bedrock_summary": bedrock_summary,
+            "url":            art.get("url", ""),
+            "source":         art.get("source", ""),
+            "datetime":       art.get("datetime", ""),
+            "sentiment":      art.get("sentiment", ""),
+            "confidence":     art.get("confidence", 0),
+            "justification":  art.get("justification", ""),
+        })
+
+    return {
+        "date":          date,
+        "ticker":        ticker_upper,
+        "total":         len(articles_out),
+        "daily_context": daily_context,
+        "articles":      articles_out,
+    }
+
+
 @app.get("/mongo/bayesian/{ticker}", tags=["MongoDB"])
 def mongo_bayesian_history(
     ticker: str,

@@ -115,6 +115,13 @@ export class ApiService {
       { headers: this.authHeaders });
   }
 
+  /** Detalle completo de noticias: FinBERT + resumen Bedrock + URL */
+  getNewsDetail(date: string, ticker: string): Observable<NewsDetailResponse> {
+    return this.http.get<NewsDetailResponse>(
+      `${this.baseUrl}/mongo/news-detail/${date}/${ticker.toUpperCase()}`,
+      { headers: this.authHeaders });
+  }
+
   /** Valores raw de indicadores técnicos y reglas de discretización */
   getIndicatorsDetail(date: string, ticker: string): Observable<any> {
     return this.http.get<any>(
@@ -217,6 +224,27 @@ export class ApiService {
       `${this.baseUrl}/instrument/${symbol.toUpperCase()}/profile`,
       { headers: this.authHeaders });
   }
+}
+
+// ─── DTOs de noticias detalladas ─────────────────────────────────────────────
+
+export interface NewsArticleDetail {
+  headline:        string;
+  bedrock_summary: string;
+  url:             string;
+  source:          string;
+  datetime:        string;
+  sentiment:       string;   // 'bullish' | 'bearish' | 'neutral'
+  confidence:      number;
+  justification:   string;
+}
+
+export interface NewsDetailResponse {
+  date:          string;
+  ticker:        string;
+  total:         number;
+  daily_context: string;
+  articles:      NewsArticleDetail[];
 }
 
 // ─── DTOs de instrumentos ─────────────────────────────────────────────────────

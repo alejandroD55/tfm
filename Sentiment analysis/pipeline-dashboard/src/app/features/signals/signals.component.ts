@@ -12,6 +12,7 @@ import { NgxChartsModule } from '@swimlane/ngx-charts';
 import { switchMap, catchError, of } from 'rxjs';
 import { ReportService } from '../../core/services/report.service';
 import { TraceService } from '../../core/services/trace.service';
+import { ApiService, NewsDetailResponse, NewsArticleDetail } from '../../core/services/api.service';
 import {
   TickerView, ReportDateEntry, DailyReport,
   SentimentState, RsiState, TrendState, VolatilityState,
@@ -35,6 +36,7 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
 export class SignalsComponent implements OnInit, AfterViewInit {
   private reportSvc = inject(ReportService);
   private traceSvc  = inject(TraceService);
+  private apiSvc    = inject(ApiService);
 
   @ViewChild(MatSort) sort!: MatSort;
 
@@ -244,6 +246,56 @@ export class SignalsComponent implements OnInit, AfterViewInit {
   }
   trendClass(v: TrendState)          { return `ev-${v}`; }
   volClass(v: VolatilityState)       { return v === 'low' ? 'ev-low-vol' : 'ev-high-vol'; }
+
+  // ─── Modal de detalle de noticias ───────────────────────────────────────────
+
+  newsModalOpen    = false;
+  newsModalTicker  = '';
+  newsModalLoading = false;
+  newsModalData:   NewsDetailResponse | null = null;
+  newsModalError   = '';
+
+  openNewsModal(ticker: string) {
+    this.newsModalTicker  = ticker;
+    this.newsModalOpen    = true;
+    this.newsModalLoading = true;
+    this.newsModalData    = null;
+    this.newsModalError   = '';
+    this.apiSvc.getNewsDetail(this.selectedDate, ticker).pipe(
+      catchError(() => {
+        this.newsModalError   = 'No se pudieron cargar las noticias. Comprueba que el pipeline se ha ejecutado para esta fecha.';
+        this.newsModalLoading = false;
+        return of(null);
+      })
+    ).subscribe(data => {
+      this.newsModalData    = data;
+      this.newsModalLoading = false;
+    });
+  }
+
+  closeNewsModal() {
+    this.newsModalOpen  = false;
+    this.newsModalData  = null;
+    this.newsModalError = '';
+  }
+
+  sentimentColor(s: string): string {
+    if (s === 'bullish') return '#22C55E';
+    if (s === 'bearish') return '#EF4444';
+    return '#94A3B8';
+  }
+
+  sentimentBg(s: string): string {
+    if (s === 'bullish') return 'rgba(34,197,94,.12)';
+    if (s === 'bearish') return 'rgba(239,68,68,.12)';
+    return 'rgba(148,163,184,.12)';
+  }
+
+  sentimentLabel(s: string): string {
+    if (s === 'bullish') return 'Alcista';
+    if (s === 'bearish') return 'Bajista';
+    return 'Neutral';
+  }
 
   // ─── Decision-Ready Layer ────────────────────────────────────────────────
 

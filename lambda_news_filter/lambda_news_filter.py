@@ -62,6 +62,12 @@ MAX_CHARS_TO_MODEL = int(
 )  # tokens aprox. → ~1500 tokens
 # Cada worker hace fetch + Bedrock; valores altos disparan ThrottlingException en cuentas pequeñas.
 MAX_WORKERS = int(os.getenv("MAX_WORKERS", "2"))
+# 0 = sin límite. Útil si el universo ETF trae decenas de noticias por ticker y se agota el timeout.
+NEWS_FILTER_MAX_ARTICLES_PER_TICKER = int(
+    os.getenv("NEWS_FILTER_MAX_ARTICLES_PER_TICKER", "0")
+)
+# Si queda menos tiempo (ms), no se encolan más tickers (evita timeout duro sin guardar el resto).
+NEWS_FILTER_MIN_REMAINING_MS = int(os.getenv("NEWS_FILTER_MIN_REMAINING_MS", "90000"))
 
 HEADERS = {
     "User-Agent": (
@@ -344,10 +350,35 @@ def handler(event, context):
     headline_fallback = 0
     per_ticker_stats = {}
     errors = []
+    partial_due_to_time = False
+    tickers_not_started_due_to_deadline: list[str] = []
 
     for ticker, articles in raw_news.items():
         if not articles:
             continue
+
+        if context is not None:
+            remaining = context.get_remaining_time_in_millis()
+            if remaining < NEWS_FILTER_MIN_REMAINING_MS:
+                logger.warning(
+                    "Tiempo Lambda insuficiente (%sms restantes); no se procesan más tickers.",
+                    remaining,
+                )
+                partial_due_to_time = True
+                for t2, arts2 in raw_news.items():
+                    if arts2 and t2 not in per_ticker_stats:
+                        tickers_not_started_due_to_deadline.append(t2)
+                break
+
+        if NEWS_FILTER_MAX_ARTICLES_PER_TICKER > 0 and len(articles) > NEWS_FILTER_MAX_ARTICLES_PER_TICKER:
+            n_orig = len(articles)
+            articles = articles[:NEWS_FILTER_MAX_ARTICLES_PER_TICKER]
+            logger.info(
+                "%s: limitando artículos de %s a %s (NEWS_FILTER_MAX_ARTICLES_PER_TICKER)",
+                ticker,
+                n_orig,
+                len(articles),
+            )
 
         logger.info(f"Procesando {len(articles)} artículos para {ticker}...")
         processed = []
@@ -424,6 +455,8 @@ def handler(event, context):
                 "full_read_pct": read_pct,
                 "per_ticker": per_ticker_stats,
                 "errors": errors,
+                "partial_due_to_time": partial_due_to_time,
+                "tickers_not_started_due_to_deadline": tickers_not_started_due_to_deadline,
             }
         ),
     }

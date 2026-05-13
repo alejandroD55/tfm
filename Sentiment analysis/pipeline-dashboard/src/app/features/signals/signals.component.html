@@ -469,7 +469,14 @@
                   </div>
 
                   <div class="exp-card">
-                    <h4><mat-icon>article</mat-icon> Análisis de Titulares de Hoy (FinBERT)</h4>
+                    <div class="exp-card-head-row">
+                      <h4><mat-icon>article</mat-icon> Análisis de Titulares de Hoy (FinBERT)</h4>
+                      <button class="btn-news-detail" (click)="openNewsModal(row.ticker); $event.stopPropagation()"
+                              matTooltip="Ver todas las noticias con resumen IA y decisión FinBERT">
+                        <mat-icon>open_in_new</mat-icon>
+                        Más detalle
+                      </button>
+                    </div>
 
                     @if (isTraceLoading(row.ticker)) {
                       <div class="trace-loading">
@@ -646,3 +653,103 @@
 
   }
 </div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     MODAL — Detalle completo de noticias
+══════════════════════════════════════════════════════════════ -->
+@if (newsModalOpen) {
+  <div class="news-modal-backdrop" (click)="closeNewsModal()">
+    <div class="news-modal" (click)="$event.stopPropagation()">
+
+      <!-- Cabecera -->
+      <div class="nm-header">
+        <div class="nm-title">
+          <mat-icon>newspaper</mat-icon>
+          <span>Noticias — <strong>{{ newsModalTicker }}</strong></span>
+          <span class="nm-date">{{ selectedDate }}</span>
+        </div>
+        <button class="nm-close" (click)="closeNewsModal()">
+          <mat-icon>close</mat-icon>
+        </button>
+      </div>
+
+      <!-- Contenido -->
+      <div class="nm-body">
+
+        @if (newsModalLoading) {
+          <div class="nm-loading">
+            <mat-spinner diameter="36"></mat-spinner>
+            <span>Cargando noticias y análisis IA...</span>
+          </div>
+        } @else if (newsModalError) {
+          <div class="nm-error">
+            <mat-icon>error_outline</mat-icon>
+            <p>{{ newsModalError }}</p>
+          </div>
+        } @else if (newsModalData) {
+
+          <!-- Contexto diario de Bedrock -->
+          @if (newsModalData.daily_context) {
+            <div class="nm-context">
+              <mat-icon>auto_awesome</mat-icon>
+              <span><strong>Contexto del día (Bedrock):</strong> {{ newsModalData.daily_context }}</span>
+            </div>
+          }
+
+          <p class="nm-count">{{ newsModalData.total }} artículos analizados</p>
+
+          <!-- Lista de artículos -->
+          @for (art of newsModalData.articles; track $index) {
+            <div class="nm-article">
+
+              <!-- Cabecera artículo: sentimiento FinBERT + fuente + fecha -->
+              <div class="nma-header">
+                <span class="nma-sentiment"
+                      [style.background]="sentimentBg(art.sentiment)"
+                      [style.color]="sentimentColor(art.sentiment)">
+                  <mat-icon>{{ art.sentiment === 'bullish' ? 'trending_up' : art.sentiment === 'bearish' ? 'trending_down' : 'remove' }}</mat-icon>
+                  {{ sentimentLabel(art.sentiment) }} · {{ (art.confidence * 100) | number:'1.0-0' }}%
+                </span>
+                <span class="nma-source">{{ art.source }}</span>
+                <span class="nma-date">{{ art.datetime | date:'dd/MM HH:mm' }}</span>
+              </div>
+
+              <!-- Titular original -->
+              <p class="nma-headline">{{ art.headline }}</p>
+
+              <!-- Resumen Bedrock -->
+              @if (art.bedrock_summary && art.bedrock_summary !== art.headline) {
+                <div class="nma-summary">
+                  <span class="nma-summary-label">
+                    <mat-icon>auto_awesome</mat-icon> Resumen IA
+                  </span>
+                  <p>{{ art.bedrock_summary }}</p>
+                </div>
+              }
+
+              <!-- Justificación FinBERT -->
+              @if (art.justification) {
+                <p class="nma-justification">{{ art.justification }}</p>
+              }
+
+              <!-- Enlace a la noticia -->
+              @if (art.url) {
+                <a class="nma-link" [href]="art.url" target="_blank" rel="noopener noreferrer">
+                  <mat-icon>open_in_new</mat-icon>
+                  Leer artículo completo
+                </a>
+              }
+            </div>
+          }
+
+          @if (newsModalData.total === 0) {
+            <div class="nm-empty">
+              <mat-icon>inbox</mat-icon>
+              <p>No hay noticias registradas para {{ newsModalTicker }} en esta fecha.</p>
+            </div>
+          }
+        }
+      </div>
+    </div>
+  </div>
+}

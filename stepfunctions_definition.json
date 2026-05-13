@@ -45,7 +45,7 @@
           "pipeline_context.$": "$.pipeline_context"
         }
       },
-      "TimeoutSeconds": 300,
+      "TimeoutSeconds": 900,
       "ResultPath": "$.news_filter_result",
       "Retry": [
         {

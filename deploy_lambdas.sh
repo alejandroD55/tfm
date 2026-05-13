@@ -57,7 +57,8 @@ get_lambda_memory() {
 
 get_lambda_timeout() {
   case "$1" in
-    lambda_ingestion|lambda_news_filter|lambda_sentiment|lambda_indicators|lambda_bayesian|lambda_report) echo "300" ;;
+    lambda_news_filter) echo "900" ;;  # Bedrock + muchos artículos; máx. Lambda 15 min
+    lambda_ingestion|lambda_sentiment|lambda_indicators|lambda_bayesian|lambda_report) echo "300" ;;
     *) error "Lambda desconocida para timeout: $1" ;;
   esac
 }
