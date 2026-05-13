@@ -18,6 +18,8 @@ import json
 import boto3
 import os
 import logging
+
+from botocore.config import Config
 import requests
 import trafilatura
 from datetime import datetime
@@ -26,19 +28,40 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+# Reintentos ante ThrottlingException; "adaptive" reduce presión bajo límites de cuenta.
+_bedrock_retries = int(os.getenv("BEDROCK_MAX_ATTEMPTS", "12"))
 bedrock = boto3.client(
-    "bedrock-runtime", region_name=os.getenv("AWS_REGION", "eu-north-1")
+    "bedrock-runtime",
+    region_name=os.getenv("AWS_REGION", "eu-north-1"),
+    config=Config(
+        retries={"max_attempts": _bedrock_retries, "mode": "adaptive"},
+        read_timeout=int(os.getenv("BEDROCK_READ_TIMEOUT_S", "120")),
+        connect_timeout=10,
+    ),
 )
 secrets_client = boto3.client("secretsmanager")
 
-BEDROCK_MODEL_ID = os.getenv(
-    "BEDROCK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0"
-)
+
+def _default_bedrock_model_id() -> str:
+    """
+    Haiku 4.5 in many regions is only available via system inference profiles
+    (eu./us./global.*), not the legacy on-demand ID anthropic.claude-3-haiku-*.
+    """
+    r = os.getenv("AWS_REGION") or "eu-north-1"
+    if r.startswith("us-"):
+        return "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    if r.startswith("eu-"):
+        return "eu.anthropic.claude-haiku-4-5-20251001-v1:0"
+    return "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+
+BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", _default_bedrock_model_id())
 FETCH_TIMEOUT_S = int(os.getenv("FETCH_TIMEOUT_S", "8"))  # seg. máx. por petición HTTP
 MAX_CHARS_TO_MODEL = int(
     os.getenv("MAX_CHARS_TO_MODEL", "6000")
 )  # tokens aprox. → ~1500 tokens
-MAX_WORKERS = int(os.getenv("MAX_WORKERS", "5"))  # descargas en paralelo
+# Cada worker hace fetch + Bedrock; valores altos disparan ThrottlingException en cuentas pequeñas.
+MAX_WORKERS = int(os.getenv("MAX_WORKERS", "2"))
 
 HEADERS = {
     "User-Agent": (
@@ -226,7 +249,13 @@ def summarize_with_bedrock(
             "content_source": "fallback_parse_error",
         }
     except Exception as exc:
-        logger.warning(f"Error Bedrock para {ticker}: {type(exc).__name__}")
+        detail = str(exc)
+        resp = getattr(exc, "response", None)
+        if isinstance(resp, dict):
+            detail = (resp.get("Error") or {}).get("Message", detail)
+        logger.warning(
+            "Error Bedrock para %s: %s — %s", ticker, type(exc).__name__, detail
+        )
         return {
             "summary": headline,
             "relevance": "medium",

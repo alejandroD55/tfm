@@ -41,11 +41,12 @@ ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 ALIAS_NAME="live"
 GIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "nogit")
 
-LAMBDAS=(lambda_ingestion lambda_sentiment lambda_indicators lambda_bayesian lambda_report)
+LAMBDAS=(lambda_ingestion lambda_news_filter lambda_sentiment lambda_indicators lambda_bayesian lambda_report)
 
 get_lambda_memory() {
   case "$1" in
     lambda_ingestion) echo "512" ;;
+    lambda_news_filter) echo "1024" ;;
     lambda_sentiment) echo "512" ;;
     lambda_indicators) echo "512" ;;
     lambda_bayesian) echo "1024" ;;
@@ -56,7 +57,7 @@ get_lambda_memory() {
 
 get_lambda_timeout() {
   case "$1" in
-    lambda_ingestion|lambda_sentiment|lambda_indicators|lambda_bayesian|lambda_report) echo "300" ;;
+    lambda_ingestion|lambda_news_filter|lambda_sentiment|lambda_indicators|lambda_bayesian|lambda_report) echo "300" ;;
     *) error "Lambda desconocida para timeout: $1" ;;
   esac
 }
