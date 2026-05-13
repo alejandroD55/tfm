@@ -1,4 +1,35 @@
-<div class="page">
+<div class="page" [class.ui-locked]="pipelineRunning">
+  @if (pipelineRunning) {
+    <div class="pipeline-overlay" aria-live="polite" aria-busy="true">
+      <div class="overlay-card">
+        <mat-spinner diameter="44"></mat-spinner>
+        <div class="overlay-title">{{ pipelineStatusText(pipelineExecution?.status) }}</div>
+        <div class="overlay-metrics">
+          <span class="ov-chip">Ticker: <strong>{{ pipelineTicker || currentTicker || tickerInput }}</strong></span>
+          <span class="ov-chip">Fecha: <strong>{{ selectedDate }}</strong></span>
+          <span class="ov-chip">Tiempo: <strong>{{ formatElapsed(pipelineElapsedSec) }}</strong></span>
+        </div>
+        <div class="overlay-sub">La pantalla se desbloqueará automáticamente al finalizar.</div>
+        <div class="overlay-progress">
+          <div class="overlay-progress-bar">
+            <div class="overlay-progress-fill" [style.width.%]="pipelineProgressPct"></div>
+          </div>
+          <div class="overlay-progress-meta">{{ pipelineProgressPct }}% completado</div>
+          <div class="overlay-stages">
+            @for (st of pipelineStages; track st.name) {
+              <div class="ov-stage" [class]="'st-' + st.status.toLowerCase()">
+                <span class="dot"></span>
+                <span>{{ stageLabel(st.name) }}</span>
+              </div>
+            }
+          </div>
+        </div>
+        @if (pipelineExecution?.executionArn) {
+          <div class="overlay-code">{{ pipelineExecution.executionArn }}</div>
+        }
+      </div>
+    </div>
+  }
   <!-- ─── Header ─── -->
   <header class="page-head">
     <div class="page-head-text">
@@ -64,8 +95,13 @@
                         (click)="runPipelineForInstrument(r); $event.stopPropagation()"
                         [disabled]="pipelineRunning"
                         matTooltip="Ejecutar pipeline para este instrumento">
-                  <mat-icon>play_circle</mat-icon>
-                  <span>Pipeline</span>
+                  @if (pipelineRunning && (pipelineTicker === (r.displaySymbol || r.symbol))) {
+                    <mat-spinner diameter="14"></mat-spinner>
+                    <span>Ejecutando...</span>
+                  } @else {
+                    <mat-icon>play_circle</mat-icon>
+                    <span>Pipeline</span>
+                  }
                 </button>
               </div>
             </div>
@@ -221,8 +257,7 @@
           >
         } @else if (pipelineExecution.status === 'SUCCEEDED') {
           <span>
-            — completado. Refresca la página para ver los nuevos
-            datos.</span
+            — completado. Cargando automáticamente los resultados...</span
           >
         } @else if (pipelineExecution.status === 'FAILED') {
           <span> — error en la ejecución. Revisa CloudWatch Logs.</span>

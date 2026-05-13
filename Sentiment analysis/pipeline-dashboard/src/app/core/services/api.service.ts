@@ -53,6 +53,11 @@ export interface BucketStats {
   breakdown:   { prefix: string; fileCount: number; sizeBytes: number }[];
 }
 
+export interface PipelineStageStatus {
+  name: 'ingestion' | 'parallel' | 'bayesian' | 'report' | string;
+  status: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | string;
+}
+
 // ─── Service ──────────────────────────────────────────────────────────────────
 
 @Injectable({ providedIn: 'root' })
@@ -177,7 +182,14 @@ export class ApiService {
 
   /** Estado de una ejecucion de Step Functions */
   getPipelineStatus(executionArn: string): Observable<{
-    executionArn: string; status: string; startDate: string; stopDate: string | null; input: any;
+    executionArn: string;
+    status: string;
+    startDate: string;
+    stopDate: string | null;
+    input: any;
+    stages?: PipelineStageStatus[];
+    currentStage?: string | null;
+    progressPct?: number;
   }> {
     const params = new HttpParams().set('execution_arn', executionArn);
     return this.http.get<any>(`${this.baseUrl}/pipeline/status`,

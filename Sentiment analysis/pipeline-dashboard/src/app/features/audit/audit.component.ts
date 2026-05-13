@@ -44,11 +44,13 @@ export class AuditComponent implements OnInit {
   priorNodes: { name: string; states: { key: string; value: number }[] }[] = [];
 
   get filteredCpt() {
-    return this.cptRows.filter(r =>
-      (!this.cptFilterSentiment || r.sentiment === this.cptFilterSentiment) &&
-      (!this.cptFilterRsi       || r.rsi       === this.cptFilterRsi) &&
-      (!this.cptFilterTrend     || r.trend     === this.cptFilterTrend)
-    );
+    return this.cptRows
+      .filter(r =>
+        (!this.cptFilterSentiment || r.sentiment === this.cptFilterSentiment) &&
+        (!this.cptFilterRsi       || r.rsi       === this.cptFilterRsi) &&
+        (!this.cptFilterTrend     || r.trend     === this.cptFilterTrend)
+      )
+      .sort((a, b) => b.prob_up - a.prob_up);
   }
 
   ngOnInit() {

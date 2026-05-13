@@ -201,3 +201,151 @@
 .hl-text { flex: 1; color: var(--slate-800); line-height: 1.4; font-style: italic; }
 .hl-conf { color: var(--brand-600); font-weight: 700; white-space: nowrap; }
 .ev-chip.small { font-size: 9px; padding: 2px 6px; }
+
+.signals-cards-mobile { display: none; }
+
+@media (max-width: 1495px) {
+  .main-chart-full {
+    overflow: hidden;
+  }
+
+  .main-chart-full .large-donut {
+    flex-wrap: nowrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .main-chart-full .large-donut .donut-chart-wrapper {
+    width: clamp(170px, 20vw, 230px);
+    height: clamp(170px, 20vw, 230px);
+    min-width: 0;
+  }
+
+  .main-chart-full .large-donut .custom-legend {
+    min-width: 0;
+    flex: 1;
+    overflow-wrap: anywhere;
+  }
+
+  .main-chart-full .large-donut .cl-item {
+    min-width: 0;
+  }
+
+  .main-chart-full .large-donut .cl-label {
+    min-width: 0;
+  }
+
+  .signals-table-desktop { display: none; }
+
+  .signals-cards-mobile {
+    display: block;
+    margin-top: 4px;
+  }
+
+  .carousel-hint {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--slate-500);
+    margin: 4px 2px 8px;
+    .hint-dots {
+      letter-spacing: 3px;
+      color: var(--brand-500);
+      font-weight: 700;
+    }
+  }
+
+  .signals-cards-track {
+    display: flex;
+    gap: 14px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scroll-padding-inline: 12px;
+    padding: 4px 2px 12px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .signal-card {
+    scroll-snap-align: start;
+    flex: 0 0 min(460px, calc(100vw - 56px));
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-sm);
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 290px;
+  }
+
+  .signal-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .signal-card-block {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .sc-label,
+  .metric-label {
+    margin: 0;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--slate-500);
+  }
+
+  .signal-card-metrics {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .metric-item {
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--slate-50);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .mobile-no-data {
+    margin-top: 6px;
+  }
+}
+
+@media (max-width: 1495px) and (min-width: 1101px) {
+  .charts-grid-layout {
+    grid-template-columns: 1.6fr 1fr;
+    gap: 14px;
+  }
+
+  .main-chart-full .large-donut .donut-chart-wrapper {
+    width: clamp(180px, 18vw, 220px);
+    height: clamp(180px, 18vw, 220px);
+  }
+
+  .main-chart-full .large-donut .custom-legend {
+    font-size: 12px;
+  }
+
+  .signals-cards-track {
+    gap: 16px;
+  }
+
+  .signal-card {
+    flex-basis: min(430px, calc(100vw - 96px));
+  }
+}

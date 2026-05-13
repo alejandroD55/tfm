@@ -9,7 +9,7 @@ import { MatChipsModule } from '@angular/material/chips';
 import { MatExpansionModule } from '@angular/material/expansion';
 import { NgxChartsModule } from '@swimlane/ngx-charts';
 import { catchError, debounceTime, interval, of, Subject, switchMap, takeWhile } from 'rxjs';
-import { ApiService, InstrumentResult, InstrumentProfile } from '../../core/services/api.service';
+import { ApiService, InstrumentResult, InstrumentProfile, PipelineStageStatus } from '../../core/services/api.service';
 import { TraceService } from '../../core/services/trace.service';
 import { ReportService } from '../../core/services/report.service';
 import { ReportDateEntry } from '../../core/models/report.model';
@@ -80,6 +80,16 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
 
   pipelineRunning = false;
   pipelineExecution: any = null;
+  pipelineTicker = '';
+  pipelineElapsedSec = 0;
+  pipelineStages: PipelineStageStatus[] = [
+    { name: 'ingestion', status: 'PENDING' },
+    { name: 'parallel', status: 'PENDING' },
+    { name: 'bayesian', status: 'PENDING' },
+    { name: 'report', status: 'PENDING' },
+  ];
+  pipelineProgressPct = 0;
+  private pipelineTimer: ReturnType<typeof setInterval> | null = null;
 
   lineScheme: any = { domain: ['#3b82f6'] };
   chartView: [number, number] = [800, 260];
@@ -118,6 +128,7 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     this.searchSubject.complete();
+    this.stopPipelineTimer();
   }
 
   // ─── Instrument search ────────────────────────────────────────────
@@ -270,8 +281,14 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
     const ticker = this.tickerInput.trim().toUpperCase();
     if (!ticker || this.pipelineRunning) return;
 
+    this.pipelineTicker = ticker;
+    this.currentTicker = ticker;
     this.pipelineRunning = true;
     this.pipelineExecution = null;
+    this.pipelineElapsedSec = 0;
+    this.pipelineProgressPct = 0;
+    this.pipelineStages = this.pipelineStages.map((s) => ({ ...s, status: 'PENDING' }));
+    this.startPipelineTimer();
 
     this.api.runPipeline({ ticker, batch_date: this.selectedDate }).subscribe({
       next: (exec) => {
@@ -280,6 +297,7 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
       },
       error: (err) => {
         this.pipelineRunning = false;
+        this.stopPipelineTimer();
         this.pipelineExecution = {
           status: 'FAILED',
           message: err.error?.detail ?? 'Error al lanzar',
@@ -297,11 +315,70 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
         takeWhile((s) => s?.status === 'RUNNING', true),
       )
       .subscribe((status) => {
-        if (status) this.pipelineExecution = status;
+        if (status) {
+          this.pipelineExecution = status;
+          if (status.stages?.length) {
+            this.pipelineStages = status.stages;
+          }
+          if (typeof status.progressPct === 'number') {
+            this.pipelineProgressPct = status.progressPct;
+          }
+        }
         if (status?.status !== 'RUNNING') {
           this.pipelineRunning = false;
+          this.stopPipelineTimer();
+          if (status?.status === 'SUCCEEDED') {
+            this.pipelineProgressPct = 100;
+          }
+          if (status?.status === 'SUCCEEDED') {
+            // Auto-recarga de datos al completar para evitar que el usuario
+            // tenga que pulsar "Explorar" manualmente.
+            this.loadTicker();
+            setTimeout(() => {
+              document.querySelector('.ticker-banner')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 120);
+          }
         }
       });
+  }
+
+  private startPipelineTimer() {
+    this.stopPipelineTimer();
+    this.pipelineTimer = setInterval(() => {
+      this.pipelineElapsedSec += 1;
+    }, 1000);
+  }
+
+  private stopPipelineTimer() {
+    if (this.pipelineTimer) {
+      clearInterval(this.pipelineTimer);
+      this.pipelineTimer = null;
+    }
+  }
+
+  formatElapsed(seconds: number): string {
+    const mm = Math.floor(seconds / 60).toString().padStart(2, '0');
+    const ss = Math.floor(seconds % 60).toString().padStart(2, '0');
+    return `${mm}:${ss}`;
+  }
+
+  pipelineStatusText(status?: string): string {
+    const s = (status || '').toUpperCase();
+    if (s === 'RUNNING') return 'Pipeline en ejecución';
+    if (s === 'SUCCEEDED') return 'Pipeline completado';
+    if (s === 'FAILED') return 'Pipeline fallido';
+    if (s === 'ABORTED') return 'Pipeline abortado';
+    return 'Lanzando ejecución...';
+  }
+
+  stageLabel(name: string): string {
+    const map: Record<string, string> = {
+      ingestion: 'Ingestión',
+      parallel: 'Sentimiento + Indicadores',
+      bayesian: 'Bayesiano',
+      report: 'Reporte',
+    };
+    return map[name] || name;
   }
 
   pipelineStatusIcon(status: string): string {

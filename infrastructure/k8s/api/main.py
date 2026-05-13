@@ -64,6 +64,22 @@ sfn = boto3.client("stepfunctions", region_name=AWS_REGION)
 lmb = boto3.client("lambda", region_name=AWS_REGION)
 secrets_api = boto3.client("secretsmanager", region_name=AWS_REGION)
 
+_PIPELINE_STAGE_ORDER = [
+    "ingestion",
+    "parallel",
+    "bayesian",
+    "report",
+]
+
+_STATE_TO_STAGE = {
+    "lambda_ingestion": "ingestion",
+    "lambda_sentiment": "parallel",
+    "lambda_indicators": "parallel",
+    "parallel_analysis": "parallel",
+    "lambda_bayesian": "bayesian",
+    "lambda_report": "report",
+}
+
 # Cache de claves externas (se leen una vez por instancia del pod)
 _finnhub_key_cache: Optional[str] = None
 
@@ -666,9 +682,58 @@ def pipeline_status(
     check_api_key(x_api_key)
     try:
         desc = sfn.describe_execution(executionArn=execution_arn)
+        history_resp = sfn.get_execution_history(
+            executionArn=execution_arn,
+            maxResults=500,
+            reverseOrder=False,
+        )
+        entered_stages = set()
+        exited_stages = set()
+        failed_stage = None
+        for ev in history_resp.get("events", []):
+            entered = ev.get("stateEnteredEventDetails", {})
+            exited = ev.get("stateExitedEventDetails", {})
+            failed = ev.get("executionFailedEventDetails", {})
+            state_name = entered.get("name") or exited.get("name")
+            stage = _STATE_TO_STAGE.get(state_name)
+            if stage and entered:
+                entered_stages.add(stage)
+            if stage and exited:
+                exited_stages.add(stage)
+            if failed and not failed_stage:
+                # Si falla, dejamos la última etapa "entered" como candidata.
+                ordered_entered = [s for s in _PIPELINE_STAGE_ORDER if s in entered_stages]
+                failed_stage = ordered_entered[-1] if ordered_entered else None
+
+        execution_status = desc["status"]
+        stages = []
+        current_stage = None
+        for stage_name in _PIPELINE_STAGE_ORDER:
+            st = "PENDING"
+            if stage_name in exited_stages:
+                st = "SUCCEEDED"
+            elif stage_name in entered_stages:
+                st = "RUNNING" if execution_status == "RUNNING" else "SUCCEEDED"
+            stages.append({"name": stage_name, "status": st})
+            if st == "RUNNING":
+                current_stage = stage_name
+
+        if execution_status in ("FAILED", "ABORTED", "TIMED_OUT"):
+            failed_target = failed_stage or current_stage
+            if failed_target:
+                for st in stages:
+                    if st["name"] == failed_target:
+                        st["status"] = "FAILED"
+                        break
+
+        progress_done = sum(1 for st in stages if st["status"] == "SUCCEEDED")
+        progress_pct = int((progress_done / max(len(stages), 1)) * 100)
+        if execution_status == "SUCCEEDED":
+            progress_pct = 100
+
         return {
             "executionArn": execution_arn,
-            "status": desc["status"],
+            "status": execution_status,
             "startDate": desc["startDate"].isoformat(),
             "stopDate": (
                 desc.get("stopDate", {}) and desc["stopDate"].isoformat()
@@ -676,6 +741,9 @@ def pipeline_status(
                 else None
             ),
             "input": json.loads(desc.get("input", "{}")),
+            "stages": stages,
+            "currentStage": current_stage,
+            "progressPct": progress_pct,
         }
     except Exception as e:
         logger.exception("pipeline_status error")

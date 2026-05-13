@@ -258,7 +258,7 @@
       </div>
     </section>
     
-    <div class="card table-card">
+    <div class="card table-card signals-table-desktop">
       <table mat-table [dataSource]="dataSource" multiTemplateDataRows matSort class="aurora-table">
 
         <ng-container matColumnDef="ticker">
@@ -465,6 +465,94 @@
         </tr>
       </table>
     </div>
+
+    <section class="signals-cards-mobile" aria-label="Señales en tarjetas">
+      @if (dataSource.filteredData.length > 0) {
+        <div class="carousel-hint" aria-hidden="true">
+          <span>Desliza para recorrer señales</span>
+          <span class="hint-dots">• • •</span>
+        </div>
+        <div class="signals-cards-track" role="list" aria-label="Lista horizontal de señales">
+          @for (row of dataSource.filteredData; track row.ticker) {
+            <article class="signal-card" role="listitem" [attr.aria-label]="'Señal para ' + row.ticker">
+              <header class="signal-card-head">
+                <span class="ticker-name">{{ row.ticker }}</span>
+                <span class="signal-pill {{ row.signal.toLowerCase() }}">
+                  <mat-icon>{{ signalIcon(row.signal) }}</mat-icon>
+                  {{ row.signal === 'BUY' ? 'COMPRAR' : row.signal === 'SELL' ? 'CASH' : 'MANTENER' }}
+                </span>
+              </header>
+
+              <div class="signal-card-block">
+                <p class="sc-label">Confianza Alcista</p>
+                <div class="prob-cell">
+                  <div class="prob-gauge">
+                    <div class="gauge-fill"
+                        [style.width.%]="row.prob_up*100"
+                        [ngClass]="getProbClass(row.prob_up)"></div>
+                  </div>
+                  <span class="prob-pct" [ngClass]="getTextClass(row.prob_up)">
+                    {{ (row.prob_up*100)|number:'1.1-1' }}%
+                  </span>
+                </div>
+              </div>
+
+              <div class="signal-card-block">
+                <p class="sc-label">Estado de los Nodos</p>
+                <div class="ev-row">
+                  <span class="ev-chip {{ sentimentClass(row.evidence.sentiment) }}">
+                    <mat-icon>{{ sentimentIcon(row.evidence.sentiment) }}</mat-icon>
+                    {{ translateState(row.evidence.sentiment) }}
+                  </span>
+                  <span class="ev-chip {{ rsiClass(row.evidence.rsi) }}">
+                    <mat-icon>show_chart</mat-icon>
+                    {{ translateState(row.evidence.rsi) }}
+                  </span>
+                  <span class="ev-chip {{ trendClass(row.evidence.trend) }}">
+                    <mat-icon>{{ row.evidence.trend === 'uptrend' ? 'trending_up' : 'trending_down' }}</mat-icon>
+                    {{ translateState(row.evidence.trend) }}
+                  </span>
+                  <span class="ev-chip {{ volClass(row.evidence.volatility) }}">
+                    <mat-icon>swap_vert</mat-icon>
+                    {{ translateState(row.evidence.volatility) }}
+                  </span>
+                </div>
+              </div>
+
+              <div class="signal-card-metrics">
+                <div class="metric-item">
+                  <span class="metric-label">Ciclos Cerrados</span>
+                  <span class="num">{{ row.trades_closed }}</span>
+                </div>
+                <div class="metric-item">
+                  <span class="metric-label">Tasa de Acierto</span>
+                  <span class="ts-chip wr" [class.good]="row.win_rate>=0.5">
+                    <mat-icon>track_changes</mat-icon>{{ (row.win_rate*100)|number:'1.0-0' }}%
+                  </span>
+                </div>
+                <div class="metric-item">
+                  <span class="metric-label">Rentabilidad Anual</span>
+                  <span class="ret-val" [class.pos]="row.cumulative_return>0" [class.neg]="row.cumulative_return<0">
+                    {{ row.cumulative_return>0?'+':'' }}{{ (row.cumulative_return*100)|number:'1.2-2' }}%
+                  </span>
+                </div>
+                <div class="metric-item">
+                  <span class="metric-label">Mejora vs Mercado</span>
+                  <span class="ret-val" [class.pos]="row.alpha_vs_benchmark>0" [class.neg]="row.alpha_vs_benchmark<0">
+                    {{ row.alpha_vs_benchmark>0?'+':'' }}{{ (row.alpha_vs_benchmark*100)|number:'1.2-2' }}%
+                  </span>
+                </div>
+              </div>
+            </article>
+          }
+        </div>
+      } @else {
+        <div class="no-data mobile-no-data">
+          <mat-icon>filter_alt_off</mat-icon>
+          <p>Sin tickers para los filtros aplicados</p>
+        </div>
+      }
+    </section>
 
   }
 </div>

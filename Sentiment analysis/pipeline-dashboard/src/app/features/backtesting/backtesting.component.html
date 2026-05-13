@@ -319,6 +319,73 @@
           </td>
         </tr>
       </table>
+
+      <div class="carousel-hint" aria-hidden="true">
+        <span>Desliza para ver más activos</span>
+        <span class="hint-dots">• • •</span>
+      </div>
+      <div class="asset-cards" aria-label="Detalle financiero por activo en tarjetas">
+        @for (r of tableSource?.data ?? []; track r.ticker) {
+          <article class="asset-card">
+            <header class="asset-card-head">
+              <span class="ticker-name">{{ r.ticker }}</span>
+              <span class="signal-pill {{ r.signal.toLowerCase() }}">
+                {{ r.signal === 'BUY' ? 'COMPRAR' : r.signal === 'SELL' ? 'CASH' : 'MANTENER' }}
+              </span>
+            </header>
+
+            <div class="asset-card-grid">
+              <div class="asset-metric">
+                <span class="metric-label">Rentabilidad IA</span>
+                <span class="num" [class.pos]="r.cumulative_return>0" [class.neg]="r.cumulative_return<0">
+                  {{ r.cumulative_return>0?'+':'' }}{{ (r.cumulative_return*100)|number:'1.2-2' }}%
+                </span>
+              </div>
+              <div class="asset-metric">
+                <span class="metric-label">Mercado (B&H)</span>
+                <span class="num">{{ r.buy_hold_return>0?'+':'' }}{{ (r.buy_hold_return*100)|number:'1.2-2' }}%</span>
+              </div>
+              <div class="asset-metric">
+                <span class="metric-label">Mejora vs Mercado</span>
+                <span class="num bold" [class.pos]="r.alpha_vs_benchmark>0" [class.neg]="r.alpha_vs_benchmark<0">
+                  {{ r.alpha_vs_benchmark>0?'+':'' }}{{ (r.alpha_vs_benchmark*100)|number:'1.2-2' }}%
+                </span>
+              </div>
+              <div class="asset-metric">
+                <span class="metric-label">Ratio Sharpe</span>
+                <span class="num" [class.pos]="r.sharpe_ratio>1" [class.neg]="r.sharpe_ratio<0">{{ r.sharpe_ratio|number:'1.2-2' }}</span>
+              </div>
+              <div class="asset-metric">
+                <span class="metric-label">Caída Máx.</span>
+                <span class="num neg">{{ (r.max_drawdown*100)|number:'1.2-2' }}%</span>
+              </div>
+              <div class="asset-metric">
+                <span class="metric-label">Capital Final</span>
+                <span class="num" [class.pos]="r.final_equity>10000" [class.neg]="r.final_equity<10000">
+                  $&nbsp;{{ r.final_equity|number:'1.0-0' }}
+                </span>
+              </div>
+              <div class="asset-metric">
+                <span class="metric-label">Ciclos</span>
+                <span class="num">{{ r.trades_closed }}</span>
+              </div>
+              <div class="asset-metric">
+                <span class="metric-label">Tasa Acierto</span>
+                <span class="num" [class.pos]="r.win_rate>=0.5">{{ (r.win_rate*100)|number:'1.0-0' }}%</span>
+              </div>
+              <div class="asset-metric">
+                <span class="metric-label">Factor Beneficio</span>
+                <span class="num" [class.pos]="r.profit_factor>1" [class.neg]="r.profit_factor<1">{{ r.profit_factor|number:'1.2-2' }}</span>
+              </div>
+            </div>
+          </article>
+        } @empty {
+          <div class="asset-card-empty">
+            <mat-icon>info</mat-icon>
+            <p>Calculando datos detallados...</p>
+          </div>
+        }
+      </div>
     </section>
 
   }

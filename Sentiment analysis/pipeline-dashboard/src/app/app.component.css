@@ -219,13 +219,13 @@
 }
 
 /* ─── Responsive ───────────────────────────────────────────────── */
-@media (max-width: 1100px) {
-  .aurora-sidebar { flex: 0 0 80px; width: 80px; }
-  .brand-tag      { display: none; }
+@media (max-width: 1495px) {
+  .aurora-sidebar  { display: none; }   /* oculto desde tablet/desktop estrecho */
+  .brand-tag       { display: none; }
+  .aurora-content  { padding: 20px 22px 34px; }
 }
 
 @media (max-width: 720px) {
-  .aurora-sidebar  { display: none; }   /* oculto en móvil            */
   .aurora-content  { padding: 16px; }
   .topbar-center   { display: none; }
 }
