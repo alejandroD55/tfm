@@ -5,6 +5,7 @@ import psycopg2
 import os
 import pandas as pd
 import numpy as np
+import yfinance as yf
 from datetime import datetime, timedelta
 import logging
 
@@ -335,6 +336,140 @@ def compute_benchmark(signals_df):
     return benchmark
 
 
+def get_close_price(ticker: str, date_str: str) -> float | None:
+    """Obtiene el precio de cierre de un ticker en una fecha concreta vía yfinance."""
+    try:
+        target = pd.to_datetime(date_str).date()
+        # Descarga un rango de 7 días para asegurar que captura el cierre
+        # aunque caiga en fin de semana o festivo
+        start = target - timedelta(days=1)
+        end   = target + timedelta(days=6)
+        df = yf.download(ticker, start=start, end=end, progress=False)
+        if df.empty:
+            return None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.droplevel(1)
+        # Buscar la fila más próxima a la fecha objetivo (sin pasarse)
+        df.index = pd.to_datetime(df.index).date
+        candidates = [d for d in df.index if d >= target]
+        if not candidates:
+            return None
+        row = df.loc[min(candidates)]
+        close = row.get("Close") or row.get("close")
+        return float(close) if close else None
+    except Exception as exc:
+        logger.warning(f"yfinance no pudo obtener precio para {ticker} en {date_str}: {exc}")
+        return None
+
+
+def _outcome(price_d0: float, price_dn: float | None) -> str | None:
+    """Clasifica el movimiento de precio como UP / DOWN / FLAT."""
+    if price_d0 is None or price_dn is None or price_d0 == 0:
+        return None
+    change = (price_dn - price_d0) / price_d0
+    if change > 0.005:   # +0.5%
+        return "UP"
+    if change < -0.005:  # -0.5%
+        return "DOWN"
+    return "FLAT"
+
+
+def _is_correct(signal: str, outcome: str | None) -> bool | None:
+    """Devuelve True si la señal predijo correctamente la dirección."""
+    if outcome is None:
+        return None
+    if signal == "BUY"  and outcome == "UP":   return True
+    if signal == "SELL" and outcome == "DOWN": return True
+    if signal == "HOLD" and outcome == "FLAT": return True
+    return False
+
+
+def upsert_signal_outcomes(connection, batch_date: str, signals_df: pd.DataFrame,
+                           explanations_raw: list, run_id: str):
+    """
+    Persiste señales del día en signal_outcomes (paso 1: precio D0 y nodos).
+    Además actualiza outcomes de días anteriores (D+1, D+3, D+5) si ya tienen precio D0.
+    """
+    cursor = connection.cursor()
+
+    # ── Paso 1: insertar señales de hoy ───────────────────────────────────────
+    # Leer señales + nodos de evidencia desde Aurora (signal_explanations join trading_signals)
+    cursor.execute("""
+        SELECT ts.ticker, ts.signal, ts.prob_up, ts.prob_down,
+               se.sentiment_state, se.rsi_state, se.trend_state, se.volatility_state
+        FROM trading_signals ts
+        LEFT JOIN signal_explanations se
+               ON ts.batch_date = se.batch_date AND ts.ticker = se.ticker
+        WHERE ts.batch_date = %s
+    """, (batch_date,))
+    rows = cursor.fetchall()
+
+    for row in rows:
+        ticker, signal, prob_up, prob_down, sent, rsi, trend, vol = row
+        price_d0 = get_close_price(ticker, batch_date)
+        cursor.execute("""
+            INSERT INTO signal_outcomes
+                (batch_date, ticker, run_id, signal, prob_up, prob_down,
+                 sentiment_state, rsi_state, trend_state, volatility_state, price_d0)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (batch_date, ticker) DO UPDATE SET
+                signal           = EXCLUDED.signal,
+                prob_up          = EXCLUDED.prob_up,
+                prob_down        = EXCLUDED.prob_down,
+                sentiment_state  = EXCLUDED.sentiment_state,
+                rsi_state        = EXCLUDED.rsi_state,
+                trend_state      = EXCLUDED.trend_state,
+                volatility_state = EXCLUDED.volatility_state,
+                price_d0         = EXCLUDED.price_d0,
+                updated_at       = CURRENT_TIMESTAMP
+        """, (batch_date, ticker, run_id, signal,
+              float(prob_up) if prob_up else None,
+              float(prob_down) if prob_down else None,
+              sent, rsi, trend, vol, price_d0))
+
+    # ── Paso 2: actualizar outcomes de días anteriores ─────────────────────────
+    # Para D+1: buscar señales del día batch_date - 1
+    # Para D+3: buscar señales del día batch_date - 3
+    # Para D+5: buscar señales del día batch_date - 5
+    today = pd.to_datetime(batch_date).date()
+    for days_ago, col_price, col_outcome, col_correct in [
+        (1, "price_d1", "outcome_d1", "correct_d1"),
+        (3, "price_d3", "outcome_d3", "correct_d3"),
+        (5, "price_d5", "outcome_d5", "correct_d5"),
+    ]:
+        target_date = str(today - timedelta(days=days_ago))
+        cursor.execute("""
+            SELECT ticker, signal, price_d0
+            FROM signal_outcomes
+            WHERE batch_date = %s AND price_d0 IS NOT NULL AND %s IS NULL
+        """, (target_date, psycopg2.extensions.AsIs(col_outcome)))
+
+        # Evitar error de columna dinámica con consulta directa
+        cursor.execute(f"""
+            SELECT ticker, signal, price_d0
+            FROM signal_outcomes
+            WHERE batch_date = %s AND price_d0 IS NOT NULL AND {col_outcome} IS NULL
+        """, (target_date,))
+        pending = cursor.fetchall()
+
+        for ticker, signal, price_d0 in pending:
+            price_dn = get_close_price(ticker, batch_date)   # el precio de hoy ES D+N
+            outcome  = _outcome(price_d0, price_dn)
+            correct  = _is_correct(signal, outcome)
+            if outcome:
+                cursor.execute(f"""
+                    UPDATE signal_outcomes
+                    SET {col_price} = %s, {col_outcome} = %s, {col_correct} = %s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE batch_date = %s AND ticker = %s
+                """, (price_dn, outcome, correct, target_date, ticker))
+
+    connection.commit()
+    cursor.close()
+    logger.info(f"signal_outcomes: {len(rows)} señales de hoy insertadas/actualizadas, "
+                f"outcomes históricos de D+1/D+3/D+5 actualizados")
+
+
 def upsert_pipeline_kpi(connection, batch_date, run_id, trigger_type, stage, metrics):
     cursor = connection.cursor()
     cursor.execute(
@@ -454,6 +589,15 @@ def handler(event, context):
                 "trigger_type": ctx["trigger_type"],
             },
         )
+
+        # ── Registrar señales en signal_outcomes para calibración futura ────────
+        try:
+            upsert_signal_outcomes(
+                connection, today, signals_df, explanations, ctx["run_id"]
+            )
+        except Exception as exc:
+            # No crítico: si falla no interrumpe el pipeline
+            logger.warning(f"signal_outcomes no actualizado: {exc}")
 
         cursor = connection.cursor()
         cursor.execute(
