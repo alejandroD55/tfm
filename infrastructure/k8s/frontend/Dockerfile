@@ -13,7 +13,7 @@ WORKDIR /app
 COPY ["Sentiment analysis/pipeline-dashboard/package.json", "./"]
 COPY ["Sentiment analysis/pipeline-dashboard/package-lock.json", "./"]
 
-RUN npm ci --prefer-offline --no-audit
+RUN npm cache clean --force && npm ci --no-audit
 
 # Copiar el resto del proyecto Angular
 COPY ["Sentiment analysis/pipeline-dashboard/", "./"]
