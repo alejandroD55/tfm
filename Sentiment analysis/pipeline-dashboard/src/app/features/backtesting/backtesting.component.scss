@@ -50,7 +50,13 @@
 
 /* Gráficos elásticos */
 .chart-host { width: 100%; height: 260px; overflow: hidden; }
-.chart-host-small { width: 100%; height: 220px; overflow: hidden; }
+/* Sharpe / Drawdown: altura base; el TS suele elevar [style.height.px] según nº de ETFs */
+.chart-host-small {
+  width: 100%;
+  min-height: 260px;
+  height: 320px;
+  overflow: hidden;
+}
 .chart-card { padding: 18px 16px 12px; }
 
 /* Ocultar las bandas grises/blancas de fondo en el gráfico agrupado */

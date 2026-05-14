@@ -171,13 +171,14 @@
           </div>
           <span class="card-sub">Calidad del riesgo por ETF</span>
         </div>
-        <div class="chart-host-small">
+        <div class="chart-host-small" [style.height.px]="sharpeDrawdownChartHeight">
           <ngx-charts-bar-horizontal
             [results]="sharpeChart"
             [xAxis]="true" [yAxis]="true" [showGridLines]="true"
             [customColors]="customColorsSharpe"
             xAxisLabel="Valor del Ratio" [showXAxisLabel]="true"
-            [showDataLabel]="true" [roundEdges]="true">
+            [showDataLabel]="true" [roundEdges]="true"
+            [barPadding]="6">
           </ngx-charts-bar-horizontal>
         </div>
         <div class="hint hint-info">
@@ -194,13 +195,14 @@
           </div>
           <span class="card-sub">Riesgo por ETF</span>
         </div>
-        <div class="chart-host-small">
+        <div class="chart-host-small" [style.height.px]="sharpeDrawdownChartHeight">
           <ngx-charts-bar-horizontal
             [results]="drawdownChart"
             [xAxis]="true" [yAxis]="true" [showGridLines]="true"
             [scheme]="drawdownScheme"
             xAxisLabel="Caída sufrida (%)" [showXAxisLabel]="true"
-            [showDataLabel]="true" [roundEdges]="true">
+            [showDataLabel]="true" [roundEdges]="true"
+            [barPadding]="6">
           </ngx-charts-bar-horizontal>
         </div>
         <div class="hint hint-warn">

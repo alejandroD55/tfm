@@ -41,6 +41,9 @@ export class BacktestingComponent implements OnInit, AfterViewInit {
   drawdownChart: ChartDataPoint[] = [];
   alphaChart: ChartDataPoint[] = [];
 
+  /** Altura del host para barras horizontales (Sharpe / Drawdown): escala con nº de ETFs. */
+  sharpeDrawdownChartHeight = 320;
+
   tableSource = new MatTableDataSource<TickerView>();
   tableCols = ['ticker', 'signal', 'return', 'bh', 'alpha', 'sharpe', 'drawdown', 'equity', 'trades', 'winrate', 'pf'];
 
@@ -110,6 +113,20 @@ export class BacktestingComponent implements OnInit, AfterViewInit {
     this.sharpeChart   = this.reportSvc.sharpeChart(this.tickerViews);
     this.drawdownChart = this.reportSvc.drawdownChart(this.tickerViews);
     this.alphaChart    = this.reportSvc.alphaChart(this.tickerViews);
+    this.refreshHorizontalChartHeight();
+  }
+
+  /** ngx-charts reparte la altura entre categorías; sin esto las barras quedan demasiado finas. */
+  private refreshHorizontalChartHeight(): void {
+    const n = Math.max(
+      this.sharpeChart.length,
+      this.drawdownChart.length,
+      this.tickerViews.length,
+      1
+    );
+    const perBar = 44;
+    const chrome = 120;
+    this.sharpeDrawdownChartHeight = Math.min(720, Math.max(260, n * perBar + chrome));
   }
 
   qualityLabel(s: number) {
