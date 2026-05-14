@@ -34,6 +34,35 @@
           "BackoffRate": 2
         }
       ],
+      "Next": "lambda_macro_ingestion"
+    },
+    "lambda_macro_ingestion": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "lambda_macro_ingestion",
+        "Payload": {
+          "pipeline_context.$": "$.pipeline_context"
+        }
+      },
+      "TimeoutSeconds": 300,
+      "ResultPath": "$.macro_ingestion_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "lambda_news_filter",
+          "ResultPath": "$.macro_ingestion_error",
+          "Comment": "Si falla la ingesta macro, el pipeline continúa sin contexto macro"
+        }
+      ],
       "Next": "lambda_news_filter"
     },
     "lambda_news_filter": {
@@ -58,9 +87,38 @@
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
-          "Next": "parallel_analysis",
+          "Next": "lambda_macro_context",
           "ResultPath": "$.news_filter_error",
-          "Comment": "Si el filtro falla, continúa con raw_news — el pipeline no se detiene"
+          "Comment": "Si el filtro falla, continúa igualmente hacia macro_context"
+        }
+      ],
+      "Next": "lambda_macro_context"
+    },
+    "lambda_macro_context": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "lambda_macro_context",
+        "Payload": {
+          "pipeline_context.$": "$.pipeline_context"
+        }
+      },
+      "TimeoutSeconds": 300,
+      "ResultPath": "$.macro_context_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "parallel_analysis",
+          "ResultPath": "$.macro_context_error",
+          "Comment": "Si falla el contexto macro, el pipeline continúa sin ajuste macro"
         }
       ],
       "Next": "parallel_analysis"

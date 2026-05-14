@@ -38,13 +38,15 @@ secrets_client = boto3.client("secretsmanager")
 rds_client = boto3.client("rds")
 
 try:
-    from mongo_utils import upsert_bayesian_trace as _mongo_upsert_bayesian_trace
+    from mongo_utils import upsert_bayesian_trace  as _mongo_upsert_bayesian_trace
     from mongo_utils import upsert_bayesian_report as _mongo_upsert_bayesian_report
+    from mongo_utils import read_macro_context      as _mongo_read_macro_context
 
     logger.info("mongo_utils (bayesian) cargado")
 except ImportError:
-    _mongo_upsert_bayesian_trace = None
+    _mongo_upsert_bayesian_trace  = None
     _mongo_upsert_bayesian_report = None
+    _mongo_read_macro_context     = None
     logger.warning("mongo_utils no disponible en lambda_bayesian")
 
 MODEL_CONFIG = {
@@ -364,23 +366,61 @@ def create_bayesian_network():
     return model
 
 
-def infer_signal(model, evidence_states):
-    infer = VariableElimination(model)
+def get_macro_context(batch_date: str) -> dict:
+    """Lee el contexto macro del día desde MongoDB. Vacío si no existe."""
+    if not _mongo_read_macro_context:
+        return {}
+    try:
+        return _mongo_read_macro_context(batch_date) or {}
+    except Exception as exc:
+        logger.warning(f"No se pudo leer macro_context: {exc}")
+        return {}
+
+
+def infer_signal(model, evidence_states, macro_context: dict = None):
+    infer  = VariableElimination(model)
     result = infer.query(
         variables=["MarketDirection"], evidence=evidence_states, show_progress=False
     )
-    prob_up = round(float(result.values[1]), 4)
-    prob_down = round(float(result.values[0]), 4)
+    prob_up_raw   = round(float(result.values[1]), 4)
+    prob_down_raw = round(float(result.values[0]), 4)
+
+    # ── Aplicar macro_adjustment ──────────────────────────────────────────────
+    macro_adjustment = 0.0
+    macro_sentiment  = "neutral"
+    risk_regime      = "NEUTRAL"
+
+    if macro_context:
+        macro_adjustment = float(macro_context.get("macro_adjustment", 0.0))
+        macro_sentiment  = macro_context.get("macro_sentiment", "neutral")
+        risk_regime      = macro_context.get("risk_regime", "NEUTRAL")
+
+    # prob_up ajustada: capada en [0, 1]
+    prob_up_adjusted = round(
+        max(0.0, min(1.0, prob_up_raw + macro_adjustment)), 4
+    )
+
+    if macro_adjustment != 0.0:
+        logger.info(
+            f"macro_adjustment={macro_adjustment:+.3f} "
+            f"({macro_sentiment}/{risk_regime}): "
+            f"prob_up {prob_up_raw} → {prob_up_adjusted}"
+        )
 
     cfg = MODEL_CONFIG["signal_thresholds"]
-    if prob_up >= cfg["BUY"]["prob_up_above"]:
+    if prob_up_adjusted >= cfg["BUY"]["prob_up_above"]:
         signal = "BUY"
-    elif prob_up <= cfg["SELL"]["prob_up_below"]:
+    elif prob_up_adjusted <= cfg["SELL"]["prob_up_below"]:
         signal = "SELL"
     else:
         signal = "HOLD"
 
-    return signal, prob_up, prob_down
+    return signal, prob_up_adjusted, prob_down_raw, {
+        "prob_up_raw":       prob_up_raw,
+        "macro_adjustment":  macro_adjustment,
+        "macro_sentiment":   macro_sentiment,
+        "risk_regime":       risk_regime,
+    }
 
 
 def build_reasoning(evidence_states, prob_up, signal):
@@ -559,6 +599,17 @@ def handler(event, context):
         tickers = [row[0] for row in cursor.fetchall()]
         cursor.close()
 
+        # ── Leer contexto macro del día (genera macro_adjustment) ────────────
+        macro_context = get_macro_context(latest_date)
+        if macro_context:
+            logger.info(
+                f"Contexto macro cargado: sentiment={macro_context.get('macro_sentiment')} "
+                f"regime={macro_context.get('risk_regime')} "
+                f"adj={macro_context.get('macro_adjustment', 0):+.3f}"
+            )
+        else:
+            logger.info("Sin contexto macro disponible — ajuste = 0.0")
+
         tickers_trace, signals_processed, skipped = {}, 0, []
 
         for ticker in tickers:
@@ -596,7 +647,9 @@ def handler(event, context):
                     "Trend": discretize_trend(float(sma_20), float(sma_50)),
                     "Volatility": vol_state,
                 }
-                signal, prob_up, prob_down = infer_signal(model, evidence_states)
+                signal, prob_up, prob_down, macro_info = infer_signal(
+                    model, evidence_states, macro_context
+                )
                 reasoning = build_reasoning(evidence_states, prob_up, signal)
 
                 upsert_signal_explanation(
@@ -650,6 +703,7 @@ def handler(event, context):
                                 else MODEL_CONFIG["signal_thresholds"]["HOLD"]["range"]
                             )
                         ),
+                        "macro_context": macro_info,
                     },
                     "reasoning": reasoning,
                 }

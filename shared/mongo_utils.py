@@ -13,6 +13,8 @@ Colecciones en la BD 'tfm':
   bayesian_reports  → traza por ticker: raw values, discretizacion, inferencia
   bayesian_traces   → JSON completo de traza bayesiana por batch_date (API /trace)
   reports           → reporte diario completo (backtesting, metricas, senales)
+  macro_news        → noticias macro globales (FED, inflacion, geopolitica…)
+  macro_context     → MacroSentiment + RiskRegime calculados por batch_date
 
 Indices recomendados (ejecutar via POST /mongo/setup-indexes):
   etf_universe:     {_id:1}
@@ -22,6 +24,8 @@ Indices recomendados (ejecutar via POST /mongo/setup-indexes):
   bayesian_reports: {batch_date:1, ticker:1} unico, {ticker:1, batch_date:-1}
   bayesian_traces:  {batch_date:1} unico
   reports:     {report_date:1} unico
+  macro_news:  {batch_date:1}, {category:1}
+  macro_context: {batch_date:1} unico
 """
 import json
 import logging
@@ -448,3 +452,100 @@ def upsert_report(report_data: dict):
         )
     except Exception as exc:
         logger.warning(f"MongoDB upsert_report failed ({report_date}): {exc}")
+
+
+# ─── macro_news: noticias macroeconómicas globales ────────────────────────────
+
+def upsert_macro_news(batch_date: str, articles: list):
+    """
+    Inserta noticias macroeconómicas globales en la colección macro_news.
+    Deduplica por URL usando upsert.
+    """
+    try:
+        db = _get_db()
+        if db is None:
+            return
+        now = datetime.now(timezone.utc)
+        inserted = 0
+        for art in articles:
+            url = art.get("url", "")
+            headline = art.get("headline", "")
+            if not headline:
+                continue
+            doc = {
+                "batch_date": batch_date,
+                "headline":   headline,
+                "summary":    art.get("summary", ""),
+                "url":        url,
+                "source":     art.get("source", ""),
+                "datetime":   art.get("datetime", ""),
+                "category":   art.get("category", "macro"),
+                "query_tag":  art.get("query_tag", ""),
+                "updated_at": now,
+            }
+            db["macro_news"].update_one(
+                {"url": url} if url else {"batch_date": batch_date, "headline": headline},
+                {"$set": doc, "$setOnInsert": {"created_at": now}},
+                upsert=True,
+            )
+            inserted += 1
+        logger.info(f"MongoDB upsert_macro_news: {inserted} artículos para {batch_date}")
+    except Exception as exc:
+        logger.warning(f"MongoDB upsert_macro_news failed: {exc}")
+
+
+def read_macro_news(batch_date: str) -> list:
+    """Devuelve todos los artículos macro de una fecha concreta."""
+    try:
+        db = _get_db()
+        if db is None:
+            return []
+        return list(db["macro_news"].find({"batch_date": batch_date}))
+    except Exception as exc:
+        logger.warning(f"MongoDB read_macro_news failed: {exc}")
+        return []
+
+
+# ─── macro_context: MacroSentiment + RiskRegime ───────────────────────────────
+
+def upsert_macro_context(batch_date: str, macro_sentiment: str, risk_regime: str,
+                         macro_adjustment: float, detail: dict):
+    """
+    Persiste el contexto macro calculado por lambda_macro_context.
+    Un único documento por batch_date (upsert).
+    """
+    try:
+        db = _get_db()
+        if db is None:
+            return
+        now = datetime.now(timezone.utc)
+        doc = {
+            "batch_date":       batch_date,
+            "macro_sentiment":  macro_sentiment,   # bullish / neutral / bearish
+            "risk_regime":      risk_regime,        # RISK_ON / NEUTRAL / RISK_OFF
+            "macro_adjustment": macro_adjustment,   # ej: +0.08
+            "detail":           detail,             # desglose de inputs
+            "updated_at":       now,
+        }
+        db["macro_context"].update_one(
+            {"batch_date": batch_date},
+            {"$set": doc, "$setOnInsert": {"created_at": now}},
+            upsert=True,
+        )
+        logger.info(f"MongoDB upsert_macro_context: {macro_sentiment}/{risk_regime} "
+                    f"adj={macro_adjustment:+.3f} para {batch_date}")
+    except Exception as exc:
+        logger.warning(f"MongoDB upsert_macro_context failed: {exc}")
+
+
+def read_macro_context(batch_date: str) -> dict:
+    """Devuelve el contexto macro de una fecha. Vacío si no existe."""
+    try:
+        db = _get_db()
+        if db is None:
+            return {}
+        doc = db["macro_context"].find_one({"batch_date": batch_date})
+        return doc if doc else {}
+    except Exception as exc:
+        logger.warning(f"MongoDB read_macro_context failed: {exc}")
+        return {}

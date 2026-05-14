@@ -1,0 +1,16 @@
+# ─── Lambda Macro Ingestion ───────────────────────────────────────────────────
+# Ingesta noticias macroeconómicas globales (NewsAPI + RSS)
+# → macro_news en MongoDB Atlas
+FROM public.ecr.aws/lambda/python:3.11
+
+LABEL maintainer="tfm-trading" \
+      lambda="lambda_macro_ingestion" \
+      version="1.0"
+
+COPY lambda_macro_ingestion/requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
+RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
+
+COPY lambda_macro_ingestion/lambda_macro_ingestion.py ${LAMBDA_TASK_ROOT}/
+COPY shared/mongo_utils.py ${LAMBDA_TASK_ROOT}/
+
+CMD ["lambda_macro_ingestion.handler"]

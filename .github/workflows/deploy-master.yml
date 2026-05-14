@@ -4,9 +4,10 @@
 #
 # Flujo completo en cada push a master:
 #
-#  changes ──┬──► deploy-lambda-ingestion  ─┐
-#             ├──► deploy-lambda-news-filter │ (paralelo, solo si cambiaron)
-#             ├──► deploy-lambda-sentiment   │
+#  changes ──┬──► deploy-lambda-ingestion       ─┐
+#             ├──► deploy-lambda-macro-ingestion  │ (paralelo, solo si cambiaron)
+#             ├──► deploy-lambda-news-filter      │
+#             ├──► deploy-lambda-sentiment        │
 #             ├──► deploy-lambda-indicators  │
 #             ├──► deploy-lambda-bayesian    │
 #             ├──► deploy-lambda-report     ─┤
@@ -66,6 +67,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       ingestion: ${{ steps.filter.outputs.ingestion }}
+      macro_ingestion: ${{ steps.filter.outputs.macro_ingestion }}
+      macro_context: ${{ steps.filter.outputs.macro_context }}
       news_filter: ${{ steps.filter.outputs.news_filter }}
       sentiment: ${{ steps.filter.outputs.sentiment }}
       indicators: ${{ steps.filter.outputs.indicators }}
@@ -75,6 +78,8 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       migrations: ${{ steps.filter.outputs.migrations }}
       any_lambda: ${{ steps.filter.outputs.ingestion == 'true'
+        || steps.filter.outputs.macro_ingestion == 'true'
+        || steps.filter.outputs.macro_context == 'true'
         || steps.filter.outputs.news_filter == 'true'
         || steps.filter.outputs.sentiment == 'true'
         || steps.filter.outputs.indicators == 'true'
@@ -91,6 +96,14 @@ jobs:
             ingestion:
               - 'lambda_ingestion/**'
               - 'infrastructure/lambdas/Dockerfile.ingestion'
+            macro_ingestion:
+              - 'lambda_macro_ingestion/**'
+              - 'infrastructure/lambdas/Dockerfile.macro_ingestion'
+              - 'shared/mongo_utils.py'
+            macro_context:
+              - 'lambda_macro_context/**'
+              - 'infrastructure/lambdas/Dockerfile.macro_context'
+              - 'shared/mongo_utils.py'
             news_filter:
               - 'lambda_news_filter/**'
               - 'infrastructure/lambdas/Dockerfile.news_filter'
@@ -146,6 +159,50 @@ jobs:
             "$AWS_REGION" "$ACCOUNT_ID" \
             "${{ secrets.LAMBDA_ROLE_ARN }}" \
             lambda_ingestion
+
+  deploy-lambda-macro-ingestion:
+    name: Lambda / macro-ingestion
+    runs-on: ubuntu-latest
+    environment: production
+    needs: changes
+    if: needs.changes.outputs.macro_ingestion == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: aws-actions/amazon-ecr-login@v2
+      - name: Deploy lambda_macro_ingestion
+        run: |
+          chmod +x deploy_lambdas.sh
+          ./deploy_lambdas.sh \
+            "$AWS_REGION" "$ACCOUNT_ID" \
+            "${{ secrets.LAMBDA_ROLE_ARN }}" \
+            lambda_macro_ingestion
+
+  deploy-lambda-macro-context:
+    name: Lambda / macro-context
+    runs-on: ubuntu-latest
+    environment: production
+    needs: changes
+    if: needs.changes.outputs.macro_context == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: aws-actions/amazon-ecr-login@v2
+      - name: Deploy lambda_macro_context
+        run: |
+          chmod +x deploy_lambdas.sh
+          ./deploy_lambdas.sh \
+            "$AWS_REGION" "$ACCOUNT_ID" \
+            "${{ secrets.LAMBDA_ROLE_ARN }}" \
+            lambda_macro_context
 
   deploy-lambda-news-filter:
     name: Lambda / news-filter
@@ -579,6 +636,8 @@ jobs:
     needs:
       - changes
       - deploy-lambda-ingestion
+      - deploy-lambda-macro-ingestion
+      - deploy-lambda-macro-context
       - deploy-lambda-news-filter
       - deploy-lambda-sentiment
       - deploy-lambda-indicators
@@ -613,7 +672,7 @@ jobs:
           echo "════════════════════════════════════"
           echo "  Alias 'live' de las Lambdas"
           echo "════════════════════════════════════"
-          for fn in lambda_ingestion lambda_news_filter lambda_sentiment lambda_indicators lambda_bayesian lambda_report; do
+          for fn in lambda_ingestion lambda_macro_ingestion lambda_macro_context lambda_news_filter lambda_sentiment lambda_indicators lambda_bayesian lambda_report; do
             VERSION=$(aws lambda get-alias \
               --function-name "$fn" \
               --name live \
@@ -632,6 +691,8 @@ jobs:
           echo ""
           declare -A STATUS=(
             ["ingestion"]="${{ needs.deploy-lambda-ingestion.result }}"
+            ["macro-ingestion"]="${{ needs.deploy-lambda-macro-ingestion.result }}"
+            ["macro-context"]="${{ needs.deploy-lambda-macro-context.result }}"
             ["news-filter"]="${{ needs.deploy-lambda-news-filter.result }}"
             ["sentiment"]="${{ needs.deploy-lambda-sentiment.result }}"
             ["indicators"]="${{ needs.deploy-lambda-indicators.result }}"
@@ -654,8 +715,10 @@ jobs:
 
       - name: Fallar si algún job crítico falló
         if: |
-          needs.deploy-lambda-ingestion.result == 'failure'    ||
-          needs.deploy-lambda-news-filter.result == 'failure'  ||
+          needs.deploy-lambda-ingestion.result == 'failure'         ||
+          needs.deploy-lambda-macro-ingestion.result == 'failure'  ||
+          needs.deploy-lambda-macro-context.result == 'failure'    ||
+          needs.deploy-lambda-news-filter.result == 'failure'       ||
           needs.deploy-lambda-sentiment.result == 'failure'    ||
           needs.deploy-lambda-indicators.result == 'failure'   ||
           needs.deploy-lambda-bayesian.result == 'failure'     ||
