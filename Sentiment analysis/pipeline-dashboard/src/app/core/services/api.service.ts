@@ -122,6 +122,20 @@ export class ApiService {
       { headers: this.authHeaders });
   }
 
+  /** Contexto macro del día: MacroSentiment, RiskRegime, macro_adjustment, VIX */
+  getMacroContext(date: string): Observable<MacroContext> {
+    return this.http.get<MacroContext>(
+      `${this.baseUrl}/macro/context/${date}`,
+      { headers: this.authHeaders });
+  }
+
+  /** Noticias macroeconómicas del día con categoría temática */
+  getMacroNews(date: string, limit = 50): Observable<MacroNewsResponse> {
+    return this.http.get<MacroNewsResponse>(
+      `${this.baseUrl}/macro/news/${date}?limit=${limit}`,
+      { headers: this.authHeaders });
+  }
+
   /** Valores raw de indicadores técnicos y reglas de discretización */
   getIndicatorsDetail(date: string, ticker: string): Observable<any> {
     return this.http.get<any>(
@@ -277,4 +291,42 @@ export interface InstrumentProfile {
   low52w:          number | null;
   prevClose:       number | null;
   openPrice:       number | null;
+}
+
+// ─── DTOs de contexto macro ───────────────────────────────────────────────────
+
+export interface MacroContext {
+  batch_date:       string;
+  macro_sentiment:  'bullish' | 'neutral' | 'bearish';
+  risk_regime:      'RISK_ON' | 'NEUTRAL' | 'RISK_OFF';
+  macro_adjustment: number;
+  detail: {
+    macro_score:      number;
+    n_articles:       number;
+    distribution:     Record<string, number>;
+    vix:              number | null;
+    events: {
+      geopolitical:    boolean;
+      hawkish_fed:     boolean;
+      dovish_fed:      boolean;
+      inflation_shock: boolean;
+    };
+    regime_reasoning: Record<string, any>;
+  };
+}
+
+export interface MacroArticle {
+  headline:   string;
+  summary:    string;
+  url:        string;
+  source:     string;
+  datetime:   string;
+  category:   string;
+  query_tag:  string;
+}
+
+export interface MacroNewsResponse {
+  date:     string;
+  total:    number;
+  articles: MacroArticle[];
 }

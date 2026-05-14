@@ -12,7 +12,7 @@ import { NgxChartsModule } from '@swimlane/ngx-charts';
 import { switchMap, catchError, of } from 'rxjs';
 import { ReportService } from '../../core/services/report.service';
 import { TraceService } from '../../core/services/trace.service';
-import { ApiService, NewsDetailResponse, NewsArticleDetail } from '../../core/services/api.service';
+import { ApiService, NewsDetailResponse, NewsArticleDetail, MacroContext, MacroArticle } from '../../core/services/api.service';
 import {
   TickerView, ReportDateEntry, DailyReport,
   SentimentState, RsiState, TrendState, VolatilityState,
@@ -98,7 +98,11 @@ export class SignalsComponent implements OnInit, AfterViewInit {
         return this.reportSvc.loadReport(this.selectedDate);
       })
     ).subscribe({
-      next: (r: any) => { if (r) this.processReport(r); this.loading = false; },
+      next: (r: any) => {
+        if (r) this.processReport(r);
+        this.loading = false;
+        this.loadMacroContext(this.selectedDate);
+      },
       error: () => { this.loading = false; },
     });
   }
@@ -114,7 +118,11 @@ export class SignalsComponent implements OnInit, AfterViewInit {
     const entry = this.availableDates.find(d => d.date === date);
     this.hasTraceForDate = !!(entry as any)?.has_trace;
     this.reportSvc.loadReport(date).subscribe({
-      next: r => { this.processReport(r); this.loading = false; },
+      next: r => {
+        this.processReport(r);
+        this.loading = false;
+        this.loadMacroContext(date);
+      },
       error: () => { this.loading = false; },
     });
   }
@@ -295,6 +303,117 @@ export class SignalsComponent implements OnInit, AfterViewInit {
     if (s === 'bullish') return 'Alcista';
     if (s === 'bearish') return 'Bajista';
     return 'Neutral';
+  }
+
+  // ─── Macro Context ──────────────────────────────────────────────────────────
+
+  macroContext:     MacroContext | null = null;
+  macroNews:        MacroArticle[]      = [];
+  macroLoading      = false;
+  macroNewsLoading  = false;
+  macroError        = '';
+  macroNewsExpanded = false;
+  macroNewsCategory = '';
+
+  get macroNewsByCategory(): Record<string, MacroArticle[]> {
+    const grouped: Record<string, MacroArticle[]> = {};
+    const filtered = this.macroNewsCategory
+      ? this.macroNews.filter(a => a.category === this.macroNewsCategory)
+      : this.macroNews;
+    for (const art of filtered) {
+      const cat = art.category || 'macro';
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(art);
+    }
+    return grouped;
+  }
+
+  get macroCategories(): string[] {
+    return [...new Set(this.macroNews.map(a => a.category || 'macro'))];
+  }
+
+  loadMacroContext(date: string) {
+    this.macroLoading = true;
+    this.macroContext = null;
+    this.macroError   = '';
+    this.apiSvc.getMacroContext(date).pipe(
+      catchError(() => {
+        this.macroError   = 'Sin datos macro para esta fecha. El pipeline debe haber ejecutado lambda_macro_context.';
+        this.macroLoading = false;
+        return of(null);
+      })
+    ).subscribe(data => {
+      this.macroContext = data;
+      this.macroLoading = false;
+      if (data) this.loadMacroNews(date);
+    });
+  }
+
+  loadMacroNews(date: string) {
+    this.macroNewsLoading = true;
+    this.apiSvc.getMacroNews(date, 100).pipe(
+      catchError(() => of(null))
+    ).subscribe(resp => {
+      this.macroNews        = resp?.articles ?? [];
+      this.macroNewsLoading = false;
+    });
+  }
+
+  macroSentimentColor(s: string): string {
+    if (s === 'bullish') return '#22C55E';
+    if (s === 'bearish') return '#EF4444';
+    return '#94A3B8';
+  }
+
+  macroSentimentBg(s: string): string {
+    if (s === 'bullish') return 'rgba(34,197,94,.12)';
+    if (s === 'bearish') return 'rgba(239,68,68,.12)';
+    return 'rgba(148,163,184,.12)';
+  }
+
+  regimeColor(r: string): string {
+    if (r === 'RISK_ON')  return '#22C55E';
+    if (r === 'RISK_OFF') return '#EF4444';
+    return '#F59E0B';
+  }
+
+  regimeBg(r: string): string {
+    if (r === 'RISK_ON')  return 'rgba(34,197,94,.12)';
+    if (r === 'RISK_OFF') return 'rgba(239,68,68,.12)';
+    return 'rgba(245,158,11,.12)';
+  }
+
+  regimeIcon(r: string): string {
+    if (r === 'RISK_ON')  return 'trending_up';
+    if (r === 'RISK_OFF') return 'trending_down';
+    return 'remove';
+  }
+
+  categoryLabel(c: string): string {
+    const map: Record<string,string> = {
+      monetary_policy:    'Política Monetaria',
+      inflation:          'Inflación',
+      macro_economy:      'Macroeconomía',
+      geopolitical:       'Geopolítica',
+      commodities:        'Commodities',
+      financial_stability:'Estabilidad Financiera',
+      trade_tech:         'Comercio & Tecnología',
+      macro:              'Macro General',
+    };
+    return map[c] || c;
+  }
+
+  categoryIcon(c: string): string {
+    const map: Record<string,string> = {
+      monetary_policy:    'account_balance',
+      inflation:          'price_change',
+      macro_economy:      'public',
+      geopolitical:       'flag',
+      commodities:        'oil_barrel',
+      financial_stability:'security',
+      trade_tech:         'devices',
+    };
+    return map[c] || 'article';
   }
 
   // ─── Decision-Ready Layer ────────────────────────────────────────────────

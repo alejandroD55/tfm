@@ -136,6 +136,174 @@
     </mat-expansion-panel>
   </mat-accordion>
 
+  <!-- ══ MACRO CONTEXT ══════════════════════════════════════════════════════ -->
+  <section class="macro-section">
+
+    @if (macroLoading) {
+      <div class="macro-loading">
+        <mat-spinner diameter="24"></mat-spinner>
+        <span>Cargando contexto macroeconómico...</span>
+      </div>
+    } @else if (macroContext) {
+
+      <!-- Banner principal -->
+      <div class="macro-banner">
+        <div class="macro-banner-left">
+          <div class="macro-title">
+            <mat-icon>public</mat-icon>
+            <span>Contexto Macro Global — {{ macroContext.batch_date }}</span>
+          </div>
+
+          <div class="macro-badges">
+            <!-- MacroSentiment -->
+            <div class="macro-badge"
+                 [style.background]="macroSentimentBg(macroContext.macro_sentiment)"
+                 [style.border-color]="macroSentimentColor(macroContext.macro_sentiment) + '40'">
+              <mat-icon [style.color]="macroSentimentColor(macroContext.macro_sentiment)">
+                {{ macroContext.macro_sentiment === 'bullish' ? 'sentiment_very_satisfied' :
+                   macroContext.macro_sentiment === 'bearish' ? 'sentiment_very_dissatisfied' : 'sentiment_neutral' }}
+              </mat-icon>
+              <div class="macro-badge-info">
+                <span class="macro-badge-label">Sentimiento Macro</span>
+                <span class="macro-badge-value" [style.color]="macroSentimentColor(macroContext.macro_sentiment)">
+                  {{ macroContext.macro_sentiment | uppercase }}
+                </span>
+                <span class="macro-badge-sub">score: {{ macroContext.detail.macro_score | number:'1.2-2' }}</span>
+              </div>
+            </div>
+
+            <!-- RiskRegime -->
+            <div class="macro-badge"
+                 [style.background]="regimeBg(macroContext.risk_regime)"
+                 [style.border-color]="regimeColor(macroContext.risk_regime) + '40'">
+              <mat-icon [style.color]="regimeColor(macroContext.risk_regime)">
+                {{ regimeIcon(macroContext.risk_regime) }}
+              </mat-icon>
+              <div class="macro-badge-info">
+                <span class="macro-badge-label">Régimen de Mercado</span>
+                <span class="macro-badge-value" [style.color]="regimeColor(macroContext.risk_regime)">
+                  {{ macroContext.risk_regime }}
+                </span>
+                <span class="macro-badge-sub">
+                  VIX: {{ macroContext.detail.vix !== null ? (macroContext.detail.vix | number:'1.1-1') : 'N/D' }}
+                </span>
+              </div>
+            </div>
+
+            <!-- Macro Adjustment -->
+            <div class="macro-badge macro-badge-adj"
+                 [class.adj-pos]="macroContext.macro_adjustment > 0"
+                 [class.adj-neg]="macroContext.macro_adjustment < 0"
+                 [class.adj-neu]="macroContext.macro_adjustment === 0">
+              <mat-icon>tune</mat-icon>
+              <div class="macro-badge-info">
+                <span class="macro-badge-label">Ajuste a prob_up</span>
+                <span class="macro-badge-value">
+                  {{ macroContext.macro_adjustment > 0 ? '+' : '' }}{{ macroContext.macro_adjustment | number:'1.2-2' }}
+                </span>
+                <span class="macro-badge-sub">{{ macroContext.detail.n_articles }} artículos analizados</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Eventos detectados -->
+          <div class="macro-events">
+            @if (macroContext.detail.events.geopolitical) {
+              <span class="macro-event-chip event-danger"><mat-icon>flag</mat-icon>Tensión Geopolítica</span>
+            }
+            @if (macroContext.detail.events.hawkish_fed) {
+              <span class="macro-event-chip event-warn"><mat-icon>account_balance</mat-icon>FED Hawkish</span>
+            }
+            @if (macroContext.detail.events.dovish_fed) {
+              <span class="macro-event-chip event-ok"><mat-icon>account_balance</mat-icon>FED Dovish</span>
+            }
+            @if (macroContext.detail.events.inflation_shock) {
+              <span class="macro-event-chip event-danger"><mat-icon>price_change</mat-icon>Inflación Sorpresa</span>
+            }
+            @if (!macroContext.detail.events.geopolitical && !macroContext.detail.events.hawkish_fed &&
+                 !macroContext.detail.events.dovish_fed && !macroContext.detail.events.inflation_shock) {
+              <span class="macro-event-chip event-neutral"><mat-icon>check_circle</mat-icon>Sin eventos de alto impacto</span>
+            }
+          </div>
+        </div>
+
+        <!-- Botón noticias macro -->
+        <button class="btn-macro-news" (click)="macroNewsExpanded = !macroNewsExpanded">
+          <mat-icon>{{ macroNewsExpanded ? 'expand_less' : 'newspaper' }}</mat-icon>
+          {{ macroNewsExpanded ? 'Ocultar noticias' : 'Ver noticias macro (' + macroNews.length + ')' }}
+        </button>
+      </div>
+
+      <!-- Panel de noticias macro -->
+      @if (macroNewsExpanded) {
+        <div class="macro-news-panel">
+          <div class="mnp-header">
+            <span class="mnp-title">
+              <mat-icon>article</mat-icon>
+              Noticias Macroeconómicas del Día — {{ macroNews.length }} artículos
+            </span>
+            <div class="mnp-filters">
+              <button class="mnp-cat-btn" [class.active]="macroNewsCategory === ''"
+                      (click)="macroNewsCategory = ''">Todas</button>
+              @for (cat of macroCategories; track cat) {
+                <button class="mnp-cat-btn" [class.active]="macroNewsCategory === cat"
+                        (click)="macroNewsCategory = cat">
+                  <mat-icon>{{ categoryIcon(cat) }}</mat-icon>
+                  {{ categoryLabel(cat) }}
+                </button>
+              }
+            </div>
+          </div>
+
+          @if (macroNewsLoading) {
+            <div class="macro-loading"><mat-spinner diameter="24"></mat-spinner><span>Cargando artículos...</span></div>
+          } @else {
+            <div class="mnp-articles">
+              @for (entry of (macroNewsByCategory | keyvalue); track entry.key) {
+                <div class="mnp-category-group">
+                  <div class="mnp-cat-header">
+                    <mat-icon>{{ categoryIcon(entry.key) }}</mat-icon>
+                    <span>{{ categoryLabel(entry.key) }}</span>
+                    <span class="mnp-cat-count">{{ entry.value.length }}</span>
+                  </div>
+                  @for (art of entry.value; track art.url) {
+                    <div class="mnp-article">
+                      <div class="mnp-article-head">
+                        <span class="mnp-source">{{ art.source }}</span>
+                        <span class="mnp-date">{{ art.datetime | date:'dd/MM HH:mm' }}</span>
+                      </div>
+                      <p class="mnp-headline">{{ art.headline }}</p>
+                      @if (art.summary && art.summary !== art.headline) {
+                        <p class="mnp-summary">{{ art.summary }}</p>
+                      }
+                      @if (art.url) {
+                        <a class="mnp-link" [href]="art.url" target="_blank" rel="noopener noreferrer">
+                          <mat-icon>open_in_new</mat-icon>Leer artículo
+                        </a>
+                      }
+                    </div>
+                  }
+                </div>
+              }
+              @if (macroNews.length === 0) {
+                <div class="mnp-empty">
+                  <mat-icon>inbox</mat-icon>
+                  <p>No hay noticias macro para esta fecha.</p>
+                </div>
+              }
+            </div>
+          }
+        </div>
+      }
+
+    } @else if (macroError) {
+      <div class="macro-unavailable">
+        <mat-icon>info_outline</mat-icon>
+        <span>{{ macroError }}</span>
+      </div>
+    }
+  </section>
+
   @if (loading) {
     <div class="loader">
       <mat-spinner diameter="40"></mat-spinner>

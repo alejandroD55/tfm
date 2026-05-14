@@ -1168,4 +1168,69 @@ def mongo_setup_indexes(x_api_key: str = Header(default="")):
     created.append("raw_news: batch_date+ticker")
     db["ohlcv"].create_index([("batch_date", ASCENDING), ("ticker", ASCENDING)])
     created.append("ohlcv: batch_date+ticker")
+    db["macro_news"].create_index([("batch_date", ASCENDING)])
+    created.append("macro_news: batch_date")
+    db["macro_context"].create_index([("batch_date", ASCENDING)], unique=True)
+    created.append("macro_context: indice unico batch_date")
     return {"message": "Indices creados correctamente", "details": created}
+
+
+# =============================================================================
+# MACRO — Contexto macroeconómico global
+# =============================================================================
+
+@app.get("/macro/context/{date}", tags=["Macro"])
+def get_macro_context(date: str, x_api_key: str = Header(default="")):
+    """MacroSentiment + RiskRegime + macro_adjustment calculados para una fecha."""
+    check_api_key(x_api_key)
+    db = _require_mongo()
+    doc = db["macro_context"].find_one({"batch_date": date})
+    if not doc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No hay contexto macro para {date}. Ejecuta lambda_macro_context primero."
+        )
+    return _serialize_doc(doc)
+
+
+@app.get("/macro/news/{date}", tags=["Macro"])
+def get_macro_news(
+    date: str,
+    category: str = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    x_api_key: str = Header(default=""),
+):
+    """Noticias macroeconómicas del día con su categoría temática."""
+    check_api_key(x_api_key)
+    db = _require_mongo()
+    query: dict = {"batch_date": date}
+    if category:
+        query["category"] = category
+    docs = list(
+        db["macro_news"].find(query)
+        .sort("datetime", -1)
+        .limit(limit)
+    )
+    return {
+        "date":     date,
+        "total":    db["macro_news"].count_documents({"batch_date": date}),
+        "articles": [_serialize_doc(d) for d in docs],
+    }
+
+
+@app.get("/macro/history", tags=["Macro"])
+def get_macro_history(
+    limit: int = Query(default=30, ge=1, le=365),
+    x_api_key: str = Header(default=""),
+):
+    """Historial de MacroSentiment y RiskRegime de los últimos N días."""
+    check_api_key(x_api_key)
+    db = _require_mongo()
+    docs = list(
+        db["macro_context"]
+        .find({}, {"batch_date":1,"macro_sentiment":1,"risk_regime":1,
+                   "macro_adjustment":1,"detail.vix":1})
+        .sort("batch_date", -1)
+        .limit(limit)
+    )
+    return {"total": len(docs), "history": [_serialize_doc(d) for d in docs]}
