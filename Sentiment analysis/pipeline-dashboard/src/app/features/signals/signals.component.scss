@@ -428,7 +428,7 @@
 
 .signals-cards-mobile { display: none; }
 
-@media (max-width: 1495px) {
+@media (max-width: 1491px) {
   .main-chart-full {
     overflow: hidden;
   }
@@ -550,7 +550,7 @@
   }
 }
 
-@media (max-width: 1495px) and (min-width: 1101px) {
+@media (max-width: 1491px) and (min-width: 1101px) {
   .charts-grid-layout {
     grid-template-columns: 1.6fr 1fr;
     gap: 14px;

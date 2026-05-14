@@ -295,13 +295,18 @@
   white-space: nowrap;
 }
 
-/* ─── Modo compacto (sidebar de 80px) ────────────────────────── */
+/* ─── Modo rail: solo iconos (alineado con shell < 1492px) ───── */
 
-@media (max-width: 1100px) {
+@media (max-width: 1491px) {
   .sb {
     padding: 16px 8px;
     align-items: center;
     gap: 10px;
+  }
+
+  .sb-brand {
+    justify-content: center;
+    padding: 6px 4px 4px;
   }
 
   .sb-brand-text,

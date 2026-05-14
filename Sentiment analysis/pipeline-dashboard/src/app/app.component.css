@@ -219,10 +219,17 @@
 }
 
 /* ─── Responsive ───────────────────────────────────────────────── */
-@media (max-width: 1495px) {
-  .aurora-sidebar  { display: none; }   /* oculto desde tablet/desktop estrecho */
-  .brand-tag       { display: none; }
-  .aurora-content  { padding: 20px 22px 34px; }
+/* < 1492px: rail estrecho con solo iconos (estilos en sidebar.component.scss) */
+@media (max-width: 1491px) {
+  .aurora-shell {
+    --side-w: 72px;
+  }
+  .aurora-sidebar {
+    flex: 0 0 var(--side-w);
+    width: var(--side-w);
+  }
+  .brand-tag { display: none; }
+  .aurora-content { padding: 20px 22px 34px; }
 }
 
 @media (max-width: 720px) {

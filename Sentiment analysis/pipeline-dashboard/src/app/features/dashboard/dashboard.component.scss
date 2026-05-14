@@ -61,7 +61,7 @@
 .span-4 { grid-column: span 4; }
 .span-8 { grid-column: span 8; }
 .span-12 { grid-column: span 12; }
-@media (max-width: 1495px) {
+@media (max-width: 1491px) {
   .portfolio-main-row {
     .span-4,
     .span-8 {
@@ -104,7 +104,7 @@
 .empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 80px 16px; color: var(--slate-400); }
 .empty mat-icon { font-size: 48px; height: 48px; width: 48px; opacity: .5; }
 
-@media (max-width: 1495px) and (min-width: 1101px) {
+@media (max-width: 1491px) and (min-width: 1101px) {
   .row {
     gap: 14px;
   }

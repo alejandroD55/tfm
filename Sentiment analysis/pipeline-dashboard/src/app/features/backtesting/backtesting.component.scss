@@ -89,7 +89,7 @@
 
 .no-data { text-align: center; padding: 40px; color: var(--slate-400); mat-icon { font-size: 36px; height: 36px; width: 36px; opacity: .5; } p { margin-top: 6px; } }
 
-@media (max-width: 1495px) {
+@media (max-width: 1491px) {
   .table-card {
     padding: 18px;
   }
@@ -184,7 +184,7 @@
   }
 }
 
-@media (max-width: 1495px) and (min-width: 1101px) {
+@media (max-width: 1491px) and (min-width: 1101px) {
   .asset-cards {
     grid-auto-columns: minmax(340px, 390px);
     gap: 16px;
