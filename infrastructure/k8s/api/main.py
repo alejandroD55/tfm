@@ -3,7 +3,7 @@ TFM Dashboard API - FastAPI
 ===========================
 Endpoints:
   GET /health
-  GET /reports                      - Lista fechas (MongoDB reports)
+  GET /reports                      - Lista fechas (reports + trazas + raw_news reciente)
   GET /reports/{date}               - Report completo (MongoDB)
   GET /trace/{date}                 - Traza bayesiana completa (MongoDB bayesian_traces)
   GET /trace/{date}/{ticker}        - Traza por ticker
@@ -231,31 +231,87 @@ def health():
 
 @app.get("/reports", tags=["Reports"])
 def list_reports(x_api_key: str = Header(default="")):
-    """Lista fechas con reporte diario en MongoDB (coleccion reports)."""
+    """
+    Fechas para el selector del dashboard: unión de
+    - `reports.report_date` (pipeline llegó a lambda_report), y
+    - `bayesian_traces.batch_date` (hay traza aunque el reporte falte o falle).
+
+    Las ejecuciones de Step Functions por sí solas no generan entradas aquí:
+    hace falta al menos datos escritos en Mongo.
+    """
     check_api_key(x_api_key)
     try:
         db = _require_mongo()
-        dates = []
+
+        def norm_date(v) -> str | None:
+            if not v:
+                return None
+            s = str(v)[:10]
+            return s if len(s) == 10 else None
+
+        trace_dates = {
+            d
+            for x in db["bayesian_traces"].distinct("batch_date")
+            if (d := norm_date(x))
+        }
+
+        by_date: dict[str, dict] = {}
+
         for doc in (
             db["reports"]
             .find({}, {"report_date": 1, "updated_at": 1, "created_at": 1})
             .sort("report_date", -1)
             .limit(500)
         ):
-            d = doc.get("report_date")
-            if not d or len(str(d)) != 10:
+            d = norm_date(doc.get("report_date"))
+            if not d:
                 continue
-            d = str(d)[:10]
             lm = doc.get("updated_at") or doc.get("created_at")
-            has_trace = db["bayesian_traces"].count_documents({"batch_date": d}) > 0
-            dates.append(
-                {
-                    "date": d,
-                    "storage": "mongo",
-                    "lastModified": lm.isoformat() if hasattr(lm, "isoformat") else None,
-                    "has_trace": has_trace,
-                }
+            ts = lm.isoformat() if hasattr(lm, "isoformat") and lm else None
+            row = {
+                "date": d,
+                "storage": "mongo",
+                "lastModified": ts,
+                "has_trace": d in trace_dates,
+            }
+            prev = by_date.get(d)
+            if not prev or (ts and prev.get("lastModified") and ts > prev["lastModified"]):
+                by_date[d] = row
+
+        for d in trace_dates:
+            if d in by_date:
+                continue
+            doc = db["bayesian_traces"].find_one(
+                {"batch_date": d}, {"updated_at": 1, "created_at": 1}
             )
+            lm = (doc or {}).get("updated_at") or (doc or {}).get("created_at")
+            ts = lm.isoformat() if lm and hasattr(lm, "isoformat") else None
+            by_date[d] = {
+                "date": d,
+                "storage": "mongo",
+                "lastModified": ts,
+                "has_trace": True,
+            }
+
+        raw_dates = sorted(
+            {
+                d
+                for x in db["raw_news"].distinct("batch_date")
+                if (d := norm_date(x))
+            },
+            reverse=True,
+        )[:120]
+        for d in raw_dates:
+            if d in by_date:
+                continue
+            by_date[d] = {
+                "date": d,
+                "storage": "mongo",
+                "lastModified": None,
+                "has_trace": d in trace_dates,
+            }
+
+        dates = sorted(by_date.values(), key=lambda x: x["date"], reverse=True)[:500]
         return {"dates": dates, "total": len(dates)}
     except HTTPException:
         raise
