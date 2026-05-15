@@ -64,6 +64,11 @@ export class BacktestingComponent implements OnInit, AfterViewInit {
 
   get winnersCount() { return this.tickerViews.filter(t => t.cumulative_return > 0).length; }
 
+  /** Filas para @for en plantilla (evita optional chaining en el template). */
+  get tableRows(): TickerView[] {
+    return this.tableSource.data ?? [];
+  }
+
   ngOnInit() {
     this.reportSvc.listAvailableDates().pipe(
       switchMap(dates => {

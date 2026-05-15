@@ -327,7 +327,7 @@
         <span class="hint-dots">• • •</span>
       </div>
       <div class="asset-cards" aria-label="Detalle financiero por activo en tarjetas">
-        @for (r of tableSource?.data ?? []; track r.ticker) {
+        @for (r of tableRows; track r.ticker) {
           <article class="asset-card">
             <header class="asset-card-head">
               <span class="ticker-name">{{ r.ticker }}</span>

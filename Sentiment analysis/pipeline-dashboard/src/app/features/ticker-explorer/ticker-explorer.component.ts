@@ -111,7 +111,7 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
       else if (dates.length) this.selectedDate = dates[0].date;
       if (qpTicker) {
         this.tickerInput = qpTicker;
-        this.loadTicker(qpTicker);
+        this.loadTicker();
       }
     });
 
