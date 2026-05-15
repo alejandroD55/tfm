@@ -191,9 +191,11 @@ def run_finbert_macro(articles: list, hf_client: InferenceClient) -> dict:
     distribution  = {"bullish": 0, "neutral": 0, "bearish": 0}
     scored        = 0
 
+    MIN_CONFIDENCE_MACRO = 0.55  # igual que lambda_sentiment — descarta ambigüedades
+
     for art in articles[:50]:   # máximo 50 artículos para controlar latencia
         headline = art.get("headline", "")
-        if not headline or len(headline) < 10:
+        if not headline or len(headline.strip()) < 20:
             continue
 
         credibility = _credibility(art.get("source", ""))
@@ -207,6 +209,10 @@ def run_finbert_macro(articles: list, hf_client: InferenceClient) -> dict:
                     top = max(result, key=lambda x: x.score if hasattr(x, "score") else x.get("score", 0))
                     label = (top.label if hasattr(top, "label") else top.get("label", "neutral")).lower()
                     conf  = top.score  if hasattr(top, "score") else top.get("score", 0.5)
+
+                    # Descartar si FinBERT no tiene convicción suficiente
+                    if conf < MIN_CONFIDENCE_MACRO:
+                        break
 
                     FINBERT_MAP = {"positive": "bullish", "negative": "bearish", "neutral": "neutral"}
                     sentiment   = FINBERT_MAP.get(label, "neutral")

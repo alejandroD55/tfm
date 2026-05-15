@@ -18,8 +18,12 @@ import json
 import boto3
 import os
 import logging
+import random
+import threading
+import time
 
 from botocore.config import Config
+from botocore.exceptions import ClientError
 import requests
 import trafilatura
 from datetime import datetime
@@ -60,8 +64,15 @@ FETCH_TIMEOUT_S = int(os.getenv("FETCH_TIMEOUT_S", "8"))  # seg. máx. por petic
 MAX_CHARS_TO_MODEL = int(
     os.getenv("MAX_CHARS_TO_MODEL", "6000")
 )  # tokens aprox. → ~1500 tokens
-# Cada worker hace fetch + Bedrock; valores altos disparan ThrottlingException en cuentas pequeñas.
-MAX_WORKERS = int(os.getenv("MAX_WORKERS", "2"))
+# 1 = una llamada Bedrock a la vez por invocación Lambda (recomendado en cuentas con cuota baja).
+MAX_WORKERS = int(os.getenv("MAX_WORKERS", "1"))
+# Pausa mínima entre invoke_model (compartida entre hilos de la misma invocación).
+BEDROCK_MIN_INTERVAL_S = float(os.getenv("BEDROCK_MIN_INTERVAL_S", "1.25"))
+BEDROCK_THROTTLE_RETRIES = int(os.getenv("BEDROCK_THROTTLE_RETRIES", "8"))
+BEDROCK_THROTTLE_BASE_DELAY_S = float(os.getenv("BEDROCK_THROTTLE_BASE_DELAY_S", "2.5"))
+
+_bedrock_lock = threading.Lock()
+_last_bedrock_call = 0.0
 # 0 = sin límite. Útil si el universo ETF trae decenas de noticias por ticker y se agota el timeout.
 NEWS_FILTER_MAX_ARTICLES_PER_TICKER = int(
     os.getenv("NEWS_FILTER_MAX_ARTICLES_PER_TICKER", "0")
@@ -210,6 +221,40 @@ Devuelve ÚNICAMENTE este JSON:
 # ─── Llamada a Bedrock ────────────────────────────────────────────────────────
 
 
+def _throttle_bedrock() -> None:
+    """Espacia llamadas Bedrock para reducir ThrottlingException."""
+    global _last_bedrock_call
+    with _bedrock_lock:
+        now = time.monotonic()
+        wait = BEDROCK_MIN_INTERVAL_S - (now - _last_bedrock_call)
+        if wait > 0:
+            time.sleep(wait)
+        _last_bedrock_call = time.monotonic()
+
+
+def _is_bedrock_throttling(exc: BaseException) -> bool:
+    if type(exc).__name__ in ("ThrottlingException", "TooManyRequestsException"):
+        return True
+    if isinstance(exc, ClientError):
+        code = (exc.response.get("Error") or {}).get("Code", "")
+        return code in (
+            "ThrottlingException",
+            "TooManyRequestsException",
+            "ServiceUnavailableException",
+        )
+    msg = str(exc).lower()
+    return "throttl" in msg or "too many requests" in msg
+
+
+def _bedrock_fallback(headline: str, reason: str) -> dict:
+    return {
+        "summary": headline,
+        "relevance": "medium",
+        "key_facts": [],
+        "content_source": reason,
+    }
+
+
 def summarize_with_bedrock(
     ticker: str, headline: str, article_text: str, source: str
 ) -> dict:
@@ -226,48 +271,59 @@ def summarize_with_bedrock(
             }
         ],
     }
-    try:
-        resp = bedrock.invoke_model(
-            modelId=BEDROCK_MODEL_ID,
-            contentType="application/json",
-            accept="application/json",
-            body=json.dumps(body),
-        )
-        raw = json.loads(resp["body"].read())
-        text = raw["content"][0]["text"].strip()
+    last_exc: BaseException | None = None
+    for attempt in range(BEDROCK_THROTTLE_RETRIES):
+        try:
+            _throttle_bedrock()
+            resp = bedrock.invoke_model(
+                modelId=BEDROCK_MODEL_ID,
+                contentType="application/json",
+                accept="application/json",
+                body=json.dumps(body),
+            )
+            raw = json.loads(resp["body"].read())
+            text = raw["content"][0]["text"].strip()
 
-        # Limpia posibles bloques ```json
-        if text.startswith("```"):
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
+            if text.startswith("```"):
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
 
-        return json.loads(text)
+            return json.loads(text)
 
-    except json.JSONDecodeError as exc:
-        logger.warning(
-            f"Bedrock devolvió JSON inválido para {ticker}/{headline[:40]}: {exc}"
-        )
-        return {
-            "summary": headline,  # fallback al titular original
-            "relevance": "medium",
-            "key_facts": [],
-            "content_source": "fallback_parse_error",
-        }
-    except Exception as exc:
-        detail = str(exc)
-        resp = getattr(exc, "response", None)
-        if isinstance(resp, dict):
-            detail = (resp.get("Error") or {}).get("Message", detail)
-        logger.warning(
-            "Error Bedrock para %s: %s — %s", ticker, type(exc).__name__, detail
-        )
-        return {
-            "summary": headline,
-            "relevance": "medium",
-            "key_facts": [],
-            "content_source": "fallback_bedrock_error",
-        }
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                f"Bedrock devolvió JSON inválido para {ticker}/{headline[:40]}: {exc}"
+            )
+            return _bedrock_fallback(headline, "fallback_parse_error")
+
+        except Exception as exc:
+            last_exc = exc
+            if _is_bedrock_throttling(exc) and attempt < BEDROCK_THROTTLE_RETRIES - 1:
+                delay = BEDROCK_THROTTLE_BASE_DELAY_S * (2**attempt) + random.uniform(
+                    0.0, 1.5
+                )
+                logger.info(
+                    "Bedrock throttle %s (intento %s/%s), esperando %.1fs",
+                    ticker,
+                    attempt + 1,
+                    BEDROCK_THROTTLE_RETRIES,
+                    delay,
+                )
+                time.sleep(delay)
+                continue
+            break
+
+    detail = str(last_exc) if last_exc else "unknown"
+    if isinstance(last_exc, ClientError):
+        detail = (last_exc.response.get("Error") or {}).get("Message", detail)
+    logger.warning(
+        "Error Bedrock para %s: %s — %s",
+        ticker,
+        type(last_exc).__name__ if last_exc else "Error",
+        detail,
+    )
+    return _bedrock_fallback(headline, "fallback_bedrock_error")
 
 
 # ─── Procesamiento de un artículo individual ─────────────────────────────────
@@ -327,7 +383,15 @@ def read_raw_news(batch_date: str) -> dict:
 
 
 def handler(event, context):
-    logger.info("lambda_news_filter iniciado (modo: lectura completa de artículos)")
+    req_id = getattr(context, "aws_request_id", None) if context else None
+    logger.info(
+        "lambda_news_filter iniciado request_id=%s MAX_WORKERS=%s "
+        "bedrock_interval=%.2fs model=%s",
+        req_id,
+        MAX_WORKERS,
+        BEDROCK_MIN_INTERVAL_S,
+        BEDROCK_MODEL_ID,
+    )
     ctx = resolve_pipeline_context(event)
     today = ctx["batch_date"]
 
