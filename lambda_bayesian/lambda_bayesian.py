@@ -72,14 +72,14 @@ MODEL_CONFIG = {
         },
     },
     "signal_thresholds": {
-        "BUY": {"prob_up_above": 0.65, "rationale": "Alta confianza alcista"},
+        "BUY": {"prob_up_above": 0.58, "rationale": "Confianza alcista moderada-alta"},
         "SELL": {
-            "prob_up_below": 0.35,
-            "rationale": "Alta confianza bajista / Salir a Cash",
+            "prob_up_below": 0.42,
+            "rationale": "Confianza bajista moderada-alta / Salir a Cash",
         },
         "HOLD": {
-            "range": [0.35, 0.65],
-            "rationale": "Incertidumbre elevada / Salir a Cash",
+            "range": [0.42, 0.58],
+            "rationale": "Zona de incertidumbre — mantener posición",
         },
     },
     "priors": {
@@ -536,7 +536,7 @@ def save_bayesian_trace(batch_date, tickers_trace, execution_meta):
             "cpt_source": "Parametros ajustados para capturar momentum alcista",
             "threshold_rsi": "RSI <30 = oversold, >70 = overbought",
             "threshold_vol": "BB width ratio >0.05 = high",
-            "threshold_signal": "P(up) >0.65 = BUY, <0.35 = SELL",
+            "threshold_signal": "P(up) >0.58 = BUY, <0.42 = SELL",
             "known_issues": MODEL_CONFIG["known_limitations"],
         },
     }
