@@ -58,6 +58,23 @@ export interface PipelineStageStatus {
   status: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | string;
 }
 
+export interface WatchlistCoverageRow {
+  ticker: string;
+  has_raw_news: boolean;
+  has_news_filtered: boolean;
+  has_trace: boolean;
+  complete: boolean;
+}
+
+export interface WatchlistCoverageResponse {
+  batch_date: string;
+  tickers: WatchlistCoverageRow[];
+  total: number;
+  complete: number;
+  missing: number;
+  coverage_ratio: number;
+}
+
 // ─── Service ──────────────────────────────────────────────────────────────────
 
 @Injectable({ providedIn: 'root' })
@@ -165,9 +182,48 @@ export class ApiService {
   }
 
   // ─── Tickers ──────────────────────────────────────────────────────
-  /** Lista los ETFs del universo (etf_universe.json) */
-  getTickers(): Observable<{ tickers: string[]; total: number }> {
+  /** Lista la cartera de seguimiento (watchlist → pipeline) */
+  getTickers(): Observable<{ tickers: string[]; total: number; name?: string; source?: string }> {
     return this.http.get<any>(`${this.baseUrl}/tickers`,
+      { headers: this.authHeaders });
+  }
+
+  getWatchlist(): Observable<{
+    name: string; tickers: string[]; total: number;
+    updated_at?: string; created_at?: string;
+  }> {
+    return this.http.get<any>(`${this.baseUrl}/watchlist`, { headers: this.authHeaders });
+  }
+
+  putWatchlist(body: { tickers: string[]; name?: string }): Observable<{ ok: boolean; tickers: string[]; total: number }> {
+    return this.http.put<any>(`${this.baseUrl}/watchlist`, body, { headers: this.authHeaders });
+  }
+
+  addWatchlistTicker(ticker: string): Observable<{ ok: boolean; ticker: string; tickers: string[] }> {
+    return this.http.post<any>(`${this.baseUrl}/watchlist/tickers`, { ticker },
+      { headers: this.authHeaders });
+  }
+
+  removeWatchlistTicker(symbol: string): Observable<{ ok: boolean; removed: string; tickers: string[] }> {
+    return this.http.delete<any>(`${this.baseUrl}/watchlist/tickers/${symbol.toUpperCase()}`,
+      { headers: this.authHeaders });
+  }
+
+  getWatchlistCoverage(date: string): Observable<WatchlistCoverageResponse> {
+    const params = new HttpParams().set('date', date);
+    return this.http.get<WatchlistCoverageResponse>(`${this.baseUrl}/watchlist/coverage`,
+      { headers: this.authHeaders, params });
+  }
+
+  runWatchlistPipeline(body: {
+    batch_date?: string;
+    tickers?: string[];
+    only_missing?: boolean;
+  }): Observable<{
+    executionArn?: string; status: string; message: string; tickers?: string[];
+    startDate?: string; payload?: unknown;
+  }> {
+    return this.http.post<any>(`${this.baseUrl}/watchlist/run-pipeline`, body,
       { headers: this.authHeaders });
   }
 

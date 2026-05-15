@@ -1,0 +1,127 @@
+<div class="page">
+  <header class="page-head">
+    <div>
+      <div class="page-eyebrow"><mat-icon>bookmark</mat-icon> Seguimiento</div>
+      <h1 class="page-title">Cartera de seguimiento</h1>
+      <p class="page-sub">
+        Define qué ETFs, fondos o instrumentos procesa el pipeline. La lista se guarda en MongoDB
+        y se sincroniza con las Lambdas: no dependes de un universo fijo ni de ejecutar a mano
+        ticker a ticker.
+      </p>
+    </div>
+    <div class="page-actions">
+      <div class="filter-group">
+        <label>Fecha de análisis</label>
+        <input type="date" class="aurora-select" [(ngModel)]="selectedDate" (change)="loadCoverage()" />
+      </div>
+      <button class="btn btn-primary" [disabled]="pipelineRunning" (click)="runPipeline(false)"
+              matTooltip="Solo instrumentos sin noticias filtradas o traza en esta fecha">
+        @if (pipelineRunning) { <mat-spinner diameter="18"></mat-spinner> }
+        @else { <mat-icon>play_circle</mat-icon> }
+        Rellenar huecos
+      </button>
+      <button class="btn" [disabled]="pipelineRunning" (click)="runPipeline(true)">
+        <mat-icon>bolt</mat-icon>
+        Pipeline cartera completa
+      </button>
+    </div>
+  </header>
+
+  @if (pipelineMessage) {
+    <div class="banner">{{ pipelineMessage }}</div>
+  }
+
+  <section class="grid-2">
+    <div class="card">
+      <h2 class="card-title">Instrumentos</h2>
+      <p class="card-hint">Busca en Finnhub o escribe el símbolo (ej. GLD, SMH).</p>
+
+      <div class="add-row">
+        <input class="aurora-input" placeholder="Buscar ETF o fondo…" [(ngModel)]="searchQuery"
+               (input)="onSearchInput()" />
+        <input class="aurora-input sym" placeholder="Símbolo" [(ngModel)]="newTicker"
+               (keyup.enter)="addTicker()" />
+        <button class="btn btn-primary" [disabled]="saving" (click)="addTicker()">
+          <mat-icon>add</mat-icon> Añadir
+        </button>
+      </div>
+
+      @if (searching) {
+        <div class="hint"><mat-spinner diameter="20"></mat-spinner> Buscando…</div>
+      }
+      @if (searchResults.length) {
+        <ul class="search-list">
+          @for (r of searchResults; track r.symbol) {
+            <li (click)="addFromSearch(r)">
+              <strong>{{ r.symbol }}</strong>
+              <span>{{ r.description }}</span>
+              <span class="tag">{{ r.typeLabel }}</span>
+            </li>
+          }
+        </ul>
+      }
+
+      @if (loading) {
+        <div class="hint"><mat-spinner diameter="24"></mat-spinner></div>
+      } @else {
+        <div class="chips">
+          @for (t of tickers; track t) {
+            <span class="chip">
+              {{ t }}
+              <button type="button" (click)="removeTicker(t)" aria-label="Quitar">×</button>
+            </span>
+          }
+        </div>
+        @if (!tickers.length) {
+          <p class="hint">Cartera vacía. Importa la lista recomendada o añade símbolos.</p>
+        }
+        <button class="btn linkish" type="button" (click)="importDefaults()" [disabled]="saving">
+          Importar lista TFM (SPY, QQQ, GLD…)
+        </button>
+      }
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">Cobertura · {{ selectedDate }}</h2>
+      @if (coverageLoading) {
+        <div class="hint"><mat-spinner diameter="24"></mat-spinner></div>
+      } @else {
+        <div class="kpi-row">
+          <div class="kpi-mini">
+            <span class="n">{{ coverageComplete }}/{{ coverageTotal }}</span>
+            <span class="l">completos</span>
+          </div>
+          <div class="kpi-mini">
+            <span class="n">{{ (coverageRatio * 100) | number:'1.0-0' }}%</span>
+            <span class="l">cobertura</span>
+          </div>
+        </div>
+        <table class="cov-table">
+          <thead>
+            <tr>
+              <th>Ticker</th>
+              <th>Raw</th>
+              <th>Filtradas</th>
+              <th>Traza</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of coverageRows; track row.ticker) {
+              <tr [class]="rowStatus(row)">
+                <td><strong>{{ row.ticker }}</strong></td>
+                <td><mat-icon>{{ row.has_raw_news ? 'check_circle' : 'cancel' }}</mat-icon></td>
+                <td><mat-icon>{{ row.has_news_filtered ? 'check_circle' : 'cancel' }}</mat-icon></td>
+                <td><mat-icon>{{ row.has_trace ? 'check_circle' : 'cancel' }}</mat-icon></td>
+                <td>
+                  <a class="link" [routerLink]="['/explorer']"
+                     [queryParams]="{ ticker: row.ticker, date: selectedDate }">Explorar</a>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+    </div>
+  </section>
+</div>

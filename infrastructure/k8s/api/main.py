@@ -8,8 +8,14 @@ Endpoints:
   GET /trace/{date}                 - Traza bayesiana completa (MongoDB bayesian_traces)
   GET /trace/{date}/{ticker}        - Traza por ticker
   GET /model                        - Config del modelo bayesiano
-  GET /tickers                      - Lista ETFs (MongoDB etf_universe)
-  POST /mongo/etf-universe          - Actualiza el universo ETF en MongoDB
+  GET /tickers                      - Lista ETFs (cartera watchlist)
+  GET /watchlist                    - Cartera de seguimiento
+  PUT /watchlist                    - Reemplaza la cartera
+  POST /watchlist/tickers           - Anade un ticker
+  DELETE /watchlist/tickers/{sym}   - Quita un ticker
+  GET /watchlist/coverage           - Cobertura pipeline por ticker/fecha
+  POST /watchlist/run-pipeline      - Pipeline para toda la cartera (o huecos)
+  POST /mongo/etf-universe          - Actualiza universo (sincroniza watchlist)
   GET /raw/{date}/news/{ticker}     - Noticias raw (MongoDB raw_news)
   GET /raw/{date}/ohlcv/{ticker}    - OHLCV (MongoDB ohlcv)
   POST /pipeline/run                - Lanza pipeline para ticker(s)
@@ -50,6 +56,12 @@ try:
     from mongo_utils import (
         get_etf_tickers,
         upsert_etf_universe,
+        get_watchlist,
+        get_watchlist_tickers,
+        upsert_watchlist,
+        ensure_watchlist_initialized,
+        add_watchlist_ticker,
+        remove_watchlist_ticker,
         read_bayesian_trace,
         read_bayesian_report,
         list_bayesian_report_tickers,
@@ -59,6 +71,12 @@ try:
 except ImportError:
     get_etf_tickers = None  # type: ignore[misc, assignment]
     upsert_etf_universe = None  # type: ignore[misc, assignment]
+    get_watchlist = None  # type: ignore[misc, assignment]
+    get_watchlist_tickers = None  # type: ignore[misc, assignment]
+    upsert_watchlist = None  # type: ignore[misc, assignment]
+    ensure_watchlist_initialized = None  # type: ignore[misc, assignment]
+    add_watchlist_ticker = None  # type: ignore[misc, assignment]
+    remove_watchlist_ticker = None  # type: ignore[misc, assignment]
     read_bayesian_trace = None  # type: ignore[misc, assignment]
     read_bayesian_report = None  # type: ignore[misc, assignment]
     list_bayesian_report_tickers = None  # type: ignore[misc, assignment]
@@ -677,13 +695,20 @@ def presign(
 
 @app.get("/tickers", tags=["Tickers"])
 def list_tickers(x_api_key: str = Header(default="")):
-    """Lista los ETFs del universo (coleccion etf_universe en MongoDB)."""
+    """Lista la cartera de seguimiento (watchlist), usada por pipeline y explorador."""
     check_api_key(x_api_key)
-    if not get_etf_tickers:
+    if not ensure_watchlist_initialized:
         raise HTTPException(status_code=503, detail="mongo_utils no disponible")
     try:
-        tickers = get_etf_tickers()  # type: ignore[misc]
-        return {"tickers": tickers, "total": len(tickers), "source": "mongo"}
+        tickers = ensure_watchlist_initialized()  # type: ignore[misc]
+        wl = get_watchlist() if get_watchlist else None  # type: ignore[misc]
+        return {
+            "tickers": tickers,
+            "total": len(tickers),
+            "source": "watchlist",
+            "name": (wl or {}).get("name", "Cartera de seguimiento"),
+            "updated_at": (wl or {}).get("updated_at"),
+        }
     except Exception as e:
         logger.exception("list_tickers error")
         raise HTTPException(status_code=500, detail=str(e))
@@ -693,28 +718,217 @@ class EtfUniverseBody(BaseModel):
     tickers: List[str]
 
 
+class WatchlistBody(BaseModel):
+    tickers: List[str]
+    name: Optional[str] = "Cartera de seguimiento"
+
+
+class WatchlistTickerBody(BaseModel):
+    ticker: str
+
+
+class WatchlistRunBody(BaseModel):
+    batch_date: Optional[str] = None
+    tickers: Optional[List[str]] = None
+    only_missing: bool = False
+
+
+def _require_watchlist_helpers():
+    if not ensure_watchlist_initialized or not upsert_watchlist:
+        raise HTTPException(status_code=503, detail="mongo_utils watchlist no disponible")
+
+
+def _start_sfn_pipeline(payload: dict) -> dict:
+    if not STATE_MACHINE_ARN:
+        raise HTTPException(
+            status_code=503,
+            detail="STATE_MACHINE_ARN no configurado. Contacta al administrador.",
+        )
+    run_name = (
+        f"watchlist-{'partial' if payload.get('tickers') else 'full'}-"
+        f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
+    )
+    exec_resp = sfn.start_execution(
+        stateMachineArn=STATE_MACHINE_ARN,
+        name=run_name,
+        input=json.dumps(payload),
+    )
+    return {
+        "executionArn": exec_resp["executionArn"],
+        "status": "RUNNING",
+        "startDate": exec_resp["startDate"].isoformat(),
+        "payload": payload,
+    }
+
+
+@app.get("/watchlist", tags=["Cartera"])
+def get_watchlist_endpoint(x_api_key: str = Header(default="")):
+    """Cartera de seguimiento persistente (MongoDB watchlists)."""
+    check_api_key(x_api_key)
+    _require_watchlist_helpers()
+    tickers = ensure_watchlist_initialized()  # type: ignore[misc]
+    doc = get_watchlist() if get_watchlist else {}  # type: ignore[misc]
+    return {
+        "name": (doc or {}).get("name", "Cartera de seguimiento"),
+        "tickers": tickers,
+        "total": len(tickers),
+        "updated_at": (doc or {}).get("updated_at"),
+        "created_at": (doc or {}).get("created_at"),
+    }
+
+
+@app.put("/watchlist", tags=["Cartera"])
+def put_watchlist(body: WatchlistBody, x_api_key: str = Header(default="")):
+    """Reemplaza la cartera y sincroniza etf_universe para el pipeline."""
+    check_api_key(x_api_key)
+    _require_watchlist_helpers()
+    if not body.tickers:
+        raise HTTPException(status_code=400, detail="La lista tickers no puede estar vacia")
+    clean = upsert_watchlist(body.tickers, name=body.name or "Cartera de seguimiento")  # type: ignore[misc]
+    return {"ok": True, "tickers": clean, "total": len(clean)}
+
+
+@app.post("/watchlist/tickers", tags=["Cartera"])
+def post_watchlist_ticker(body: WatchlistTickerBody, x_api_key: str = Header(default="")):
+    check_api_key(x_api_key)
+    _require_watchlist_helpers()
+    sym = (body.ticker or "").strip().upper()
+    if not sym:
+        raise HTTPException(status_code=400, detail="ticker requerido")
+    tickers = add_watchlist_ticker(sym)  # type: ignore[misc]
+    return {"ok": True, "ticker": sym, "tickers": tickers, "total": len(tickers)}
+
+
+@app.delete("/watchlist/tickers/{symbol}", tags=["Cartera"])
+def delete_watchlist_ticker(symbol: str, x_api_key: str = Header(default="")):
+    check_api_key(x_api_key)
+    _require_watchlist_helpers()
+    sym = symbol.strip().upper()
+    tickers = remove_watchlist_ticker(sym)  # type: ignore[misc]
+    return {"ok": True, "removed": sym, "tickers": tickers, "total": len(tickers)}
+
+
+@app.get("/watchlist/coverage", tags=["Cartera"])
+def watchlist_coverage(
+    date: str = Query(..., description="YYYY-MM-DD"),
+    x_api_key: str = Header(default=""),
+):
+    """Estado del pipeline por ticker de la cartera para una fecha."""
+    check_api_key(x_api_key)
+    _require_watchlist_helpers()
+    if not date or len(date) != 10:
+        raise HTTPException(status_code=400, detail="Formato: YYYY-MM-DD")
+    db = _require_mongo()
+    tickers = ensure_watchlist_initialized()  # type: ignore[misc]
+    trace = read_bayesian_trace(date) if read_bayesian_trace else None  # type: ignore[misc]
+    trace_keys = set(trace.get("tickers", {}).keys()) if trace else set()
+    report_tickers = set()
+    if list_bayesian_report_tickers:
+        report_tickers = set(list_bayesian_report_tickers(date))  # type: ignore[misc]
+    rows = []
+    complete = 0
+    for t in tickers:
+        cov = _pipeline_coverage(db, date, t)
+        has_trace = t in trace_keys or t in report_tickers
+        row = {
+            "ticker": t,
+            "has_raw_news": cov["ticker_has_raw_news"],
+            "has_news_filtered": cov["ticker_has_news_filtered"],
+            "has_trace": has_trace,
+            "complete": bool(
+                cov["ticker_has_raw_news"]
+                and cov["ticker_has_news_filtered"]
+                and has_trace
+            ),
+        }
+        if row["complete"]:
+            complete += 1
+        rows.append(row)
+    return {
+        "batch_date": date,
+        "tickers": rows,
+        "total": len(rows),
+        "complete": complete,
+        "missing": len(rows) - complete,
+        "coverage_ratio": round(complete / len(rows), 4) if rows else 0.0,
+    }
+
+
+@app.post("/watchlist/run-pipeline", tags=["Cartera"])
+def watchlist_run_pipeline(
+    body: WatchlistRunBody, x_api_key: str = Header(default="")
+):
+    """
+    Lanza Step Functions para la cartera.
+    only_missing=true: solo tickers sin traza completa en batch_date.
+    """
+    check_api_key(x_api_key)
+    _require_watchlist_helpers()
+    batch_date = body.batch_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    all_tickers = ensure_watchlist_initialized()  # type: ignore[misc]
+    tickers = [t.upper() for t in (body.tickers or all_tickers) if t]
+
+    if body.only_missing:
+        db = _require_mongo()
+        trace = read_bayesian_trace(batch_date) if read_bayesian_trace else None  # type: ignore[misc]
+        trace_keys = set(trace.get("tickers", {}).keys()) if trace else set()
+        missing = []
+        for t in tickers:
+            cov = _pipeline_coverage(db, batch_date, t)
+            has_trace = t in trace_keys
+            if not (
+                cov["ticker_has_raw_news"]
+                and cov["ticker_has_news_filtered"]
+                and has_trace
+            ):
+                missing.append(t)
+        tickers = missing
+        if not tickers:
+            return {
+                "status": "SKIPPED",
+                "message": f"Todos los instrumentos de la cartera tienen datos para {batch_date}",
+                "batch_date": batch_date,
+            }
+
+    if not tickers:
+        raise HTTPException(status_code=400, detail="No hay tickers para ejecutar")
+
+    payload: dict = {
+        "trigger_type": "manual",
+        "batch_date": batch_date,
+        "tickers": tickers,
+    }
+    try:
+        result = _start_sfn_pipeline(payload)
+        result["message"] = (
+            f"Pipeline iniciado para {len(tickers)} ticker(s) en {batch_date}"
+        )
+        result["tickers"] = tickers
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("watchlist_run_pipeline error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/mongo/etf-universe", tags=["MongoDB"])
 def mongo_get_etf_universe(x_api_key: str = Header(default="")):
-    """Devuelve el universo ETF almacenado en MongoDB."""
-    check_api_key(x_api_key)
-    if not get_etf_tickers:
-        raise HTTPException(status_code=503, detail="mongo_utils no disponible")
-    tickers = get_etf_tickers()  # type: ignore[misc]
-    return {"tickers": tickers, "total": len(tickers)}
+    """Devuelve la cartera (alias de GET /watchlist)."""
+    return get_watchlist_endpoint(x_api_key)
 
 
 @app.post("/mongo/etf-universe", tags=["MongoDB"])
 def mongo_post_etf_universe(
     body: EtfUniverseBody, x_api_key: str = Header(default="")
 ):
-    """Reemplaza el universo ETF en MongoDB (coleccion etf_universe, documento default)."""
+    """Reemplaza cartera + etf_universe (pipeline)."""
     check_api_key(x_api_key)
-    if not upsert_etf_universe:
-        raise HTTPException(status_code=503, detail="mongo_utils no disponible")
+    _require_watchlist_helpers()
     if not body.tickers:
         raise HTTPException(status_code=400, detail="La lista tickers no puede estar vacia")
-    upsert_etf_universe(body.tickers)  # type: ignore[misc]
-    return {"ok": True, "total": len(body.tickers)}
+    clean = upsert_watchlist(body.tickers)  # type: ignore[misc]
+    return {"ok": True, "total": len(clean), "tickers": clean}
 
 
 # ─── Raw data: noticias y OHLCV ───────────────────────────────────────────────

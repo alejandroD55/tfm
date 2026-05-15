@@ -6,7 +6,8 @@ Todas las escrituras son best-effort; un fallo en MongoDB NUNCA cancela
 el pipeline principal.
 
 Colecciones en la BD 'tfm':
-  etf_universe      → lista de tickers del universo (documento _id 'default')
+  etf_universe      → lista legacy (sincronizada desde watchlist)
+  watchlists        → cartera de seguimiento del usuario (documento _id 'default')
   raw_news          → articulos Finnhub sin clasificar (pre-FinBERT)
   ohlcv             → datos OHLCV diarios de yfinance
   news              → articulos con scoring FinBERT completo
@@ -225,29 +226,111 @@ def read_ohlcv_ticker(batch_date: str, ticker: str) -> list:
         return []
 
 
-# ─── etf_universe: lista editable de tickers (sustituye etf_universe.json en S3) ─
+# ─── watchlist / etf_universe: cartera de seguimiento → pipeline ───────────────
 
 _ETF_DOC_ID = "default"
+_WATCHLIST_DOC_ID = "default"
+_DEFAULT_WATCHLIST_SEED = [
+    "SPY", "QQQ", "SMH", "XLE", "XLP", "XLF", "XLV", "IWM", "TLT", "GLD",
+]
 
 
-def get_etf_tickers() -> List[str]:
-    """Devuelve tickers en mayusculas; lista vacia si Mongo no hay datos."""
+def _clean_ticker_list(tickers: List[str]) -> List[str]:
+    seen = set()
+    out: List[str] = []
+    for t in tickers or []:
+        u = str(t).strip().upper()
+        if u and u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
+def _read_legacy_etf_universe_tickers() -> List[str]:
     db = _get_db()
     if db is None:
         return []
     try:
-        doc = db["etf_universe"].find_one({"_id": _ETF_DOC_ID})
-        if not doc:
-            doc = db["etf_universe"].find_one({})
+        doc = db["etf_universe"].find_one({"_id": _ETF_DOC_ID}) or db["etf_universe"].find_one({})
         if not doc:
             return []
         raw = doc.get("tickers", [])
-        if not isinstance(raw, list):
-            return []
-        return [str(t).strip().upper() for t in raw if t]
+        return _clean_ticker_list(raw if isinstance(raw, list) else [])
     except Exception as exc:
-        logger.warning(f"MongoDB get_etf_tickers failed: {exc}")
+        logger.warning(f"MongoDB _read_legacy_etf_universe_tickers failed: {exc}")
         return []
+
+
+def get_watchlist() -> Optional[Dict[str, Any]]:
+    db = _get_db()
+    if db is None:
+        return None
+    try:
+        doc = db["watchlists"].find_one({"_id": _WATCHLIST_DOC_ID}, {"_id": 0})
+        if doc:
+            doc["_id"] = _WATCHLIST_DOC_ID
+        return doc
+    except Exception as exc:
+        logger.warning(f"MongoDB get_watchlist failed: {exc}")
+        return None
+
+
+def get_watchlist_tickers() -> List[str]:
+    doc = get_watchlist()
+    if not doc:
+        return []
+    return _clean_ticker_list(doc.get("tickers", []))
+
+
+def upsert_watchlist(
+    tickers: List[str],
+    name: str = "Cartera de seguimiento",
+    doc_id: str = _WATCHLIST_DOC_ID,
+) -> List[str]:
+    """Guarda la cartera y sincroniza etf_universe (lo que leen las Lambdas)."""
+    clean = _clean_ticker_list(tickers)
+    if not clean:
+        return []
+    try:
+        db = _get_db()
+        if db is None:
+            return clean
+        now = datetime.now(timezone.utc)
+        db["watchlists"].update_one(
+            {"_id": doc_id},
+            {
+                "$set": {
+                    "_id": doc_id,
+                    "name": name,
+                    "tickers": clean,
+                    "count": len(clean),
+                    "updated_at": now,
+                },
+                "$setOnInsert": {"created_at": now},
+            },
+            upsert=True,
+        )
+        upsert_etf_universe(clean, doc_id=_ETF_DOC_ID)
+        logger.info(f"Watchlist actualizada: {len(clean)} tickers")
+        return clean
+    except Exception as exc:
+        logger.warning(f"MongoDB upsert_watchlist failed: {exc}")
+        return clean
+
+
+def ensure_watchlist_initialized() -> List[str]:
+    """Devuelve tickers de la cartera; si no existe, inicializa desde etf_universe o seed."""
+    existing = get_watchlist_tickers()
+    if existing:
+        return existing
+    legacy = _read_legacy_etf_universe_tickers()
+    seed = legacy or list(_DEFAULT_WATCHLIST_SEED)
+    return upsert_watchlist(seed)
+
+
+def get_etf_tickers() -> List[str]:
+    """Tickers para el pipeline: cartera de seguimiento (watchlist)."""
+    return ensure_watchlist_initialized()
 
 
 def upsert_etf_universe(tickers: List[str], doc_id: str = _ETF_DOC_ID) -> None:
@@ -273,6 +356,23 @@ def upsert_etf_universe(tickers: List[str], doc_id: str = _ETF_DOC_ID) -> None:
         )
     except Exception as exc:
         logger.warning(f"MongoDB upsert_etf_universe failed: {exc}")
+
+
+def add_watchlist_ticker(ticker: str) -> List[str]:
+    current = ensure_watchlist_initialized()
+    sym = str(ticker).strip().upper()
+    if not sym or sym in current:
+        return current
+    return upsert_watchlist(current + [sym])
+
+
+def remove_watchlist_ticker(ticker: str) -> List[str]:
+    current = ensure_watchlist_initialized()
+    sym = str(ticker).strip().upper()
+    filtered = [t for t in current if t != sym]
+    if not filtered:
+        return current
+    return upsert_watchlist(filtered)
 
 
 # ─── bayesian_traces: JSON completo por dia (sustituye results/.../bayesian_trace.json)

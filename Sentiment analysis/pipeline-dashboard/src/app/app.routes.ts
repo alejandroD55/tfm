@@ -26,11 +26,16 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./features/audit/audit.component').then(m => m.AuditComponent),
   },
-  {
-    path: 'explorer',
-    loadComponent: () =>
-      import('./features/ticker-explorer/ticker-explorer.component').then(m => m.TickerExplorerComponent),
-  },
+    {
+      path: 'explorer',
+      loadComponent: () =>
+        import('./features/ticker-explorer/ticker-explorer.component').then(m => m.TickerExplorerComponent),
+    },
+    {
+      path: 'watchlist',
+      loadComponent: () =>
+        import('./features/watchlist/watchlist.component').then(m => m.WatchlistComponent),
+    },
   {
     path: '',
     redirectTo: 'dashboard',

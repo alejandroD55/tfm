@@ -48,6 +48,12 @@ export class SidebarComponent {
       description: 'Noticias raw · OHLCV · decisión por ticker · lanzar pipeline',
       badge:       'NEW',
     },
+    {
+      label:       'Cartera',
+      icon:        'bookmark',
+      route:       '/watchlist',
+      description: 'Instrumentos de seguimiento · cobertura · pipeline por cartera',
+    },
   ];
 
   infraNav: NavItem[] = [

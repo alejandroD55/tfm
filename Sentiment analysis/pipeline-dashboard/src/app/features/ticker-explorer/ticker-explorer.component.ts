@@ -1,6 +1,7 @@
 import { Component, OnInit, OnDestroy, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
@@ -53,6 +54,7 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
   private api       = inject(ApiService);
   private traceSvc  = inject(TraceService);
   private reportSvc = inject(ReportService);
+  private route     = inject(ActivatedRoute);
 
   // ─── Instrument search state ──────────────────────────────────────
   instrumentQuery      = '';
@@ -100,9 +102,17 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
   // ─── Init ─────────────────────────────────────────────────────────
   ngOnInit() {
     // Cargar fechas y tickers disponibles en paralelo
+    const qpTicker = this.route.snapshot.queryParamMap.get('ticker')?.toUpperCase() || '';
+    const qpDate   = this.route.snapshot.queryParamMap.get('date') || '';
+
     this.reportSvc.listAvailableDates().subscribe((dates) => {
       this.availableDates = dates;
-      if (dates.length) this.selectedDate = dates[0].date;
+      if (qpDate) this.selectedDate = qpDate;
+      else if (dates.length) this.selectedDate = dates[0].date;
+      if (qpTicker) {
+        this.tickerInput = qpTicker;
+        this.loadTicker(qpTicker);
+      }
     });
 
     this.api.getTickers().subscribe({
