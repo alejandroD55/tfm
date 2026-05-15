@@ -73,22 +73,31 @@ HIGH_IMPACT_MULTIPLIER = 1.67   # sube hasta ±0.20 en eventos extremos
 MAX_ADJUSTMENT         = 0.20
 
 # Palabras clave para detectar eventos de alto impacto
+# Keywords de alto impacto — frases específicas para evitar falsos positivos
+# Se requieren MÍNIMO 2 artículos distintos con el keyword para activar el evento
 GEOPOLITICAL_KEYWORDS = [
-    "war", "military", "invasion", "conflict", "missile", "nuclear",
-    "sanctions", "blockade", "coup", "terrorism", "attack",
+    "military strike", "armed conflict", "invasion of", "nuclear threat",
+    "missile attack", "war escalation", "military offensive", "coup attempt",
+    "terrorist attack", "economic sanctions imposed",
 ]
 HAWKISH_KEYWORDS = [
-    "rate hike", "tightening", "hawkish", "inflation target",
-    "aggressive", "50 basis points", "75 basis points", "100 basis points",
+    "rate hike", "raises rates", "hawkish fed", "fed hikes",
+    "50 basis points hike", "75 basis points hike", "aggressive tightening",
+    "higher for longer", "restrictive policy",
 ]
 DOVISH_KEYWORDS = [
-    "rate cut", "dovish", "easing", "pause", "pivot", "accommodative",
-    "quantitative easing", "QE",
+    "rate cut", "cuts rates", "dovish pivot", "fed cuts",
+    "quantitative easing announced", "accommodative stance",
+    "pause in rate hikes", "end of tightening",
 ]
 INFLATION_SHOCK_KEYWORDS = [
-    "higher than expected", "beats expectations", "hotter than expected",
-    "surges", "jumps", "soars", "unexpectedly high",
+    "hotter than expected inflation", "cpi beats expectations",
+    "inflation surges unexpectedly", "core inflation surprise",
+    "inflation above forecast",
 ]
+
+# Mínimo de artículos que deben contener el keyword para considerar evento activo
+MIN_ARTICLES_FOR_EVENT = 2
 
 try:
     from mongo_utils import (
@@ -243,6 +252,8 @@ def run_finbert_macro(articles: list, hf_client: InferenceClient) -> dict:
 def get_vix(batch_date: str) -> float | None:
     """Obtiene el cierre del VIX más reciente."""
     try:
+        # Lambda tiene filesystem read-only — redirigir caché de yfinance a /tmp
+        yf.set_tz_cache_location("/tmp/yfinance_tz_cache")
         end   = pd.to_datetime(batch_date).date() + timedelta(days=1)
         start = end - timedelta(days=5)
         df = yf.download("^VIX", start=str(start), end=str(end), progress=False)
@@ -258,18 +269,41 @@ def get_vix(batch_date: str) -> float | None:
 
 # ─── Detección de eventos de alto impacto ─────────────────────────────────────
 
+def _count_articles_with_keyword(articles: list, keywords: list) -> int:
+    """Cuenta cuántos artículos distintos contienen al menos un keyword."""
+    count = 0
+    for art in articles:
+        text = (art.get("headline", "") + " " + art.get("summary", "")).lower()
+        if any(kw in text for kw in keywords):
+            count += 1
+    return count
+
+
 def detect_high_impact_events(articles: list) -> dict:
-    """Detecta señales de alto impacto en las noticias macro."""
-    text_corpus = " ".join(
-        (art.get("headline", "") + " " + art.get("summary", "")).lower()
-        for art in articles
-    )
-    return {
-        "geopolitical": any(kw in text_corpus for kw in GEOPOLITICAL_KEYWORDS),
-        "hawkish_fed":  any(kw in text_corpus for kw in HAWKISH_KEYWORDS),
-        "dovish_fed":   any(kw in text_corpus for kw in DOVISH_KEYWORDS),
-        "inflation_shock": any(kw in text_corpus for kw in INFLATION_SHOCK_KEYWORDS),
+    """
+    Detecta eventos de alto impacto requiriendo que al menos MIN_ARTICLES_FOR_EVENT
+    artículos distintos mencionen el keyword. Evita falsos positivos por menciones
+    históricas o de contexto en un único artículo.
+    """
+    geo   = _count_articles_with_keyword(articles, GEOPOLITICAL_KEYWORDS)
+    hawk  = _count_articles_with_keyword(articles, HAWKISH_KEYWORDS)
+    dove  = _count_articles_with_keyword(articles, DOVISH_KEYWORDS)
+    inf   = _count_articles_with_keyword(articles, INFLATION_SHOCK_KEYWORDS)
+
+    events = {
+        "geopolitical":    geo  >= MIN_ARTICLES_FOR_EVENT,
+        "hawkish_fed":     hawk >= MIN_ARTICLES_FOR_EVENT,
+        "dovish_fed":      dove >= MIN_ARTICLES_FOR_EVENT,
+        "inflation_shock": inf  >= MIN_ARTICLES_FOR_EVENT,
+        "_counts": {"geopolitical": geo, "hawkish": hawk, "dovish": dove, "inflation": inf},
     }
+
+    # hawkish y dovish simultáneos es contradictorio — prevalece hawkish
+    if events["hawkish_fed"] and events["dovish_fed"]:
+        logger.warning("hawkish y dovish detectados simultáneamente — prevalece hawkish, dovish ignorado")
+        events["dovish_fed"] = False
+
+    return events
 
 
 # ─── RiskRegime ───────────────────────────────────────────────────────────────

@@ -312,6 +312,60 @@ def read_bayesian_trace(batch_date: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _bayesian_report_doc_to_ticker_trace(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Reconstruye el subdocumento de traza por ticker desde bayesian_reports."""
+    return {
+        "raw_values": doc.get("raw_values", {}),
+        "discretization": doc.get("discretization", {}),
+        "sentiment_detail": doc.get("sentiment_detail", {}),
+        "inference": {
+            "signal": doc.get("signal"),
+            "prob_up": doc.get("prob_up"),
+            "prob_down": doc.get("prob_down"),
+            "threshold_used": doc.get("threshold_used"),
+        },
+        "reasoning": doc.get("reasoning"),
+    }
+
+
+def read_bayesian_report(batch_date: str, ticker: str) -> Optional[Dict[str, Any]]:
+    """Traza de un ticker desde bayesian_reports (fallback si bayesian_traces.tickers está vacío)."""
+    db = _get_db()
+    if db is None:
+        return None
+    try:
+        doc = db["bayesian_reports"].find_one(
+            {"batch_date": batch_date, "ticker": ticker.upper()},
+            {"_id": 0},
+        )
+        return _bayesian_report_doc_to_ticker_trace(doc) if doc else None
+    except Exception as exc:
+        logger.warning(f"MongoDB read_bayesian_report failed ({ticker}): {exc}")
+        return None
+
+
+def list_bayesian_report_tickers(batch_date: str) -> list:
+    db = _get_db()
+    if db is None:
+        return []
+    try:
+        return sorted(db["bayesian_reports"].distinct("ticker", {"batch_date": batch_date}))
+    except Exception as exc:
+        logger.warning(f"MongoDB list_bayesian_report_tickers failed: {exc}")
+        return []
+
+
+def distinct_raw_news_tickers(batch_date: str) -> list:
+    db = _get_db()
+    if db is None:
+        return []
+    try:
+        return sorted(db["raw_news"].distinct("ticker", {"batch_date": batch_date}))
+    except Exception as exc:
+        logger.warning(f"MongoDB distinct_raw_news_tickers failed: {exc}")
+        return []
+
+
 # ─── news_filtered: titulares limpios generados por Bedrock ──────────────────
 
 def upsert_filtered_news(batch_date: str, ticker: str, filtered_headlines: list, daily_context: str = ""):

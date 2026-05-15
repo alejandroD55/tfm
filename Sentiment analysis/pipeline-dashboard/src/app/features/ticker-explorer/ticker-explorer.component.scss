@@ -682,6 +682,26 @@
   }
 }
 
+.news-hint-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--brand-100);
+  color: var(--brand-800);
+  font-size: 12px;
+  line-height: 1.45;
+  mat-icon {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    color: var(--brand-600);
+  }
+}
+
 .articles-list {
   display: flex;
   flex-direction: column;

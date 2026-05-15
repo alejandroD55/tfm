@@ -173,13 +173,19 @@ export class ApiService {
 
   // ─── Raw data ────────────────────────────────────────────────────
   /** Noticias raw de Finnhub para un ticker y fecha */
-  getRawNews(date: string, ticker: string): Observable<{
-    date: string; ticker: string; articles: any[]; total: number;
-    all_tickers_in_file: string[];
+  getRawNews(date: string, ticker: string, fallbackLatest = true): Observable<{
+    date: string;
+    requested_date?: string;
+    ticker: string;
+    articles: any[];
+    total: number;
+    batch_dates_available?: string[];
+    hint?: string | null;
   }> {
+    const params = new HttpParams().set('fallback_latest', String(fallbackLatest));
     return this.http.get<any>(
       `${this.baseUrl}/raw/${date}/news/${ticker.toUpperCase()}`,
-      { headers: this.authHeaders });
+      { headers: this.authHeaders, params });
   }
 
   /** Datos OHLCV para un ticker y fecha */

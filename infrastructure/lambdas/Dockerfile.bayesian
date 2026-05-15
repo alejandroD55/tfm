@@ -34,5 +34,6 @@ RUN find /var/lang/lib/python3.11/site-packages \
 
 COPY lambda_bayesian/lambda_bayesian.py ${LAMBDA_TASK_ROOT}/
 COPY shared/mongo_utils.py ${LAMBDA_TASK_ROOT}/
+RUN chmod 644 ${LAMBDA_TASK_ROOT}/lambda_bayesian.py ${LAMBDA_TASK_ROOT}/mongo_utils.py
 
 CMD ["lambda_bayesian.handler"]

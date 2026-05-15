@@ -35,6 +35,7 @@ import boto3
 from fastapi import FastAPI, HTTPException, Query, Header
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("tfm-api")
@@ -50,6 +51,8 @@ try:
         get_etf_tickers,
         upsert_etf_universe,
         read_bayesian_trace,
+        read_bayesian_report,
+        list_bayesian_report_tickers,
         read_raw_news_ticker,
         read_ohlcv_ticker,
     )
@@ -57,6 +60,8 @@ except ImportError:
     get_etf_tickers = None  # type: ignore[misc, assignment]
     upsert_etf_universe = None  # type: ignore[misc, assignment]
     read_bayesian_trace = None  # type: ignore[misc, assignment]
+    read_bayesian_report = None  # type: ignore[misc, assignment]
+    list_bayesian_report_tickers = None  # type: ignore[misc, assignment]
     read_raw_news_ticker = None  # type: ignore[misc, assignment]
     read_ohlcv_ticker = None  # type: ignore[misc, assignment]
 
@@ -203,9 +208,75 @@ def _require_mongo_pipeline_helpers():
         )
 
 
-def _bayesian_trace_for_date(date: str) -> dict:
+def _tickers_in_mongo_collection(db, collection: str, batch_date: str) -> list[str]:
+    """Lista tickers con documento para batch_date en una coleccion Mongo."""
+    return sorted(
+        {
+            str(d["ticker"]).upper()
+            for d in db[collection].find({"batch_date": batch_date}, {"ticker": 1})
+            if d.get("ticker")
+        }
+    )
+
+
+def _pipeline_coverage(db, batch_date: str, ticker: str) -> dict:
+    """Estado de datos por capa del pipeline para un ticker/fecha."""
+    ticker_u = ticker.upper()
+    trace = None
+    if read_bayesian_trace:
+        trace = read_bayesian_trace(batch_date)  # type: ignore[misc]
+    trace_tickers = sorted(trace.get("tickers", {}).keys()) if trace else []
+    report_tickers: list[str] = []
+    if list_bayesian_report_tickers:
+        try:
+            report_tickers = list_bayesian_report_tickers(batch_date)  # type: ignore[misc]
+        except Exception:
+            report_tickers = []
+    universe = []
+    if get_etf_tickers:
+        try:
+            universe = [t.upper() for t in get_etf_tickers()]  # type: ignore[misc]
+        except Exception:
+            universe = []
+    raw = _tickers_in_mongo_collection(db, "raw_news", batch_date)
+    filtered = _tickers_in_mongo_collection(db, "news_filtered", batch_date)
+    return {
+        "batch_date": batch_date,
+        "ticker": ticker_u,
+        "has_bayesian_trace_doc": trace is not None,
+        "ticker_in_trace": ticker_u in trace_tickers if trace else False,
+        "tickers_in_trace": trace_tickers,
+        "tickers_in_bayesian_reports": report_tickers,
+        "ticker_in_bayesian_reports": ticker_u in report_tickers,
+        "tickers_with_raw_news": raw,
+        "tickers_with_news_filtered": filtered,
+        "ticker_has_raw_news": ticker_u in raw,
+        "ticker_has_news_filtered": ticker_u in filtered,
+        "in_etf_universe": ticker_u in universe,
+        "etf_universe": universe,
+    }
+
+
+def _trace_not_found_response(code: str, message: str, coverage: dict) -> JSONResponse:
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": code,
+            "message": message,
+            "coverage": coverage,
+        },
+    )
+
+
+def _load_bayesian_trace(date: str) -> dict | None:
+    """Carga traza o None. Usa _require_mongo (503) si la BD no responde."""
     _require_mongo_pipeline_helpers()
-    trace = read_bayesian_trace(date)  # type: ignore[misc]
+    _require_mongo()
+    return read_bayesian_trace(date)  # type: ignore[misc]
+
+
+def _bayesian_trace_for_date(date: str) -> dict:
+    trace = _load_bayesian_trace(date)
     if not trace:
         raise HTTPException(
             status_code=404,
@@ -351,30 +422,99 @@ def get_trace(date: str, x_api_key: str = Header(default="")):
     return _bayesian_trace_for_date(date)
 
 
+@app.get("/trace/{date}/{ticker}/coverage", tags=["Trazabilidad"])
+def get_trace_coverage(date: str, ticker: str, x_api_key: str = Header(default="")):
+    """
+  Diagnostico: que capas del pipeline tienen datos para ticker+fecha
+  (raw_news, news_filtered, bayesian_traces) sin exigir traza completa.
+    """
+    check_api_key(x_api_key)
+    if not date or len(date) != 10:
+        raise HTTPException(status_code=400, detail="Formato: YYYY-MM-DD")
+    db = _require_mongo()
+    return _pipeline_coverage(db, date, ticker)
+
+
 @app.get("/trace/{date}/{ticker}", tags=["Trazabilidad"])
 def get_trace_ticker(date: str, ticker: str, x_api_key: str = Header(default="")):
     """
     Traza bayesiana de un ticker especifico para una fecha.
     Incluye: valores raw, discretizacion, distribucion de sentimiento,
     probabilidades posteriores y razonamiento textual.
+
+    404 con cuerpo JSON si falta la traza o el ticker no fue procesado por lambda_bayesian.
     """
     check_api_key(x_api_key)
-    trace = _bayesian_trace_for_date(date)
+    if not date or len(date) != 10:
+        raise HTTPException(status_code=400, detail="Formato: YYYY-MM-DD")
+    db = _require_mongo()
     ticker_upper = ticker.upper()
-    if ticker_upper not in trace.get("tickers", {}):
-        available = list(trace.get("tickers", {}).keys())
-        raise HTTPException(
-            status_code=404,
-            detail=f"Ticker '{ticker_upper}' no encontrado en la traza de {date}. Disponibles: {available}",
+    coverage = _pipeline_coverage(db, date, ticker_upper)
+
+    trace = _load_bayesian_trace(date)
+    ticker_trace = None
+    trace_source = "bayesian_traces"
+
+    if trace and ticker_upper in trace.get("tickers", {}):
+        ticker_trace = trace["tickers"][ticker_upper]
+    elif read_bayesian_report:
+        ticker_trace = read_bayesian_report(date, ticker_upper)  # type: ignore[misc]
+        if ticker_trace:
+            trace_source = "bayesian_reports"
+
+    if ticker_trace is not None:
+        return {
+            "date": date,
+            "ticker": ticker_upper,
+            "model_config": (trace or {}).get("model_config"),
+            "execution": (trace or {}).get("execution"),
+            "trace": ticker_trace,
+            "audit_notes": (trace or {}).get("audit_notes"),
+            "source": trace_source,
+            "coverage": coverage,
+        }
+
+    if not trace:
+        return _trace_not_found_response(
+            "no_trace_for_date",
+            f"No existe documento bayesian_traces para {date}. "
+            "El pipeline debe completar lambda_bayesian (y guardar en Mongo).",
+            coverage,
         )
-    return {
-        "date": date,
-        "ticker": ticker_upper,
-        "model_config": trace.get("model_config"),
-        "execution": trace.get("execution"),
-        "trace": trace["tickers"][ticker_upper],
-        "audit_notes": trace.get("audit_notes"),
-    }
+
+    avail = sorted(trace.get("tickers", {}).keys())
+    reports_avail = coverage.get("tickers_in_bayesian_reports") or []
+    hint = ""
+    if not coverage["ticker_has_raw_news"]:
+        hint = (
+            f" {ticker_upper} no tiene raw_news en {date} "
+            f"(no paso por ingestion o no esta en etf_universe de Mongo)."
+        )
+    elif not coverage["ticker_has_news_filtered"]:
+        hint = f" Hay raw_news pero falta news_filtered (lambda_news_filter)."
+    elif not coverage["in_etf_universe"]:
+        hint = f" {ticker_upper} no esta en etf_universe de MongoDB."
+    elif trace and not avail and reports_avail:
+        hint = (
+            " La traza agregada existe pero tickers esta vacio "
+            f"(lambda_bayesian no genero senales). Informes por ticker: {reports_avail}."
+        )
+    elif trace and not avail:
+        exec_meta = (trace.get("execution") or {})
+        skipped = exec_meta.get("skipped_detail") or []
+        if skipped:
+            hint = f" Todos los tickers fueron omitidos: {skipped[:5]}."
+        else:
+            hint = (
+                " Sin tickers en Aurora (sentiment_scores/technical_indicators) "
+                f"para {date} o indicators incompletos."
+            )
+    return _trace_not_found_response(
+        "ticker_not_in_trace",
+        f"Ticker '{ticker_upper}' no esta en la traza de {date}.{hint} "
+        f"Tickers en traza: {avail}. Informes: {reports_avail}",
+        coverage,
+    )
 
 
 # ─── Configuracion del modelo (NUEVO) ─────────────────────────────────────────
@@ -581,9 +721,17 @@ def mongo_post_etf_universe(
 
 
 @app.get("/raw/{date}/news/{ticker}", tags=["Raw Data"])
-def get_news(date: str, ticker: str, x_api_key: str = Header(default="")):
+def get_news(
+    date: str,
+    ticker: str,
+    fallback_latest: bool = Query(
+        default=True,
+        description="Si no hay noticias en la fecha pedida, devolver el ultimo batch_date con datos",
+    ),
+    x_api_key: str = Header(default=""),
+):
     """
-    Noticias raw de Finnhub para un ticker en una fecha concreta.
+    Noticias raw (ingestion) para un ticker y batch_date.
     Fuente: MongoDB coleccion raw_news.
     """
     check_api_key(x_api_key)
@@ -593,13 +741,45 @@ def get_news(date: str, ticker: str, x_api_key: str = Header(default="")):
         raise HTTPException(status_code=503, detail="mongo_utils no disponible")
     try:
         ticker_u = ticker.upper()
-        articles = read_raw_news_ticker(date, ticker_u)  # type: ignore[misc]
+        db = _require_mongo()
+        requested_date = date
+        articles = read_raw_news_ticker(requested_date, ticker_u)  # type: ignore[misc]
+        resolved_date = requested_date
+        hint = None
+
+        dates_for_ticker = sorted(
+            {
+                str(d)[:10]
+                for d in db["raw_news"].distinct("batch_date", {"ticker": ticker_u})
+                if d and len(str(d)[:10]) == 10
+            },
+            reverse=True,
+        )
+
+        if not articles and fallback_latest and dates_for_ticker:
+            resolved_date = dates_for_ticker[0]
+            if resolved_date != requested_date:
+                articles = read_raw_news_ticker(resolved_date, ticker_u)  # type: ignore[misc]
+                hint = (
+                    f"No hay noticias para {ticker_u} en {requested_date}. "
+                    f"Mostrando el lote mas reciente: {resolved_date}."
+                )
+
+        if not articles and not dates_for_ticker:
+            hint = (
+                f"No hay noticias en MongoDB para {ticker_u}. "
+                "Ejecuta la ingesta (pipeline) para ese ticker o revisa el universo ETF."
+            )
+
         return {
-            "date": date,
+            "date": resolved_date,
+            "requested_date": requested_date,
             "ticker": ticker_u,
             "articles": articles,
             "total": len(articles),
             "source": "mongo",
+            "batch_dates_available": dates_for_ticker,
+            "hint": hint,
         }
     except HTTPException:
         raise
@@ -1130,6 +1310,14 @@ def mongo_stats(x_api_key: str = Header(default="")):
     """Estadisticas de la base de datos MongoDB: documentos por coleccion."""
     check_api_key(x_api_key)
     db = _require_mongo()
+    trace_dates = []
+    for doc in db["bayesian_traces"].find({}, {"batch_date": 1, "trace.tickers": 1, "_id": 0}):
+        bd = str(doc.get("batch_date", ""))[:10]
+        tickers = sorted((doc.get("trace") or {}).get("tickers", {}).keys())
+        trace_dates.append(
+            {"batch_date": bd, "ticker_count": len(tickers), "tickers": tickers[:30]}
+        )
+    trace_dates.sort(key=lambda x: x["batch_date"], reverse=True)
     return {
         "database": MONGODB_DB,
         "collections": {
@@ -1137,10 +1325,12 @@ def mongo_stats(x_api_key: str = Header(default="")):
             "raw_news": db["raw_news"].count_documents({}),
             "ohlcv": db["ohlcv"].count_documents({}),
             "news": db["news"].count_documents({}),
+            "news_filtered": db["news_filtered"].count_documents({}),
             "bayesian_reports": db["bayesian_reports"].count_documents({}),
             "bayesian_traces": db["bayesian_traces"].count_documents({}),
             "reports": db["reports"].count_documents({}),
         },
+        "bayesian_traces_by_date": trace_dates,
     }
 
 

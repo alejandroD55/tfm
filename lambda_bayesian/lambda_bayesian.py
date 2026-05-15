@@ -41,12 +41,14 @@ try:
     from mongo_utils import upsert_bayesian_trace  as _mongo_upsert_bayesian_trace
     from mongo_utils import upsert_bayesian_report as _mongo_upsert_bayesian_report
     from mongo_utils import read_macro_context      as _mongo_read_macro_context
+    from mongo_utils import distinct_raw_news_tickers as _mongo_distinct_raw_news_tickers
 
     logger.info("mongo_utils (bayesian) cargado")
 except ImportError:
     _mongo_upsert_bayesian_trace  = None
     _mongo_upsert_bayesian_report = None
     _mongo_read_macro_context     = None
+    _mongo_distinct_raw_news_tickers = None
     logger.warning("mongo_utils no disponible en lambda_bayesian")
 
 MODEL_CONFIG = {
@@ -395,16 +397,18 @@ def infer_signal(model, evidence_states, macro_context: dict = None):
         macro_sentiment  = macro_context.get("macro_sentiment", "neutral")
         risk_regime      = macro_context.get("risk_regime", "NEUTRAL")
 
-    # prob_up ajustada: capada en [0, 1]
+    # prob_up ajustada: capada en [0, 1]; prob_down debe complementar (trigger Aurora)
     prob_up_adjusted = round(
         max(0.0, min(1.0, prob_up_raw + macro_adjustment)), 4
     )
+    prob_down_adjusted = round(1.0 - prob_up_adjusted, 4)
 
     if macro_adjustment != 0.0:
         logger.info(
             f"macro_adjustment={macro_adjustment:+.3f} "
             f"({macro_sentiment}/{risk_regime}): "
-            f"prob_up {prob_up_raw} → {prob_up_adjusted}"
+            f"prob_up {prob_up_raw} → {prob_up_adjusted}, "
+            f"prob_down {prob_down_raw} → {prob_down_adjusted}"
         )
 
     cfg = MODEL_CONFIG["signal_thresholds"]
@@ -415,11 +419,12 @@ def infer_signal(model, evidence_states, macro_context: dict = None):
     else:
         signal = "HOLD"
 
-    return signal, prob_up_adjusted, prob_down_raw, {
-        "prob_up_raw":       prob_up_raw,
-        "macro_adjustment":  macro_adjustment,
-        "macro_sentiment":   macro_sentiment,
-        "risk_regime":       risk_regime,
+    return signal, prob_up_adjusted, prob_down_adjusted, {
+        "prob_up_raw": prob_up_raw,
+        "prob_down_raw": prob_down_raw,
+        "macro_adjustment": macro_adjustment,
+        "macro_sentiment": macro_sentiment,
+        "risk_regime": risk_regime,
     }
 
 
@@ -593,11 +598,25 @@ def handler(event, context):
             return {"statusCode": 200, "body": "No data"}
 
         cursor.execute(
-            "SELECT DISTINCT ticker FROM sentiment_scores WHERE batch_date = %s",
-            (latest_date,),
+            """
+            SELECT DISTINCT ticker FROM (
+                SELECT ticker FROM sentiment_scores WHERE batch_date = %s
+                UNION
+                SELECT ticker FROM technical_indicators WHERE batch_date = %s
+            ) t
+            ORDER BY ticker
+            """,
+            (latest_date, latest_date),
         )
         tickers = [row[0] for row in cursor.fetchall()]
         cursor.close()
+        if not tickers and _mongo_distinct_raw_news_tickers:
+            tickers = _mongo_distinct_raw_news_tickers(latest_date)
+            if tickers:
+                logger.warning(
+                    f"Sin filas en Aurora para {latest_date}; "
+                    f"tickers desde Mongo raw_news: {tickers}"
+                )
 
         # ── Leer contexto macro del día (genera macro_adjustment) ────────────
         macro_context = get_macro_context(latest_date)
@@ -732,11 +751,18 @@ def handler(event, context):
             "duration_seconds": round((end_time - start_time).total_seconds(), 2),
             "run_id": ctx["run_id"],
             "trigger_type": ctx["trigger_type"],
+            "batch_date": latest_date,
             "tickers_attempted": len(tickers),
             "signals_generated": signals_processed,
             "tickers_skipped": len(skipped),
             "skipped_detail": skipped,
         }
+        if not tickers_trace:
+            execution_meta["warning"] = "no_signals_generated"
+            logger.warning(
+                f"bayesian {latest_date}: 0 senales; "
+                f"attempted={len(tickers)} skipped={len(skipped)}"
+            )
         trace_key = save_bayesian_trace(latest_date, tickers_trace, execution_meta)
         upsert_pipeline_kpi(
             connection,

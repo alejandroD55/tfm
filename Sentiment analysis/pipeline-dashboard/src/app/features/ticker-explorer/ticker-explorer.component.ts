@@ -26,7 +26,7 @@ interface OhlcvRow {
 interface Article {
   headline: string;
   url?: string;
-  datetime?: number;
+  datetime?: number | string;
   source?: string;
   sentiment?: string;
   confidence?: number;
@@ -76,7 +76,10 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
   ohlcvData:     OhlcvRow[] = [];
   ohlcvChartData: any[]     = [];
   articles:      Article[]  = [];
+  newsHint:      string | null = null;
+  newsResolvedDate = '';
   tickerTrace:   TickerTrace | null = null;
+  traceLoadError: string | null = null;
 
   pipelineRunning = false;
   pipelineExecution: any = null;
@@ -238,11 +241,30 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
 
   private loadNews(ticker: string): Promise<void> {
     return new Promise((resolve) => {
+      this.newsHint = null;
+      this.newsResolvedDate = '';
       this.api
-        .getRawNews(this.selectedDate, ticker)
-        .pipe(catchError(() => of(null)))
+        .getRawNews(this.selectedDate, ticker, true)
+        .pipe(catchError((err) => {
+          this.newsHint =
+            err?.error?.detail ??
+            'No se pudieron cargar noticias (revisa API / mongo).';
+          return of(null);
+        }))
         .subscribe((resp) => {
-          this.articles = resp?.articles ?? [];
+          if (!resp) {
+            this.articles = [];
+            resolve();
+            return;
+          }
+          this.articles = resp.articles ?? [];
+          this.newsResolvedDate = resp.date ?? this.selectedDate;
+          if (resp.hint) {
+            this.newsHint = resp.hint;
+            if (resp.date && resp.date !== this.selectedDate) {
+              this.selectedDate = resp.date;
+            }
+          }
           resolve();
         });
     });
@@ -250,9 +272,28 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
 
   private loadTrace(ticker: string): Promise<void> {
     return new Promise((resolve) => {
+      this.traceLoadError = null;
       this.api
         .getTickerTrace(this.selectedDate, ticker)
-        .pipe(catchError(() => of(null)))
+        .pipe(
+          catchError((err) => {
+            const body = err?.error;
+            if (body?.message) {
+              this.traceLoadError = body.message;
+              const c = body.coverage;
+              if (c?.tickers_in_trace?.length) {
+                this.traceLoadError += ` En traza: ${c.tickers_in_trace.join(', ')}.`;
+              }
+              if (c && !c.ticker_has_raw_news) {
+                this.traceLoadError +=
+                  ' Sin ingesta para este ticker/fecha — revisa etf_universe en Mongo y vuelve a ejecutar el pipeline.';
+              }
+            } else {
+              this.traceLoadError = 'No hay traza bayesiana para esta fecha/ticker.';
+            }
+            return of(null);
+          }),
+        )
         .subscribe((resp) => {
           this.tickerTrace = resp?.trace ?? null;
           // Enriquecer artículos con sentiment del trace si está disponible
@@ -331,8 +372,15 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
             this.pipelineProgressPct = 100;
           }
           if (status?.status === 'SUCCEEDED') {
-            // Auto-recarga de datos al completar para evitar que el usuario
-            // tenga que pulsar "Explorar" manualmente.
+            const inp = status?.input;
+            const batchFromRun =
+              typeof inp?.batch_date === 'string' ? inp.batch_date.slice(0, 10) : '';
+            if (batchFromRun) {
+              this.selectedDate = batchFromRun;
+            }
+            this.reportSvc.listAvailableDates().subscribe((dates) => {
+              this.availableDates = dates;
+            });
             this.loadTicker();
             setTimeout(() => {
               document.querySelector('.ticker-banner')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -420,5 +468,17 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
       count: v.count,
       pct: v.pct,
     }));
+  }
+
+  /** datetime en Mongo puede ser ISO string o epoch seconds (Finnhub). */
+  articleDateMs(art: Article): number | null {
+    const raw = art.datetime;
+    if (raw == null || raw === '') return null;
+    if (typeof raw === 'number') {
+      return raw > 1e12 ? raw : raw * 1000;
+    }
+    const s = String(raw);
+    const t = Date.parse(s);
+    return Number.isNaN(t) ? null : t;
   }
 }

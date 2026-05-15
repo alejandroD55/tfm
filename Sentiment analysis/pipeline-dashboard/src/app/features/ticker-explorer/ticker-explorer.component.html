@@ -396,10 +396,17 @@
             <span>Noticias Finnhub — {{ currentTicker }}</span>
           </div>
           <span class="card-sub"
-            >{{ articles.length }} titulares · fuente de sentimiento
-            FinBERT</span
+            >{{ articles.length }} titulares · lote
+            {{ newsResolvedDate || selectedDate }} · raw_news</span
           >
         </div>
+
+        @if (newsHint) {
+          <div class="news-hint-banner">
+            <mat-icon>info</mat-icon>
+            <span>{{ newsHint }}</span>
+          </div>
+        }
 
         @if (articles.length) {
           <!-- Distribución de sentimiento -->
@@ -449,9 +456,9 @@
                   @if (art.source) {
                     <span class="art-source">{{ art.source }}</span>
                   }
-                  @if (art.datetime) {
+                  @if (articleDateMs(art); as ms) {
                     <span class="art-date">{{
-                      art.datetime * 1000 | date: 'dd/MM HH:mm'
+                      ms | date: 'dd/MM HH:mm'
                     }}</span>
                   }
                 </div>
@@ -482,6 +489,16 @@
         }
       </section>
     </div>
+
+    @if (traceLoadError && !tickerTrace) {
+      <section class="card trace-missing-section">
+        <div class="empty-box">
+          <mat-icon>account_tree</mat-icon>
+          <p>Sin traza bayesiana para {{ currentTicker }} · {{ selectedDate }}</p>
+          <p class="empty-sub">{{ traceLoadError }}</p>
+        </div>
+      </section>
+    }
 
     <!-- ─── Decisión bayesiana completa ─── -->
     @if (tickerTrace) {
