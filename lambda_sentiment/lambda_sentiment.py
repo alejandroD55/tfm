@@ -147,15 +147,25 @@ def read_news_for_batch(batch_date):
     )
     return news
 
+# Umbral mínimo de confianza: descartamos clasificaciones ambiguas
+# Por debajo de 0.55 FinBERT no tiene certeza real sobre el sentimiento
+MIN_CONFIDENCE = 0.55
+
+# Longitud mínima del titular para que FinBERT pueda clasificar con sentido
+MIN_HEADLINE_LENGTH = 20
+
+
 def analyze_sentiment(headline, hf_client):
+    # Filtro de calidad previo: descartar titulares demasiado cortos
+    if not headline or len(headline.strip()) < MIN_HEADLINE_LENGTH:
+        return None
+
     # Hacemos hasta 3 intentos por si el modelo está dormido (Cold Start)
     for attempt in range(3):
         try:
-            # El SDK se encarga de la URL y de toda la burocracia de la API
             result = hf_client.text_classification(headline, model=MODEL_ID)
-            
+
             if result:
-                # Dependiendo de la versión del SDK, devuelve objetos o diccionarios
                 if hasattr(result[0], 'score'):
                     top_prediction = max(result, key=lambda x: x.score)
                     label = top_prediction.label.lower()
@@ -164,11 +174,15 @@ def analyze_sentiment(headline, hf_client):
                     top_prediction = max(result, key=lambda x: x.get('score', 0))
                     label = top_prediction.get('label', '').lower()
                     score = top_prediction.get('score', 0.5)
-                
-                # Mapeamos la salida original de FinBERT a nuestra jerga de Trading
+
+                # Descartar clasificaciones con confianza baja — son ruido
+                if score < MIN_CONFIDENCE:
+                    logger.debug(f"Descartado por baja confianza ({score:.2f}): {headline[:50]}")
+                    return None
+
                 sentiment_map = {'positive': 'bullish', 'negative': 'bearish', 'neutral': 'neutral'}
                 final_sentiment = sentiment_map.get(label, 'neutral')
-                
+
                 return {
                     'sentiment': final_sentiment,
                     'confidence': round(float(score), 4),
@@ -249,8 +263,8 @@ def handler(event, context):
             for article in headlines:
                 try:
                     total_headlines += 1
-                    headline = article.get('headline', '')
-                    if not headline:
+                    headline = article.get('headline', '') or article.get('summary', '')
+                    if not headline or len(headline.strip()) < MIN_HEADLINE_LENGTH:
                         skipped_headlines += 1
                         continue
 
