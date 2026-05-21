@@ -41,11 +41,22 @@ ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 ALIAS_NAME="live"
 GIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "nogit")
 
-LAMBDAS=(lambda_ingestion lambda_news_filter lambda_sentiment lambda_indicators lambda_bayesian lambda_report)
+LAMBDAS=(
+  lambda_ingestion
+  lambda_macro_ingestion
+  lambda_macro_context
+  lambda_news_filter
+  lambda_sentiment
+  lambda_indicators
+  lambda_bayesian
+  lambda_report
+)
 
 get_lambda_memory() {
   case "$1" in
     lambda_ingestion) echo "512" ;;
+    lambda_macro_ingestion) echo "512" ;;
+    lambda_macro_context) echo "1024" ;;
     lambda_news_filter) echo "1024" ;;
     lambda_sentiment) echo "512" ;;
     lambda_indicators) echo "512" ;;
@@ -58,8 +69,18 @@ get_lambda_memory() {
 get_lambda_timeout() {
   case "$1" in
     lambda_news_filter) echo "900" ;;  # Bedrock + muchos artículos; máx. Lambda 15 min
-    lambda_ingestion|lambda_sentiment|lambda_indicators|lambda_bayesian|lambda_report) echo "300" ;;
+    lambda_macro_ingestion) echo "300" ;;  # NewsAPI + RSS (muchas queries)
+    lambda_macro_context|lambda_ingestion|lambda_sentiment|lambda_indicators|lambda_bayesian|lambda_report) echo "300" ;;
     *) error "Lambda desconocida para timeout: $1" ;;
+  esac
+}
+
+# Repos ECR legacy (las funciones en AWS apuntan a tfm-macro-*, no lambda_macro_*)
+get_ecr_repo_name() {
+  case "$1" in
+    lambda_macro_ingestion) echo "tfm-macro-ingestion" ;;
+    lambda_macro_context)   echo "tfm-macro-context" ;;
+    *) echo "$1" ;;
   esac
 }
 
@@ -91,7 +112,9 @@ deploy_lambda() {
   MEMORY=$(get_lambda_memory "${LAMBDA_NAME}")
   TIMEOUT=$(get_lambda_timeout "${LAMBDA_NAME}")
   local DOCKERFILE="infrastructure/lambdas/Dockerfile.${LAMBDA_NAME#lambda_}"
-  local ECR_REPO="${ECR_REGISTRY}/${LAMBDA_NAME}"
+  local ECR_REPO_NAME
+  ECR_REPO_NAME=$(get_ecr_repo_name "${LAMBDA_NAME}")
+  local ECR_REPO="${ECR_REGISTRY}/${ECR_REPO_NAME}"
   local IMAGE_TAG="${ECR_REPO}:${GIT_SHA}"
   local IMAGE_LATEST="${ECR_REPO}:latest"
   local LAMBDA_ARCH="x86_64"
@@ -103,16 +126,16 @@ deploy_lambda() {
 
   # ── Crear repo ECR si no existe ─────────────────────────────────────────────
   if ! aws ecr describe-repositories \
-       --repository-names "${LAMBDA_NAME}" \
+       --repository-names "${ECR_REPO_NAME}" \
        --region "${AWS_REGION}" > /dev/null 2>&1; then
-    info "Creando repositorio ECR '${LAMBDA_NAME}'..."
+    info "Creando repositorio ECR '${ECR_REPO_NAME}'..."
     aws ecr create-repository \
-      --repository-name "${LAMBDA_NAME}" \
+      --repository-name "${ECR_REPO_NAME}" \
       --image-scanning-configuration scanOnPush=true \
       --region "${AWS_REGION}" > /dev/null
     success "Repositorio ECR creado"
   else
-    info "Repositorio ECR '${LAMBDA_NAME}' ya existe"
+    info "Repositorio ECR '${ECR_REPO_NAME}' ya existe"
   fi
 
   # ── Build imagen Docker ──────────────────────────────────────────────────────
@@ -225,11 +248,13 @@ deploy_lambda() {
 }
 
 # ── Ejecutar despliegues ──────────────────────────────────────────────────────
-for LAMBDA in "${LAMBDAS[@]}"; do
-  if [ "${FILTER}" == "all" ] || [ "${FILTER}" == "${LAMBDA}" ]; then
+if [ "${FILTER}" != "all" ]; then
+  deploy_lambda "${FILTER}"
+else
+  for LAMBDA in "${LAMBDAS[@]}"; do
     deploy_lambda "${LAMBDA}"
-  fi
-done
+  done
+fi
 
 # ── Tabla resumen ─────────────────────────────────────────────────────────────
 echo ""
