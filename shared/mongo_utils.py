@@ -6,7 +6,7 @@ Todas las escrituras son best-effort; un fallo en MongoDB NUNCA cancela
 el pipeline principal.
 
 Colecciones en la BD 'tfm':
-  etf_universe      → lista legacy (sincronizada desde watchlist)
+  etf_universe      → copia legacy en Mongo (el pipeline lee etf_universe.json)
   watchlists        → cartera de seguimiento del usuario (documento _id 'default')
   raw_news          → articulos Finnhub sin clasificar (pre-FinBERT)
   ohlcv             → datos OHLCV diarios de yfinance
@@ -230,9 +230,79 @@ def read_ohlcv_ticker(batch_date: str, ticker: str) -> list:
 
 _ETF_DOC_ID = "default"
 _WATCHLIST_DOC_ID = "default"
+_ETF_UNIVERSE_CACHE: Optional[List[str]] = None
 _DEFAULT_WATCHLIST_SEED = [
-    "SPY", "QQQ", "SMH", "XLE", "XLP", "XLF", "XLV", "IWM", "TLT", "GLD",
+    "SPY", "IWM", "XLE", "GLD",
 ]
+
+
+def _etf_universe_json_paths() -> List[str]:
+    """Rutas candidatas para etf_universe.json (local, Lambda, repo)."""
+    paths: List[str] = []
+    env_path = os.getenv("ETF_UNIVERSE_JSON")
+    if env_path:
+        paths.append(env_path)
+    here = os.path.dirname(os.path.abspath(__file__))
+    paths.extend([
+        os.path.join(here, "etf_universe.json"),
+        os.path.join(here, "..", "etf_universe.json"),
+        "/var/task/etf_universe.json",
+    ])
+    seen = set()
+    out: List[str] = []
+    for p in paths:
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def _load_tickers_from_s3() -> List[str]:
+    bucket = os.getenv("CONFIG_BUCKET", "tfm-unir-config")
+    key = os.getenv("ETF_UNIVERSE_S3_KEY", "etf_universe.json")
+    try:
+        import boto3
+        region = os.getenv("AWS_REGION", "eu-north-1")
+        s3 = boto3.client("s3", region_name=region)
+        obj = s3.get_object(Bucket=bucket, Key=key)
+        data = json.loads(obj["Body"].read().decode("utf-8"))
+        return _clean_ticker_list(data.get("tickers", []))
+    except Exception as exc:
+        logger.warning(f"No se pudo leer s3://{bucket}/{key}: {exc}")
+        return []
+
+
+def load_etf_universe_tickers() -> List[str]:
+    """Lee tickers desde etf_universe.json (fichero local o S3 config bucket)."""
+    global _ETF_UNIVERSE_CACHE
+    if _ETF_UNIVERSE_CACHE is not None:
+        return list(_ETF_UNIVERSE_CACHE)
+
+    tickers: List[str] = []
+    for path in _etf_universe_json_paths():
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            tickers = _clean_ticker_list(data.get("tickers", []))
+            if tickers:
+                logger.info(f"etf_universe cargado desde {path}: {tickers}")
+                break
+        except Exception as exc:
+            logger.warning(f"Error leyendo {path}: {exc}")
+
+    if not tickers:
+        tickers = _load_tickers_from_s3()
+        if tickers:
+            logger.info(f"etf_universe cargado desde S3: {tickers}")
+
+    if not tickers:
+        tickers = list(_DEFAULT_WATCHLIST_SEED)
+        logger.warning(f"etf_universe: usando seed por defecto {tickers}")
+
+    _ETF_UNIVERSE_CACHE = tickers
+    return list(tickers)
 
 
 def _clean_ticker_list(tickers: List[str]) -> List[str]:
@@ -329,8 +399,8 @@ def ensure_watchlist_initialized() -> List[str]:
 
 
 def get_etf_tickers() -> List[str]:
-    """Tickers para el pipeline: cartera de seguimiento (watchlist)."""
-    return ensure_watchlist_initialized()
+    """Tickers para el pipeline: etf_universe.json (fichero empaquetado o S3 config)."""
+    return load_etf_universe_tickers()
 
 
 def upsert_etf_universe(tickers: List[str], doc_id: str = _ETF_DOC_ID) -> None:

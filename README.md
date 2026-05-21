@@ -2,6 +2,21 @@
 
 Pipeline de análisis y trading de ETFs basado en red bayesiana, FinBERT y AWS.
 
+## Universo monitorizado
+
+El sistema procesa **4 tickers** definidos en `etf_universe.json` (fuente de verdad del pipeline):
+
+| Ticker | Tipo | Rol en el TFM |
+| ------ | ---- | -------------- |
+| `SPY`  | Índice S&P 500 (large cap) | **Contraejemplo**: índice en tendencia alcista persistente donde la estrategia de entrada/salida destruye alpha frente a buy-and-hold. |
+| `IWM`  | Russell 2000 (small caps) | Caso útil: alta volatilidad, sensible a tasas y macro, comportamiento mean-reverting. |
+| `XLE`  | Sector energía | Caso útil: news-driven (OPEC, crudo, geopolítica), ciclos claros y RSI eficaz. |
+| `GLD`  | Oro (refugio) | Caso útil: sensible a inflación, tasas reales y geopolítica; volatilidad y noticias macro relevantes. |
+
+> Las Lambdas y la API leen `etf_universe.json` empaquetado en la imagen o, en AWS,
+> `s3://tfm-unir-config/etf_universe.json`. Tras editar el fichero en el repo,
+> súbelo a S3 y redespliega `lambda_ingestion` para aplicar cambios.
+
 ---
 
 ## Arquitectura
@@ -76,7 +91,7 @@ tfm/
 │   └── pipeline-dashboard/   Dashboard Angular 17
 │
 ├── database_schema.sql        Schema Aurora PostgreSQL
-├── etf_universe.json          Lista de ETFs monitorizados
+├── etf_universe.json          Universo TFM (SPY · IWM · XLE · GLD)
 ├── stepfunctions_definition.json  Orquestación Step Functions
 ├── iam_policy.json            Política IAM de las Lambdas
 ├── docker-compose.yml         Entorno de desarrollo local
@@ -177,7 +192,7 @@ Cada push a `master` despliega automáticamente solo lo que cambió:
 
 | Recurso                                             | Contenido                       |
 | --------------------------------------------------- | ------------------------------- |
-| `s3://tfm-unir-config/etf_universe.json`            | Lista de ETFs                   |
+| `s3://tfm-unir-config/etf_universe.json`            | Universo TFM (SPY, IWM, XLE, GLD) |
 | `s3://tfm-unir-datalake/raw/{DATE}/ohlcv.csv`       | Datos OHLCV diarios             |
 | `s3://tfm-unir-datalake/raw/{DATE}/news.json`       | Noticias financieras            |
 | `s3://tfm-unir-datalake/results/{DATE}/report.json` | Report diario                   |

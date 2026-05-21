@@ -15,6 +15,7 @@ import { TraceService } from '../../core/services/trace.service';
 import { ReportService } from '../../core/services/report.service';
 import { ReportDateEntry } from '../../core/models/report.model';
 import { TickerTrace } from '../../core/models/trace.model';
+import { PORTFOLIO_MODULE_DISABLED_MSG } from '../../core/constants/portfolio.constants';
 
 interface OhlcvRow {
   date: string;
@@ -82,6 +83,9 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
   newsResolvedDate = '';
   tickerTrace:   TickerTrace | null = null;
   traceLoadError: string | null = null;
+
+  readonly pipelineManualDisabled = true;
+  readonly pipelineManualDisabledMsg = PORTFOLIO_MODULE_DISABLED_MSG;
 
   pipelineRunning = false;
   pipelineExecution: any = null;
@@ -190,6 +194,10 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
   }
 
   runPipelineForInstrument(r: InstrumentResult) {
+    if (this.pipelineManualDisabled) {
+      this.showPipelineDisabledNotice();
+      return;
+    }
     this.tickerInput = r.displaySymbol || r.symbol;
     this.triggerPipeline();
   }
@@ -296,7 +304,7 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
               }
               if (c && !c.ticker_has_raw_news) {
                 this.traceLoadError +=
-                  ' Sin ingesta para este ticker/fecha — revisa etf_universe en Mongo y vuelve a ejecutar el pipeline.';
+                  ' Sin ingesta para este ticker/fecha — revisa etf_universe.json y el pipeline programado.';
               }
             } else {
               this.traceLoadError = 'No hay traza bayesiana para esta fecha/ticker.';
@@ -327,8 +335,19 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
     });
   }
 
+  showPipelineDisabledNotice() {
+    this.pipelineExecution = {
+      status: 'DISABLED',
+      message: this.pipelineManualDisabledMsg,
+    };
+  }
+
   // ─── Pipeline trigger ─────────────────────────────────────────────
   triggerPipeline() {
+    if (this.pipelineManualDisabled) {
+      this.showPipelineDisabledNotice();
+      return;
+    }
     const ticker = this.tickerInput.trim().toUpperCase();
     if (!ticker || this.pipelineRunning) return;
 
@@ -426,6 +445,7 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
     if (s === 'SUCCEEDED') return 'Pipeline completado';
     if (s === 'FAILED') return 'Pipeline fallido';
     if (s === 'ABORTED') return 'Pipeline abortado';
+    if (s === 'DISABLED') return 'Pipeline manual deshabilitado';
     return 'Lanzando ejecución...';
   }
 
@@ -446,6 +466,7 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
         SUCCEEDED: 'check_circle',
         FAILED: 'error',
         ABORTED: 'cancel',
+        DISABLED: 'block',
       }[status] ?? 'help'
     );
   }

@@ -116,7 +116,7 @@ def get_secret(secret_name):
 
 
 def read_etf_config():
-    """Lee el universo ETF desde MongoDB (coleccion etf_universe, documento default)."""
+    """Lee el universo ETF desde etf_universe.json (empaquetado o s3://tfm-unir-config/)."""
     if not _mongo_get_etf_tickers:
         raise RuntimeError(
             "mongo_utils no disponible: la imagen Lambda debe incluir mongo_utils.py"
@@ -124,9 +124,8 @@ def read_etf_config():
     tickers = _mongo_get_etf_tickers()
     if not tickers:
         raise ValueError(
-            "etf_universe vacio en MongoDB. Crea el documento con la API "
-            "(POST /mongo/etf-universe) o inserta en la coleccion etf_universe "
-            '({_id: "default", tickers: ["SPY", "QQQ", ...]}).'
+            "etf_universe vacio. Actualiza etf_universe.json en el repo y subelo a "
+            "s3://tfm-unir-config/etf_universe.json (o empaquetalo en la imagen Lambda)."
         )
     return tickers
 
@@ -163,24 +162,13 @@ def download_ohlcv_data(tickers):
 
 
 # ─── Keywords por ticker para mejorar la búsqueda en NewsAPI ─────────────────
-# Para ETFs genéricos se usa el símbolo directamente. Para los más conocidos
-# añadimos términos adicionales para maximizar cobertura.
+# Solo se mantienen los tres tickers del universo TFM reducido.
+# Para cualquier otro símbolo se usa el ticker tal cual.
 ETF_SEARCH_TERMS = {
     "SPY":  "SPY S&P 500 ETF",
-    "QQQ":  "QQQ Nasdaq 100 ETF",
+    "IWM":  "IWM Russell 2000 small cap ETF",
+    "XLE":  "XLE energy sector ETF oil",
     "GLD":  "GLD gold ETF",
-    "SLV":  "SLV silver ETF",
-    "TLT":  "TLT treasury bonds ETF",
-    "IWM":  "IWM Russell 2000 ETF",
-    "EEM":  "EEM emerging markets ETF",
-    "XLF":  "XLF financial sector ETF",
-    "XLE":  "XLE energy sector ETF",
-    "XLK":  "XLK technology sector ETF",
-    "VNQ":  "VNQ real estate REIT ETF",
-    "USO":  "USO oil ETF crude",
-    "DIA":  "DIA Dow Jones ETF",
-    "IAU":  "IAU gold ETF",
-    "AGG":  "AGG bond ETF fixed income",
 }
 
 
@@ -443,7 +431,7 @@ def handler(event, context):
     Ejemplos de evento:
       {}                          -> procesa todos los tickers del universo
       {"ticker": "SPY"}           -> procesa solo SPY
-      {"tickers": ["SPY","QQQ"]}  -> procesa SPY y QQQ
+      {"tickers": ["SPY","IWM"]}  -> procesa SPY y IWM
       {"batch_date": "2024-01-15","ticker": "SPY"}
     """
     try:

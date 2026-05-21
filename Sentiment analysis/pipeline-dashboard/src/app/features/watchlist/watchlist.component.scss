@@ -69,7 +69,18 @@
   padding: 12px 16px; margin-bottom: 16px; border-radius: var(--r-sm);
   background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25);
   font-size: 13px; color: var(--brand-800);
+  display: flex; align-items: flex-start; gap: 8px;
+  mat-icon { font-size: 20px; width: 20px; height: 20px; flex-shrink: 0; }
 }
+
+.banner-warn {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.35);
+  color: #92400e;
+}
+
+.add-row.is-disabled { opacity: 0.55; pointer-events: none; }
+.search-list li.disabled { opacity: 0.5; cursor: not-allowed; }
 
 .kpi-row { display: flex; gap: 16px; margin-bottom: 16px; }
 .kpi-mini {

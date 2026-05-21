@@ -58,7 +58,7 @@
         <input class="is-input"
                [(ngModel)]="instrumentQuery"
                (ngModelChange)="onInstrumentSearch($event)"
-               placeholder="Ej: S&amp;P 500, MSCI World, Vanguard, QQQ..."
+               placeholder="Ej: S&amp;P 500, Russell 2000, Energy Select, SPY..."
                (keyup.enter)="triggerInstrumentSearch()">
         @if (instrumentSearching) {
           <mat-spinner diameter="18" class="is-spinner"></mat-spinner>
@@ -94,7 +94,7 @@
                 <button class="is-btn pipeline"
                         (click)="runPipelineForInstrument(r); $event.stopPropagation()"
                         [disabled]="pipelineRunning"
-                        matTooltip="Ejecutar pipeline para este instrumento">
+                        [matTooltip]="pipelineManualDisabled ? pipelineManualDisabledMsg : 'Ejecutar pipeline para este instrumento'">
                   @if (pipelineRunning && (pipelineTicker === (r.displaySymbol || r.symbol))) {
                     <mat-spinner diameter="14"></mat-spinner>
                     <span>Ejecutando...</span>
@@ -174,7 +174,7 @@
           [(ngModel)]="tickerInput"
           (ngModelChange)="onTickerInput($event)"
           (keyup.enter)="loadTicker()"
-          placeholder="Ej: SPY, QQQ, IWM..."
+          placeholder="Ej: SPY, IWM, XLE, GLD..."
           list="ticker-list"
         />
         <datalist id="ticker-list">
@@ -209,7 +209,7 @@
         class="btn btn-accent"
         (click)="triggerPipeline()"
         [disabled]="!tickerInput.trim() || pipelineRunning"
-        [matTooltip]="'Ejecutar el pipeline completo solo para este ticker'"
+        [matTooltip]="pipelineManualDisabled ? pipelineManualDisabledMsg : 'Ejecutar el pipeline completo solo para este ticker'"
       >
         @if (pipelineRunning) {
           <mat-spinner diameter="16"></mat-spinner>
@@ -261,6 +261,8 @@
           >
         } @else if (pipelineExecution.status === 'FAILED') {
           <span> — error en la ejecución. Revisa CloudWatch Logs.</span>
+        } @else if (pipelineExecution.status === 'DISABLED') {
+          <span> — {{ pipelineExecution.message }}</span>
         }
       </div>
       @if (pipelineExecution.status === 'RUNNING') {
@@ -688,7 +690,7 @@
       <mat-icon>manage_search</mat-icon>
       <h3>Busca un ticker para explorar</h3>
       <p>
-        Introduce un símbolo (SPY, QQQ, IWM...) y selecciona una fecha para
+        Introduce un símbolo (SPY, IWM, XLE, GLD...) y selecciona una fecha para
         ver las noticias ingestadas, los datos OHLCV y la decisión bayesiana
         completa.
       </p>

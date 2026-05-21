@@ -51,6 +51,20 @@ DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "")
 PRESIGN_TTL = int(os.getenv("PRESIGN_TTL_SEC", "900"))
 STATE_MACHINE_ARN = os.getenv("STATE_MACHINE_ARN", "")
 MONGODB_DB = os.getenv("MONGODB_DB", "tfm")
+PIPELINE_MANUAL_DISABLED = os.getenv("PIPELINE_MANUAL_DISABLED", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+PIPELINE_MANUAL_DISABLED_MSG = (
+    "Servicio deshabilitado temporalmente. "
+    "La ejecucion manual del pipeline no esta disponible en este momento."
+)
+
+
+def _reject_manual_pipeline() -> None:
+    if PIPELINE_MANUAL_DISABLED:
+        raise HTTPException(status_code=503, detail=PIPELINE_MANUAL_DISABLED_MSG)
 
 try:
     from mongo_utils import (
@@ -695,19 +709,16 @@ def presign(
 
 @app.get("/tickers", tags=["Tickers"])
 def list_tickers(x_api_key: str = Header(default="")):
-    """Lista la cartera de seguimiento (watchlist), usada por pipeline y explorador."""
+    """Lista el universo ETF del pipeline (etf_universe.json)."""
     check_api_key(x_api_key)
-    if not ensure_watchlist_initialized:
+    if not get_etf_tickers:
         raise HTTPException(status_code=503, detail="mongo_utils no disponible")
     try:
-        tickers = ensure_watchlist_initialized()  # type: ignore[misc]
-        wl = get_watchlist() if get_watchlist else None  # type: ignore[misc]
+        tickers = get_etf_tickers()  # type: ignore[misc]
         return {
             "tickers": tickers,
             "total": len(tickers),
-            "source": "watchlist",
-            "name": (wl or {}).get("name", "Cartera de seguimiento"),
-            "updated_at": (wl or {}).get("updated_at"),
+            "source": "etf_universe.json",
         }
     except Exception as e:
         logger.exception("list_tickers error")
@@ -863,6 +874,7 @@ def watchlist_run_pipeline(
     only_missing=true: solo tickers sin traza completa en batch_date.
     """
     check_api_key(x_api_key)
+    _reject_manual_pipeline()
     _require_watchlist_helpers()
     batch_date = body.batch_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     all_tickers = ensure_watchlist_initialized()  # type: ignore[misc]
@@ -1076,6 +1088,7 @@ def run_pipeline(body: PipelineRunRequest, x_api_key: str = Header(default="")):
     El pipeline acepta el parametro 'ticker' en el evento para filtrar.
     """
     check_api_key(x_api_key)
+    _reject_manual_pipeline()
 
     if not STATE_MACHINE_ARN:
         raise HTTPException(

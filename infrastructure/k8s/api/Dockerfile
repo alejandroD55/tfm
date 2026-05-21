@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # ── Copiar código fuente ───────────────────────────────────────────────────────
 COPY infrastructure/k8s/api/main.py .
 COPY shared/mongo_utils.py .
+COPY etf_universe.json .
 
 # ── Usuario no-root ────────────────────────────────────────────────────────────
 RUN useradd -m -u 1001 appuser && chown -R appuser:appuser /app

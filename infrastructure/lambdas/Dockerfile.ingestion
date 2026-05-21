@@ -14,5 +14,6 @@ RUN pip install --no-cache-dir --only-binary=:all: -r ${LAMBDA_TASK_ROOT}/requir
 COPY lambda_ingestion/lambda_ingestion.py ${LAMBDA_TASK_ROOT}/
 # Modulo MongoDB compartido (best-effort — el Lambda no falla si MongoDB no responde)
 COPY shared/mongo_utils.py ${LAMBDA_TASK_ROOT}/
+COPY etf_universe.json ${LAMBDA_TASK_ROOT}/
 
 CMD ["lambda_ingestion.handler"]

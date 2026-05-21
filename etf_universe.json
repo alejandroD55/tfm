@@ -1,15 +1,9 @@
 {
   "tickers": [
     "SPY",
-    "QQQ",
-    "SMH",
-    "XLE",
-    "XLP",
-    "XLF",
-    "XLV",
     "IWM",
-    "TLT",
+    "XLE",
     "GLD"
   ],
-  "description": "Lista de ETFs para análisis de trading"
+  "description": "Universo TFM (4 ETFs). Fuente de verdad del pipeline: subir este fichero a s3://tfm-unir-config/etf_universe.json y empaquetarlo en las Lambdas. SPY: contraejemplo (timing vs buy-and-hold). IWM: small caps sensibles a macro/tasas. XLE: sector energia, news-driven. GLD: activo refugio, inflacion y geopolitica."
 }

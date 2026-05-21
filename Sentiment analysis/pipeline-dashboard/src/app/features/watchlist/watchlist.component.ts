@@ -14,6 +14,7 @@ import {
   WatchlistCoverageRow,
 } from '../../core/services/api.service';
 import { ReportService } from '../../core/services/report.service';
+import { PORTFOLIO_MODULE_DISABLED_MSG } from '../../core/constants/portfolio.constants';
 
 @Component({
   selector: 'app-watchlist',
@@ -34,6 +35,10 @@ import { ReportService } from '../../core/services/report.service';
 export class WatchlistComponent implements OnInit {
   private api = inject(ApiService);
   private reportSvc = inject(ReportService);
+
+  /** Módulo de cartera y pipeline manual deshabilitados temporalmente. */
+  readonly portfolioDisabled = true;
+  readonly portfolioDisabledMsg = PORTFOLIO_MODULE_DISABLED_MSG;
 
   loading = true;
   saving = false;
@@ -113,13 +118,25 @@ export class WatchlistComponent implements OnInit {
     this.search$.next(this.searchQuery.trim());
   }
 
+  showDisabledNotice() {
+    this.pipelineMessage = this.portfolioDisabledMsg;
+  }
+
   addFromSearch(r: InstrumentResult) {
+    if (this.portfolioDisabled) {
+      this.showDisabledNotice();
+      return;
+    }
     this.addTicker(r.symbol);
     this.searchQuery = '';
     this.searchResults = [];
   }
 
   addTicker(raw?: string) {
+    if (this.portfolioDisabled) {
+      this.showDisabledNotice();
+      return;
+    }
     const sym = (raw || this.newTicker).trim().toUpperCase();
     if (!sym) return;
     this.saving = true;
@@ -135,6 +152,10 @@ export class WatchlistComponent implements OnInit {
   }
 
   removeTicker(sym: string) {
+    if (this.portfolioDisabled) {
+      this.showDisabledNotice();
+      return;
+    }
     this.saving = true;
     this.api.removeWatchlistTicker(sym).subscribe({
       next: (r) => {
@@ -147,7 +168,11 @@ export class WatchlistComponent implements OnInit {
   }
 
   importDefaults() {
-    const seed = ['SPY', 'QQQ', 'SMH', 'XLE', 'XLP', 'XLF', 'XLV', 'IWM', 'TLT', 'GLD'];
+    if (this.portfolioDisabled) {
+      this.showDisabledNotice();
+      return;
+    }
+    const seed = ['SPY', 'IWM', 'XLE', 'GLD'];
     this.saving = true;
     this.api.putWatchlist({ tickers: seed, name: this.name }).subscribe({
       next: (r) => {
@@ -159,25 +184,8 @@ export class WatchlistComponent implements OnInit {
     });
   }
 
-  runPipeline(full: boolean) {
-    this.pipelineRunning = true;
-    this.pipelineMessage = '';
-    this.api.runWatchlistPipeline({
-      batch_date: this.selectedDate,
-      only_missing: !full,
-    }).subscribe({
-      next: (r) => {
-        this.pipelineRunning = false;
-        this.pipelineMessage = r.message || r.status;
-        if (r.status !== 'SKIPPED') {
-          setTimeout(() => this.loadCoverage(), 8000);
-        }
-      },
-      error: (e) => {
-        this.pipelineRunning = false;
-        this.pipelineMessage = e?.error?.detail || 'Error al lanzar pipeline';
-      },
-    });
+  runPipeline(_full: boolean) {
+    this.showDisabledNotice();
   }
 
   rowStatus(row: WatchlistCoverageRow): string {
