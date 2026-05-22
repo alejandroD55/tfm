@@ -133,9 +133,18 @@ def calculate_backtesting_metrics(signals_df):
             current_capital = starting_capital
             equity_curve = [starting_capital]
 
-            # --- NUEVA LÓGICA LONG/CASH (Protección de Capital) ---
-            current_position = 0  # 1 = Long, 0 = Liquidez (Cash)
-            entry_price = 0.0
+            # --- NUEVA LÓGICA LONG-ONLY (El sistema empieza invertido) ---
+            # current_position: 1 = Long (Invertido), 0 = Liquidez (Cash)
+            current_position = 1 
+            
+            # Cogemos el precio de cierre del primer día como nuestro precio de entrada inicial
+            # Aseguramos que haya datos antes de extraer el precio
+            if len(ticker_signals) > 0 and pd.notna(ticker_signals.iloc[0]["close_price"]):
+                entry_price = float(ticker_signals.iloc[0]["close_price"])
+            else:
+                entry_price = 0.0
+                current_position = 0 # Si no hay precio el día 1, forzamos cash por seguridad
+                
             trades_returns = []
 
             signals_count = ticker_signals["signal"].value_counts().to_dict()
@@ -158,9 +167,17 @@ def calculate_backtesting_metrics(signals_df):
                         trades_returns.append(float(trade_return))
                         current_position = 0
 
-                equity_curve.append(current_capital)
+                # Para dibujar la curva de capital diaria de forma realista, calculamos el valor 
+                # de mercado (Mark-to-Market) si estamos invertidos.
+                if current_position == 1 and entry_price > 0:
+                    unrealized_return = (current_price - entry_price) / entry_price
+                    daily_equity = current_capital * (1 + unrealized_return)
+                else:
+                    daily_equity = current_capital
+                    
+                equity_curve.append(daily_equity)
 
-            # Valoración MTM
+            # Valoración Final MTM (Mark-to-Market)
             final_equity = current_capital
             if current_position == 1 and entry_price > 0:
                 final_price = float(ticker_signals.iloc[-1]["close_price"])
