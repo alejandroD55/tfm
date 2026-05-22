@@ -2,8 +2,7 @@
   "tickers": [
     "SPY",
     "IWM",
-    "XLE",
     "GLD"
   ],
-  "description": "Universo TFM (4 ETFs). Fuente de verdad del pipeline: subir este fichero a s3://tfm-unir-config/etf_universe.json y empaquetarlo en las Lambdas. SPY: contraejemplo (timing vs buy-and-hold). IWM: small caps sensibles a macro/tasas. XLE: sector energia, news-driven. GLD: activo refugio, inflacion y geopolitica."
+  "description": "Universo TFM (3 ETFs). Fuente de verdad del pipeline. SPY: caso negativo — indice amplio con tendencia secular alcista, el timing de entrada/salida no añade valor. IWM: caso positivo #1 — small caps muy sensibles al ciclo macro (Fed, empleo, PMI), alta volatilidad operativa. GLD: caso positivo #2 — activo real no correlacionado con renta variable, sensible a inflacion, tasas reales y geopolitica."
 }

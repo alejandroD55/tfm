@@ -32,7 +32,7 @@ DB_PASS = os.getenv("DB_PASS")
 DB_NAME = os.getenv("DB_NAME")
 
 # Universo TFM (etf_universe.json): SPY, IWM, XLE, GLD
-TICKERS = ['SPY', 'IWM', 'XLE', 'GLD']
+TICKERS = ['SPY', 'IWM', 'GLD']
 DAYS_BACK = 365
 MODEL_ID = "ProsusAI/finbert"
 

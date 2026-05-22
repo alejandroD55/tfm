@@ -1,0 +1,127 @@
+{
+  "Comment": "TFM — Reanudar pipeline tras macro_context (sin ingestion/macro/news_filter)",
+  "StartAt": "parallel_analysis",
+  "States": {
+    "parallel_analysis": {
+      "Type": "Parallel",
+      "ResultPath": "$.parallel_result",
+      "Branches": [
+        {
+          "StartAt": "lambda_sentiment",
+          "States": {
+            "lambda_sentiment": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "lambda_sentiment",
+                "Payload": {
+                  "pipeline_context.$": "$.pipeline_context"
+                }
+              },
+              "TimeoutSeconds": 300,
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2
+                }
+              ],
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "lambda_indicators",
+          "States": {
+            "lambda_indicators": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "lambda_indicators",
+                "Payload": {
+                  "pipeline_context.$": "$.pipeline_context"
+                }
+              },
+              "TimeoutSeconds": 300,
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2
+                }
+              ],
+              "End": true
+            }
+          }
+        }
+      ],
+      "Next": "lambda_bayesian"
+    },
+    "lambda_bayesian": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "lambda_bayesian",
+        "Payload": {
+          "pipeline_context.$": "$.pipeline_context"
+        }
+      },
+      "TimeoutSeconds": 300,
+      "ResultPath": "$.bayesian_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "failure",
+          "ResultPath": "$.error_bayesian"
+        }
+      ],
+      "Next": "lambda_report"
+    },
+    "lambda_report": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "lambda_report",
+        "Payload": {
+          "pipeline_context.$": "$.pipeline_context"
+        }
+      },
+      "TimeoutSeconds": 300,
+      "ResultPath": "$.report_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "failure",
+          "ResultPath": "$.error_report"
+        }
+      ],
+      "Next": "success"
+    },
+    "success": {
+      "Type": "Succeed"
+    },
+    "failure": {
+      "Type": "Fail",
+      "Error": "PipelineResumeFailed",
+      "Cause": "Error in bayesian or report stage"
+    }
+  }
+}

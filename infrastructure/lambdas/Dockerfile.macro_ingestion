@@ -8,7 +8,8 @@ LABEL maintainer="tfm-trading" \
       version="1.0"
 
 COPY lambda_macro_ingestion/requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
-RUN pip install --no-cache-dir --only-binary=:all: -r ${LAMBDA_TASK_ROOT}/requirements.txt
+# feedparser → sgmllib3k no tiene wheel; --only-binary rompe el build en CI
+RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
 
 COPY lambda_macro_ingestion/lambda_macro_ingestion.py ${LAMBDA_TASK_ROOT}/
 COPY shared/mongo_utils.py ${LAMBDA_TASK_ROOT}/

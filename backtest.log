@@ -1,0 +1,467 @@
+2026-05-22 13:58:19,243 [INFO] mongo_utils importado correctamente desde shared/
+2026-05-22 13:58:19,244 [INFO] =================================================================
+2026-05-22 13:58:19,244 [INFO] 🚀  TFM — Pipeline Local de Backtesting (output fiel a Lambdas)
+2026-05-22 13:58:19,244 [INFO]     Tickers  : ['SPY', 'IWM', 'GLD']
+2026-05-22 13:58:19,244 [INFO]     Período  : 2025-05-22  →  2026-05-22
+2026-05-22 13:58:19,244 [INFO]     FinBERT  : local (transformers)
+2026-05-22 13:58:19,262 [INFO]     Ollama   : ✗ no disponible
+2026-05-22 13:58:19,262 [INFO]     Finnhub  : ✓ configurado
+2026-05-22 13:58:19,262 [INFO]     MongoDB  : ✓ mongo_utils disponible
+2026-05-22 13:58:19,263 [INFO] =================================================================
+2026-05-22 13:58:19,263 [INFO] 
+📥 Fase 1: Datos históricos…
+2026-05-22 13:58:19,263 [INFO]   OHLCV SPY…
+2026-05-22 13:58:20,496 [INFO]   OHLCV IWM…
+2026-05-22 13:58:21,347 [INFO]   OHLCV GLD…
+2026-05-22 13:58:22,475 [INFO] → Noticias Finnhub (caché por mes)…
+2026-05-22 13:58:22,898 [INFO]   SPY 2025-05: acum 121 artículos
+2026-05-22 13:58:24,443 [INFO]   SPY 2025-06: acum 371 artículos
+2026-05-22 13:58:26,030 [INFO]   SPY 2025-07: acum 621 artículos
+2026-05-22 13:58:27,584 [INFO]   SPY 2025-08: acum 871 artículos
+2026-05-22 13:58:29,132 [INFO]   SPY 2025-09: acum 1120 artículos
+2026-05-22 13:58:30,690 [INFO]   SPY 2025-10: acum 1369 artículos
+2026-05-22 13:58:32,313 [INFO]   SPY 2025-11: acum 1618 artículos
+2026-05-22 13:58:33,880 [INFO]   SPY 2025-12: acum 1867 artículos
+2026-05-22 13:58:35,464 [INFO]   SPY 2026-01: acum 2117 artículos
+2026-05-22 13:58:37,051 [INFO]   SPY 2026-02: acum 2365 artículos
+2026-05-22 13:58:38,559 [INFO]   SPY 2026-03: acum 2615 artículos
+2026-05-22 13:58:40,121 [INFO]   SPY 2026-04: acum 2865 artículos
+2026-05-22 13:58:41,660 [INFO]   SPY 2026-05: acum 3111 artículos
+2026-05-22 13:58:42,897 [INFO]   SPY: 3111 artículos en 111 fechas → caché guardada
+2026-05-22 13:58:43,200 [INFO]   IWM 2025-05: acum 59 artículos
+2026-05-22 13:58:44,681 [INFO]   IWM 2025-06: acum 309 artículos
+2026-05-22 13:58:46,194 [INFO]   IWM 2025-07: acum 559 artículos
+2026-05-22 13:58:47,764 [INFO]   IWM 2025-08: acum 809 artículos
+2026-05-22 13:58:49,212 [INFO]   IWM 2025-09: acum 1058 artículos
+2026-05-22 13:58:50,746 [INFO]   IWM 2025-10: acum 1307 artículos
+2026-05-22 13:58:52,295 [INFO]   IWM 2025-11: acum 1555 artículos
+2026-05-22 13:58:53,821 [INFO]   IWM 2025-12: acum 1805 artículos
+2026-05-22 13:58:55,327 [INFO]   IWM 2026-01: acum 2054 artículos
+2026-05-22 13:58:56,994 [INFO]   IWM 2026-02: acum 2304 artículos
+2026-05-22 13:58:58,523 [INFO]   IWM 2026-03: acum 2554 artículos
+2026-05-22 13:59:00,343 [INFO]   IWM 2026-04: acum 2804 artículos
+2026-05-22 13:59:01,922 [INFO]   IWM 2026-05: acum 3054 artículos
+2026-05-22 13:59:03,159 [INFO]   IWM: 3054 artículos en 216 fechas → caché guardada
+2026-05-22 13:59:03,488 [INFO]   GLD 2025-05: acum 30 artículos
+2026-05-22 13:59:05,066 [INFO]   GLD 2025-06: acum 222 artículos
+2026-05-22 13:59:06,640 [INFO]   GLD 2025-07: acum 402 artículos
+2026-05-22 13:59:08,093 [INFO]   GLD 2025-08: acum 539 artículos
+2026-05-22 13:59:09,544 [INFO]   GLD 2025-09: acum 741 artículos
+2026-05-22 13:59:11,129 [INFO]   GLD 2025-10: acum 950 artículos
+2026-05-22 13:59:12,638 [INFO]   GLD 2025-11: acum 1077 artículos
+2026-05-22 13:59:14,213 [INFO]   GLD 2025-12: acum 1230 artículos
+2026-05-22 13:59:15,941 [INFO]   GLD 2026-01: acum 1479 artículos
+2026-05-22 13:59:17,440 [INFO]   GLD 2026-02: acum 1685 artículos
+2026-05-22 13:59:18,926 [INFO]   GLD 2026-03: acum 1895 artículos
+2026-05-22 13:59:20,438 [INFO]   GLD 2026-04: acum 2022 artículos
+2026-05-22 13:59:21,902 [INFO]   GLD 2026-05: acum 2100 artículos
+2026-05-22 13:59:23,129 [INFO]   GLD: 2100 artículos en 344 fechas → caché guardada
+2026-05-22 13:59:23,130 [INFO] 
+🔧 Fase 2: Inicialización…
+2026-05-22 13:59:23,341 [WARNING]   PostgreSQL no disponible (connection to server at "localhost" (::1), port 5432 failed: FATAL:  role "tfmadmin" does not exist
+). Sin escritura en Aurora.
+2026-05-22 14:00:51,868 [INFO] mongo_utils importado correctamente desde shared/
+2026-05-22 14:00:51,868 [INFO] =================================================================
+2026-05-22 14:00:51,868 [INFO] 🚀  TFM — Pipeline Local de Backtesting (output fiel a Lambdas)
+2026-05-22 14:00:51,868 [INFO]     Tickers  : ['SPY', 'IWM', 'GLD']
+2026-05-22 14:00:51,868 [INFO]     Período  : 2025-05-22  →  2026-05-22
+2026-05-22 14:00:51,868 [INFO]     FinBERT  : local (transformers)
+2026-05-22 14:00:51,874 [INFO]     Ollama   : ✗ no disponible
+2026-05-22 14:00:51,874 [INFO]     Finnhub  : ✓ configurado
+2026-05-22 14:00:51,874 [INFO]     MongoDB  : ✓ mongo_utils disponible
+2026-05-22 14:00:51,874 [INFO] =================================================================
+2026-05-22 14:00:51,874 [INFO] 
+📥 Fase 1: Datos históricos…
+2026-05-22 14:00:51,874 [INFO]   OHLCV SPY…
+2026-05-22 14:00:53,083 [INFO]   OHLCV IWM…
+2026-05-22 14:00:53,780 [INFO]   OHLCV GLD…
+2026-05-22 14:00:54,664 [INFO] → Noticias Finnhub (caché por mes)…
+2026-05-22 14:00:54,664 [INFO]   SPY: desde caché (SPY_202505_202605.json)
+2026-05-22 14:00:54,677 [INFO]   IWM: desde caché (IWM_202505_202605.json)
+2026-05-22 14:00:54,684 [INFO]   GLD: desde caché (GLD_202505_202605.json)
+2026-05-22 14:00:54,689 [INFO] 
+🔧 Fase 2: Inicialización…
+2026-05-22 14:00:54,747 [WARNING]   PostgreSQL no disponible (connection to server at "localhost" (::1), port 5432 failed: FATAL:  role "tfmadmin" does not exist
+). Sin escritura en Aurora.
+2026-05-22 14:01:17,926 [INFO] mongo_utils importado correctamente desde shared/
+2026-05-22 14:01:17,926 [INFO] =================================================================
+2026-05-22 14:01:17,927 [INFO] 🚀  TFM — Pipeline Local de Backtesting (output fiel a Lambdas)
+2026-05-22 14:01:17,927 [INFO]     Tickers  : ['SPY', 'IWM', 'GLD']
+2026-05-22 14:01:17,927 [INFO]     Período  : 2025-05-22  →  2026-05-22
+2026-05-22 14:01:17,927 [INFO]     FinBERT  : local (transformers)
+2026-05-22 14:01:17,933 [INFO]     Ollama   : ✗ no disponible
+2026-05-22 14:01:17,933 [INFO]     Finnhub  : ✓ configurado
+2026-05-22 14:01:17,933 [INFO]     MongoDB  : ✓ mongo_utils disponible
+2026-05-22 14:01:17,933 [INFO] =================================================================
+2026-05-22 14:01:17,933 [INFO] 
+📥 Fase 1: Datos históricos…
+2026-05-22 14:01:17,933 [INFO]   OHLCV SPY…
+2026-05-22 14:01:19,080 [INFO]   OHLCV IWM…
+2026-05-22 14:01:19,805 [INFO]   OHLCV GLD…
+2026-05-22 14:01:20,628 [INFO] → Noticias Finnhub (caché por mes)…
+2026-05-22 14:01:20,628 [INFO]   SPY: desde caché (SPY_202505_202605.json)
+2026-05-22 14:01:20,637 [INFO]   IWM: desde caché (IWM_202505_202605.json)
+2026-05-22 14:01:20,643 [INFO]   GLD: desde caché (GLD_202505_202605.json)
+2026-05-22 14:01:20,647 [INFO] 
+🔧 Fase 2: Inicialización…
+2026-05-22 14:01:20,702 [WARNING]   PostgreSQL no disponible (connection to server at "localhost" (::1), port 5432 failed: FATAL:  role "tfmadmin" does not exist
+). Sin escritura en Aurora.
+2026-05-22 14:07:37,159 [INFO] mongo_utils importado correctamente desde shared/
+2026-05-22 14:07:37,160 [INFO] =================================================================
+2026-05-22 14:07:37,160 [INFO] 🚀  TFM — Pipeline Local de Backtesting (output fiel a Lambdas)
+2026-05-22 14:07:37,160 [INFO]     Tickers  : ['SPY', 'IWM', 'GLD']
+2026-05-22 14:07:37,160 [INFO]     Período  : 2025-05-22  →  2026-05-22
+2026-05-22 14:07:37,160 [INFO]     FinBERT  : local (transformers)
+2026-05-22 14:07:37,167 [INFO]     Ollama   : ✗ no disponible
+2026-05-22 14:07:37,167 [INFO]     Finnhub  : ✓ configurado
+2026-05-22 14:07:37,167 [INFO]     MongoDB  : ✓ mongo_utils disponible
+2026-05-22 14:07:37,167 [INFO] =================================================================
+2026-05-22 14:07:37,167 [INFO] 
+📥 Fase 1: Datos históricos…
+2026-05-22 14:07:37,167 [INFO]   OHLCV SPY…
+2026-05-22 14:07:38,229 [INFO]   OHLCV IWM…
+2026-05-22 14:07:39,004 [INFO]   OHLCV GLD…
+2026-05-22 14:07:39,940 [INFO] → Noticias Finnhub (caché por mes)…
+2026-05-22 14:07:39,940 [INFO]   SPY: desde caché (SPY_202505_202605.json)
+2026-05-22 14:07:39,951 [INFO]   IWM: desde caché (IWM_202505_202605.json)
+2026-05-22 14:07:39,958 [INFO]   GLD: desde caché (GLD_202505_202605.json)
+2026-05-22 14:07:39,963 [INFO] 
+🔧 Fase 2: Inicialización…
+2026-05-22 14:07:40,011 [INFO]   PostgreSQL: ✓
+2026-05-22 14:08:22,512 [INFO] mongo_utils importado correctamente desde shared/
+2026-05-22 14:08:22,512 [INFO] =================================================================
+2026-05-22 14:08:22,512 [INFO] 🚀  TFM — Pipeline Local de Backtesting (output fiel a Lambdas)
+2026-05-22 14:08:22,512 [INFO]     Tickers  : ['SPY', 'IWM', 'GLD']
+2026-05-22 14:08:22,512 [INFO]     Período  : 2025-05-22  →  2026-05-22
+2026-05-22 14:08:22,512 [INFO]     FinBERT  : local (transformers)
+2026-05-22 14:08:22,520 [INFO]     Ollama   : ✗ no disponible
+2026-05-22 14:08:22,520 [INFO]     Finnhub  : ✓ configurado
+2026-05-22 14:08:22,520 [INFO]     MongoDB  : ✓ mongo_utils disponible
+2026-05-22 14:08:22,520 [INFO] =================================================================
+2026-05-22 14:08:22,520 [INFO] 
+📥 Fase 1: Datos históricos…
+2026-05-22 14:08:22,520 [INFO]   OHLCV SPY…
+2026-05-22 14:08:23,562 [INFO]   OHLCV IWM…
+2026-05-22 14:08:24,245 [INFO]   OHLCV GLD…
+2026-05-22 14:08:25,182 [INFO] → Noticias Finnhub (caché por mes)…
+2026-05-22 14:08:25,182 [INFO]   SPY: desde caché (SPY_202505_202605.json)
+2026-05-22 14:08:25,195 [INFO]   IWM: desde caché (IWM_202505_202605.json)
+2026-05-22 14:08:25,201 [INFO]   GLD: desde caché (GLD_202505_202605.json)
+2026-05-22 14:08:25,206 [INFO] 
+🔧 Fase 2: Inicialización…
+2026-05-22 14:08:25,249 [INFO]   PostgreSQL: ✓
+2026-05-22 14:08:27,395 [INFO] Cargando FinBERT local (primera carga ~30 s)…
+2026-05-22 14:08:32,369 [INFO] HTTP Request: HEAD https://huggingface.co/ProsusAI/finbert/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-22 14:08:32,371 [WARNING] Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-05-22 14:08:32,392 [INFO] HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/ProsusAI/finbert/4556d13015211d73dccd3fdd39d39232506f3e43/config.json "HTTP/1.1 200 OK"
+2026-05-22 14:08:32,412 [INFO] HTTP Request: GET https://huggingface.co/api/resolve-cache/models/ProsusAI/finbert/4556d13015211d73dccd3fdd39d39232506f3e43/config.json "HTTP/1.1 200 OK"
+2026-05-22 14:08:32,567 [INFO] HTTP Request: HEAD https://huggingface.co/ProsusAI/finbert/resolve/main/model.safetensors "HTTP/1.1 404 Not Found"
+2026-05-22 14:08:32,702 [INFO] HTTP Request: HEAD https://huggingface.co/ProsusAI/finbert/resolve/main/model.safetensors.index.json "HTTP/1.1 404 Not Found"
+2026-05-22 14:08:32,866 [INFO] HTTP Request: HEAD https://huggingface.co/ProsusAI/finbert/resolve/main/pytorch_model.bin "HTTP/1.1 302 Found"
+2026-05-22 14:08:33,294 [INFO] HTTP Request: GET https://huggingface.co/api/models/ProsusAI/finbert/xet-read-token/4556d13015211d73dccd3fdd39d39232506f3e43 "HTTP/1.1 200 OK"
+2026-05-22 14:08:49,526 [INFO] HTTP Request: HEAD https://huggingface.co/ProsusAI/finbert/resolve/main/model.safetensors "HTTP/1.1 404 Not Found"
+2026-05-22 14:08:49,684 [INFO] HTTP Request: GET https://huggingface.co/api/models/ProsusAI/finbert "HTTP/1.1 200 OK"
+2026-05-22 14:08:49,912 [INFO] HTTP Request: GET https://huggingface.co/api/models/ProsusAI/finbert/commits/main "HTTP/1.1 200 OK"
+2026-05-22 14:08:50,166 [INFO] HTTP Request: GET https://huggingface.co/api/models/ProsusAI/finbert/discussions?p=0 "HTTP/1.1 200 OK"
+2026-05-22 14:08:50,179 [INFO] HTTP Request: HEAD https://huggingface.co/ProsusAI/finbert/resolve/main/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-22 14:08:50,202 [INFO] HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/ProsusAI/finbert/4556d13015211d73dccd3fdd39d39232506f3e43/tokenizer_config.json "HTTP/1.1 200 OK"
+2026-05-22 14:08:50,223 [INFO] HTTP Request: GET https://huggingface.co/api/resolve-cache/models/ProsusAI/finbert/4556d13015211d73dccd3fdd39d39232506f3e43/tokenizer_config.json "HTTP/1.1 200 OK"
+2026-05-22 14:08:50,320 [INFO] HTTP Request: GET https://huggingface.co/api/models/ProsusAI/finbert/commits/refs%2Fpr%2F29 "HTTP/1.1 200 OK"
+2026-05-22 14:08:50,357 [INFO] HTTP Request: GET https://huggingface.co/api/models/ProsusAI/finbert/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-05-22 14:08:50,460 [INFO] HTTP Request: HEAD https://huggingface.co/ProsusAI/finbert/resolve/refs%2Fpr%2F29/model.safetensors.index.json "HTTP/1.1 404 Not Found"
+2026-05-22 14:08:50,491 [INFO] HTTP Request: GET https://huggingface.co/api/models/ProsusAI/finbert/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-05-22 14:08:50,592 [INFO] HTTP Request: HEAD https://huggingface.co/ProsusAI/finbert/resolve/refs%2Fpr%2F29/model.safetensors "HTTP/1.1 302 Found"
+2026-05-22 14:08:50,690 [INFO] HTTP Request: HEAD https://huggingface.co/ProsusAI/finbert/resolve/main/vocab.txt "HTTP/1.1 307 Temporary Redirect"
+2026-05-22 14:08:50,712 [INFO] HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/ProsusAI/finbert/4556d13015211d73dccd3fdd39d39232506f3e43/vocab.txt "HTTP/1.1 200 OK"
+2026-05-22 14:08:50,725 [INFO] HTTP Request: GET https://huggingface.co/api/models/ProsusAI/finbert/xet-read-token/7db323f79b751944bcfa66298ec06977e4518306 "HTTP/1.1 200 OK"
+2026-05-22 14:08:50,738 [INFO] HTTP Request: GET https://huggingface.co/api/resolve-cache/models/ProsusAI/finbert/4556d13015211d73dccd3fdd39d39232506f3e43/vocab.txt "HTTP/1.1 200 OK"
+2026-05-22 14:08:50,897 [INFO] HTTP Request: HEAD https://huggingface.co/ProsusAI/finbert/resolve/main/tokenizer.json "HTTP/1.1 404 Not Found"
+2026-05-22 14:08:51,038 [INFO] HTTP Request: HEAD https://huggingface.co/ProsusAI/finbert/resolve/main/added_tokens.json "HTTP/1.1 404 Not Found"
+2026-05-22 14:08:51,313 [INFO] HTTP Request: HEAD https://huggingface.co/ProsusAI/finbert/resolve/main/special_tokens_map.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-22 14:08:51,380 [INFO] HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/ProsusAI/finbert/4556d13015211d73dccd3fdd39d39232506f3e43/special_tokens_map.json "HTTP/1.1 200 OK"
+2026-05-22 14:08:51,438 [INFO] HTTP Request: GET https://huggingface.co/api/resolve-cache/models/ProsusAI/finbert/4556d13015211d73dccd3fdd39d39232506f3e43/special_tokens_map.json "HTTP/1.1 200 OK"
+2026-05-22 14:08:51,587 [INFO] HTTP Request: HEAD https://huggingface.co/ProsusAI/finbert/resolve/main/chat_template.jinja "HTTP/1.1 404 Not Found"
+2026-05-22 14:08:52,369 [INFO] FinBERT listo.
+2026-05-22 14:08:52,373 [INFO] 
+⚙️  Fase 3: Procesando 365 días…
+2026-05-22 14:08:55,511 [INFO] MongoDB Atlas: conexion establecida
+2026-05-22 14:08:56,333 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-05-22
+2026-05-22 14:09:05,370 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-05-23
+2026-05-22 14:09:06,127 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-05-26
+2026-05-22 14:09:07,374 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-05-27
+2026-05-22 14:09:14,653 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-05-28
+2026-05-22 14:09:19,226 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-05-29
+2026-05-22 14:09:24,017 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-05-30
+2026-05-22 14:09:27,913 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-06-02
+2026-05-22 14:09:29,853 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-06-03
+2026-05-22 14:09:32,179 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-06-04
+2026-05-22 14:09:34,431 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-06-05
+2026-05-22 14:09:37,172 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-06-06
+2026-05-22 14:09:40,603 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-06-09
+2026-05-22 14:09:43,642 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-06-10
+2026-05-22 14:09:46,128 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-06-11
+2026-05-22 14:09:48,691 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-06-12
+2026-05-22 14:09:51,729 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-06-13
+2026-05-22 14:09:54,801 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-06-16
+2026-05-22 14:09:57,871 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-06-17
+2026-05-22 14:10:01,535 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-06-18
+2026-05-22 14:10:05,201 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-06-19
+2026-05-22 14:10:08,358 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-06-20
+2026-05-22 14:10:12,625 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-06-23
+2026-05-22 14:10:16,971 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-06-24
+2026-05-22 14:10:20,865 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-06-25
+2026-05-22 14:10:24,838 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-06-26
+2026-05-22 14:10:29,019 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-06-27
+2026-05-22 14:10:33,447 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-06-30
+2026-05-22 14:10:38,240 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-01
+2026-05-22 14:10:40,338 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-02
+2026-05-22 14:10:42,359 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-03
+2026-05-22 14:10:44,619 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-04
+2026-05-22 14:10:46,266 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-07
+2026-05-22 14:10:48,488 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-08
+2026-05-22 14:10:50,621 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-09
+2026-05-22 14:10:52,534 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-10
+2026-05-22 14:10:54,102 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-11
+2026-05-22 14:10:56,458 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-14
+2026-05-22 14:10:59,016 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-15
+2026-05-22 14:11:02,583 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-16
+2026-05-22 14:11:05,800 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-17
+2026-05-22 14:11:09,236 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-18
+2026-05-22 14:11:12,713 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-21
+2026-05-22 14:11:15,998 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-22
+2026-05-22 14:11:20,881 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-23
+2026-05-22 14:11:24,646 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-24
+2026-05-22 14:11:28,151 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-25
+2026-05-22 14:11:32,704 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-28
+2026-05-22 14:11:37,144 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-29
+2026-05-22 14:11:42,291 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-30
+2026-05-22 14:11:46,571 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-07-31
+2026-05-22 14:11:50,984 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-08-01
+2026-05-22 14:11:52,967 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-08-04
+2026-05-22 14:11:54,834 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-08-05
+2026-05-22 14:11:57,056 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-08-06
+2026-05-22 14:11:58,631 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-08-07
+2026-05-22 14:12:00,598 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-08-08
+2026-05-22 14:12:02,666 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-08-11
+2026-05-22 14:12:05,314 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-08-12
+2026-05-22 14:12:08,596 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-08-13
+2026-05-22 14:12:11,507 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-08-14
+2026-05-22 14:12:14,365 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-08-15
+2026-05-22 14:12:17,199 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-08-18
+2026-05-22 14:12:20,360 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-08-19
+2026-05-22 14:12:23,258 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-08-20
+2026-05-22 14:12:27,683 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-08-21
+2026-05-22 14:12:31,491 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-08-22
+2026-05-22 14:12:35,654 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-08-25
+2026-05-22 14:12:40,042 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-08-26
+2026-05-22 14:12:43,982 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-08-27
+2026-05-22 14:12:47,682 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-08-28
+2026-05-22 14:12:52,022 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-08-29
+2026-05-22 14:12:55,471 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-01
+2026-05-22 14:12:56,758 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-02
+2026-05-22 14:12:58,872 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-03
+2026-05-22 14:13:01,052 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-04
+2026-05-22 14:13:02,960 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-05
+2026-05-22 14:13:05,054 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-08
+2026-05-22 14:13:07,069 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-09
+2026-05-22 14:13:09,102 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-10
+2026-05-22 14:13:10,466 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-11
+2026-05-22 14:13:12,142 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-12
+2026-05-22 14:13:14,083 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-15
+2026-05-22 14:13:16,212 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-16
+2026-05-22 14:13:18,613 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-17
+2026-05-22 14:13:22,080 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-18
+2026-05-22 14:13:25,226 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-19
+2026-05-22 14:13:28,408 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-22
+2026-05-22 14:13:32,171 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-23
+2026-05-22 14:13:35,918 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-24
+2026-05-22 14:13:40,562 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-25
+2026-05-22 14:13:44,305 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-26
+2026-05-22 14:13:48,652 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-29
+2026-05-22 14:13:53,364 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-09-30
+2026-05-22 14:13:57,593 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-10-01
+2026-05-22 14:13:59,510 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-10-02
+2026-05-22 14:14:00,803 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-10-03
+2026-05-22 14:14:02,120 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-10-06
+2026-05-22 14:14:04,155 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-10-07
+2026-05-22 14:14:05,960 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-10-08
+2026-05-22 14:14:08,154 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-10-09
+2026-05-22 14:14:10,318 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-10-10
+2026-05-22 14:14:12,789 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-10-13
+2026-05-22 14:14:15,320 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-10-14
+2026-05-22 14:14:18,535 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-10-15
+2026-05-22 14:14:22,282 [INFO] MongoDB upsert_macro_context: neutral/RISK_OFF adj=-0.040 para 2025-10-16
+2026-05-22 14:14:25,364 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-10-17
+2026-05-22 14:14:28,331 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-10-20
+2026-05-22 14:14:31,646 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-10-21
+2026-05-22 14:14:35,400 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-10-22
+2026-05-22 14:14:39,507 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-10-23
+2026-05-22 14:14:44,150 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-10-24
+2026-05-22 14:14:47,976 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-10-27
+2026-05-22 14:14:52,244 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-10-28
+2026-05-22 14:14:56,985 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-10-29
+2026-05-22 14:15:01,459 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-10-30
+2026-05-22 14:15:06,024 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-10-31
+2026-05-22 14:15:09,230 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-11-03
+2026-05-22 14:15:10,550 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-11-04
+2026-05-22 14:15:12,743 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-11-05
+2026-05-22 14:15:15,003 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-11-06
+2026-05-22 14:15:17,264 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-11-07
+2026-05-22 14:15:19,213 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-11-10
+2026-05-22 14:15:22,024 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-11-11
+2026-05-22 14:15:23,639 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-11-12
+2026-05-22 14:15:25,564 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-11-13
+2026-05-22 14:15:27,134 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-11-14
+2026-05-22 14:15:29,842 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-11-17
+2026-05-22 14:15:32,985 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-11-18
+2026-05-22 14:15:36,224 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-11-19
+2026-05-22 14:15:40,169 [INFO] MongoDB upsert_macro_context: neutral/RISK_OFF adj=-0.040 para 2025-11-20
+2026-05-22 14:15:43,838 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-11-21
+2026-05-22 14:15:47,587 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-11-24
+2026-05-22 14:15:51,440 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2025-11-25
+2026-05-22 14:15:55,527 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-11-26
+2026-05-22 14:15:59,767 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-11-27
+2026-05-22 14:16:02,499 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-11-28
+2026-05-22 14:16:06,383 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-01
+2026-05-22 14:16:08,409 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-02
+2026-05-22 14:16:10,652 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-03
+2026-05-22 14:16:12,827 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-04
+2026-05-22 14:16:14,509 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-05
+2026-05-22 14:16:16,276 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-08
+2026-05-22 14:16:17,997 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-09
+2026-05-22 14:16:19,562 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-10
+2026-05-22 14:16:20,886 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-11
+2026-05-22 14:16:22,855 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-12
+2026-05-22 14:16:24,401 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-15
+2026-05-22 14:16:26,097 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-16
+2026-05-22 14:16:28,488 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-17
+2026-05-22 14:16:31,173 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-18
+2026-05-22 14:16:33,799 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-19
+2026-05-22 14:16:36,832 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-22
+2026-05-22 14:16:41,216 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-23
+2026-05-22 14:16:45,006 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-24
+2026-05-22 14:16:48,927 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-25
+2026-05-22 14:16:51,989 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-26
+2026-05-22 14:16:56,119 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-29
+2026-05-22 14:17:00,716 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-30
+2026-05-22 14:17:04,928 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2025-12-31
+2026-05-22 14:17:08,778 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-01-01
+2026-05-22 14:17:09,751 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-01-02
+2026-05-22 14:17:11,849 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-01-05
+2026-05-22 14:17:13,842 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-01-06
+2026-05-22 14:17:15,840 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-01-07
+2026-05-22 14:17:17,414 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-01-08
+2026-05-22 14:17:18,727 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-01-09
+2026-05-22 14:17:20,548 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-01-12
+2026-05-22 14:17:22,939 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-01-13
+2026-05-22 14:17:24,434 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-01-14
+2026-05-22 14:17:26,697 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-01-15
+2026-05-22 14:17:28,698 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-01-16
+2026-05-22 14:17:30,954 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-01-19
+2026-05-22 14:17:33,498 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-01-20
+2026-05-22 14:17:36,890 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-01-21
+2026-05-22 14:17:40,030 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-01-22
+2026-05-22 14:17:43,012 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-01-23
+2026-05-22 14:17:45,798 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-01-26
+2026-05-22 14:17:49,907 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-01-27
+2026-05-22 14:17:54,394 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-01-28
+2026-05-22 14:17:59,709 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-01-29
+2026-05-22 14:18:04,280 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-01-30
+2026-05-22 14:18:08,624 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-02-02
+2026-05-22 14:18:10,807 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-02-03
+2026-05-22 14:18:12,812 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-02-04
+2026-05-22 14:18:14,836 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-02-05
+2026-05-22 14:18:17,094 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-02-06
+2026-05-22 14:18:19,107 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-02-09
+2026-05-22 14:18:21,659 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-02-10
+2026-05-22 14:18:23,676 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-02-11
+2026-05-22 14:18:25,920 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-02-12
+2026-05-22 14:18:28,114 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-02-13
+2026-05-22 14:18:30,284 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-02-16
+2026-05-22 14:18:32,670 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-02-17
+2026-05-22 14:18:36,521 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-02-18
+2026-05-22 14:18:40,306 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-02-19
+2026-05-22 14:18:43,222 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-02-20
+2026-05-22 14:18:46,627 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-02-23
+2026-05-22 14:18:53,288 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-02-24
+2026-05-22 14:18:58,962 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-02-25
+2026-05-22 14:19:03,067 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-02-26
+2026-05-22 14:19:07,332 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-02-27
+2026-05-22 14:19:10,930 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-03-02
+2026-05-22 14:19:13,109 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-03-03
+2026-05-22 14:19:15,235 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-03-04
+2026-05-22 14:19:16,754 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-03-05
+2026-05-22 14:19:18,042 [INFO] MongoDB upsert_macro_context: neutral/RISK_OFF adj=-0.040 para 2026-03-06
+2026-05-22 14:19:19,708 [INFO] MongoDB upsert_macro_context: neutral/RISK_OFF adj=-0.040 para 2026-03-09
+2026-05-22 14:19:21,184 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-03-10
+2026-05-22 14:19:23,168 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-03-11
+2026-05-22 14:19:24,866 [INFO] MongoDB upsert_macro_context: neutral/RISK_OFF adj=-0.040 para 2026-03-12
+2026-05-22 14:19:26,159 [INFO] MongoDB upsert_macro_context: neutral/RISK_OFF adj=-0.040 para 2026-03-13
+2026-05-22 14:19:27,604 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-03-16
+2026-05-22 14:19:29,023 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-03-17
+2026-05-22 14:19:31,810 [INFO] MongoDB upsert_macro_context: neutral/RISK_OFF adj=-0.040 para 2026-03-18
+2026-05-22 14:19:34,114 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-03-19
+2026-05-22 14:19:37,278 [INFO] MongoDB upsert_macro_context: neutral/RISK_OFF adj=-0.040 para 2026-03-20
+2026-05-22 14:19:40,206 [INFO] MongoDB upsert_macro_context: neutral/RISK_OFF adj=-0.040 para 2026-03-23
+2026-05-22 14:19:43,123 [INFO] MongoDB upsert_macro_context: neutral/RISK_OFF adj=-0.040 para 2026-03-24
+2026-05-22 14:19:45,959 [INFO] MongoDB upsert_macro_context: neutral/RISK_OFF adj=-0.040 para 2026-03-25
+2026-05-22 14:19:48,689 [INFO] MongoDB upsert_macro_context: neutral/RISK_OFF adj=-0.040 para 2026-03-26
+2026-05-22 14:19:52,860 [INFO] MongoDB upsert_macro_context: neutral/RISK_OFF adj=-0.040 para 2026-03-27
+2026-05-22 14:19:56,770 [INFO] MongoDB upsert_macro_context: neutral/RISK_OFF adj=-0.040 para 2026-03-30
+2026-05-22 14:20:00,357 [INFO] MongoDB upsert_macro_context: neutral/RISK_OFF adj=-0.040 para 2026-03-31
+2026-05-22 14:20:04,182 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-04-01
+2026-05-22 14:20:06,050 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-04-02
+2026-05-22 14:20:07,349 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-04-03
+2026-05-22 14:20:08,638 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-04-06
+2026-05-22 14:20:09,448 [INFO] MongoDB upsert_macro_context: neutral/RISK_OFF adj=-0.040 para 2026-04-07
+2026-05-22 14:20:10,924 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-04-08
+2026-05-22 14:20:12,560 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-04-09
+2026-05-22 14:20:14,139 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-04-10
+2026-05-22 14:20:15,415 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-04-13
+2026-05-22 14:20:16,454 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-04-14
+2026-05-22 14:20:17,789 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-04-15
+2026-05-22 14:20:19,657 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-04-16
+2026-05-22 14:20:21,808 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-04-17
+2026-05-22 14:20:24,372 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-04-20
+2026-05-22 14:20:26,893 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-04-21
+2026-05-22 14:20:29,317 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-04-22
+2026-05-22 14:20:31,413 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-04-23
+2026-05-22 14:20:33,526 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-04-24
+2026-05-22 14:20:35,645 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-04-27
+2026-05-22 14:20:39,716 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-04-28
+2026-05-22 14:20:43,616 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-04-29
+2026-05-22 14:20:46,485 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-04-30
+2026-05-22 14:20:49,942 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-05-01
+2026-05-22 14:20:51,604 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-05-04
+2026-05-22 14:20:53,113 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-05-05
+2026-05-22 14:20:54,501 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-05-06
+2026-05-22 14:20:56,033 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-05-07
+2026-05-22 14:20:58,421 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-05-08
+2026-05-22 14:21:01,120 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-05-11
+2026-05-22 14:21:03,439 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-05-12
+2026-05-22 14:21:05,922 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-05-13
+2026-05-22 14:21:08,154 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-05-14
+2026-05-22 14:21:10,564 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-05-15
+2026-05-22 14:21:13,188 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-05-18
+2026-05-22 14:21:16,241 [INFO] MongoDB upsert_macro_context: neutral/NEUTRAL adj=+0.000 para 2026-05-19
+2026-05-22 14:21:19,606 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-05-20
+2026-05-22 14:21:23,198 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-05-21
+2026-05-22 14:21:26,108 [INFO] MongoDB upsert_macro_context: neutral/RISK_ON adj=+0.040 para 2026-05-22
+2026-05-22 14:21:28,170 [INFO] 
+📐 Fase 4: Rellenando outcomes D+1/D+3/D+5…
+2026-05-22 14:21:32,780 [INFO] 
+📊 Fase 5: Generando reporte final (lambda_report)…
+2026-05-22 14:21:32,889 [INFO]   Reporte 2026-05-22: 3 tickers, guardado en MongoDB reports y Aurora actualizado.
+2026-05-22 14:21:32,890 [INFO] 
+💾 Fase 6: Exportando CSV de señales…
+2026-05-22 14:21:32,904 [INFO]   786 señales → backtest_output/signals_daily.csv
+2026-05-22 14:21:32,904 [INFO] 
+=================================================================
+2026-05-22 14:21:32,904 [INFO] ✅  BACKTESTING COMPLETADO
+2026-05-22 14:21:32,904 [INFO]     Señales generadas : 786
+2026-05-22 14:21:32,904 [INFO]     MongoDB           : ✓ datos escritos
+2026-05-22 14:21:32,904 [INFO] -----------------------------------------------------------------
+2026-05-22 14:21:32,904 [INFO]   🔴 GLD: estrategia +25.0%  B&H +37.6%  Alpha -12.6%  Sharpe 1.16  → caso positivo (activo real)
+2026-05-22 14:21:32,904 [INFO]   🔴 IWM: estrategia -4.4%  B&H +40.5%  Alpha -44.9%  Sharpe -1.80  → caso positivo (small caps)
+2026-05-22 14:21:32,904 [INFO]   🔴 SPY: estrategia +1.0%  B&H +28.8%  Alpha -27.8%  Sharpe -0.23  → caso negativo (esperado α≈0 o negativo)
+2026-05-22 14:21:32,904 [INFO] =================================================================

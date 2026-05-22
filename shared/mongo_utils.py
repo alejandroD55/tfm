@@ -232,7 +232,7 @@ _ETF_DOC_ID = "default"
 _WATCHLIST_DOC_ID = "default"
 _ETF_UNIVERSE_CACHE: Optional[List[str]] = None
 _DEFAULT_WATCHLIST_SEED = [
-    "SPY", "IWM", "XLE", "GLD",
+    "SPY", "IWM", "GLD",
 ]
 
 

@@ -192,6 +192,23 @@ deploy_lambda() {
       --function-name "${LAMBDA_NAME}" \
       --region "${AWS_REGION}"
 
+    # Tras push de imagen nueva, Lambda puede quedar Inactive (ImageAccessDenied).
+    local FN_STATE
+    FN_STATE=$(aws lambda get-function-configuration \
+      --function-name "${LAMBDA_NAME}" \
+      --region "${AWS_REGION}" \
+      --query 'State' --output text 2>/dev/null || echo "Unknown")
+    if [ "${FN_STATE}" = "Inactive" ]; then
+      warn "${LAMBDA_NAME} Inactive tras deploy — re-aplicando imagen para activar..."
+      aws lambda update-function-code \
+        --function-name "${LAMBDA_NAME}" \
+        --image-uri "${IMAGE_TAG}" \
+        --region "${AWS_REGION}" > /dev/null
+      aws lambda wait function-updated \
+        --function-name "${LAMBDA_NAME}" \
+        --region "${AWS_REGION}"
+    fi
+
   else
     info "Creando nueva función Lambda desde imagen ECR..."
     aws lambda create-function \
