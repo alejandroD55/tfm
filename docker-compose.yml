@@ -42,7 +42,7 @@ services:
       POSTGRES_PASSWORD: localpassword123
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       # Aplica el schema automáticamente al crear el contenedor
       - ./database_schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
