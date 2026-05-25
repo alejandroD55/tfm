@@ -12,7 +12,7 @@ import { NgxChartsModule } from '@swimlane/ngx-charts';
 import { switchMap, catchError, of } from 'rxjs';
 import { ReportService } from '../../core/services/report.service';
 import { TraceService } from '../../core/services/trace.service';
-import { ApiService, NewsDetailResponse, NewsArticleDetail, MacroContext, MacroArticle } from '../../core/services/api.service';
+import { ApiService, NewsDetailResponse, NewsArticleDetail, MacroContext, MacroArticle, OhlcvPoint } from '../../core/services/api.service';
 import {
   TickerView, ReportDateEntry, DailyReport,
   SentimentState, RsiState, TrendState, VolatilityState,
@@ -69,6 +69,10 @@ export class SignalsComponent implements OnInit, AfterViewInit {
   tickerTraceLoading = new Set<string>();
   hasTraceForDate = false;
 
+  // ── OHLCV Week chart ──────────────────────────────────────────────────────
+  ohlcvWeekCache   = new Map<string, OhlcvPoint[]>();
+  ohlcvWeekLoading = new Set<string>();
+
   // Funciones de Coloreado Dinámico (Para NGX-Charts)
   customSignalColors = (name: string) => {
     if (name === 'COMPRAR') return '#22C55E';
@@ -114,6 +118,8 @@ export class SignalsComponent implements OnInit, AfterViewInit {
   onDateChange(date: string) {
     this.loading = true;
     this.tickerTraceCache.clear();
+    this.ohlcvWeekCache.clear();
+    this.ohlcvWeekLoading.clear();
     this.expandedRows.clear();
     const entry = this.availableDates.find(d => d.date === date);
     this.hasTraceForDate = !!(entry as any)?.has_trace;
@@ -188,7 +194,74 @@ export class SignalsComponent implements OnInit, AfterViewInit {
     } else {
       this.expandedRows.add(ticker);
       this.loadTickerTrace(ticker);
+      this.loadOhlcvWeek(ticker);
     }
+  }
+
+  loadOhlcvWeek(ticker: string) {
+    if (this.ohlcvWeekCache.has(ticker) || this.ohlcvWeekLoading.has(ticker)) return;
+    this.ohlcvWeekLoading.add(ticker);
+    this.apiSvc.getOhlcvWeek(ticker, this.selectedDate).pipe(
+      catchError(() => of(null))
+    ).subscribe(resp => {
+      this.ohlcvWeekLoading.delete(ticker);
+      this.ohlcvWeekCache.set(ticker, resp?.points ?? []);
+    });
+  }
+
+  getOhlcvPoints(ticker: string): OhlcvPoint[] {
+    return this.ohlcvWeekCache.get(ticker) ?? [];
+  }
+
+  isOhlcvLoading(ticker: string): boolean {
+    return this.ohlcvWeekLoading.has(ticker);
+  }
+
+  /** Returns SVG-ready data for the weekly price mini-chart */
+  getWeekSvgData(ticker: string): {
+    points: { x: number; y: number; date: string; close: number; isTarget: boolean }[];
+    path:     string;
+    areaPath: string;
+    minClose: number;
+    maxClose: number;
+  } {
+    const pts = this.ohlcvWeekCache.get(ticker) ?? [];
+    if (pts.length === 0) return { points: [], path: '', areaPath: '', minClose: 0, maxClose: 0 };
+
+    const W = 560, H = 140, padX = 44, padY = 18, bottomPad = 28;
+    const chartW = W - padX * 2;
+    const chartH = H - padY - bottomPad;
+
+    const closes = pts.map(p => p.close);
+    const minC   = Math.min(...closes);
+    const maxC   = Math.max(...closes);
+    const range  = maxC - minC || minC * 0.02 || 1;
+
+    const xOf = (i: number) => pts.length > 1 ? padX + (i / (pts.length - 1)) * chartW : W / 2;
+    const yOf = (c: number) => padY + (1 - (c - minC) / range) * chartH;
+    const bottomY = padY + chartH;
+
+    const svgPoints = pts.map((p, i) => ({
+      x: xOf(i),
+      y: yOf(p.close),
+      date:     p.date,
+      close:    p.close,
+      isTarget: p.date === this.selectedDate,
+    }));
+
+    const path     = svgPoints.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+    const last     = svgPoints[svgPoints.length - 1];
+    const first    = svgPoints[0];
+    const areaPath = `${path} L${last.x.toFixed(1)},${bottomY} L${first.x.toFixed(1)},${bottomY} Z`;
+
+    return { points: svgPoints, path, areaPath, minClose: minC, maxClose: maxC };
+  }
+
+  /** Formats "2024-06-15" → "15/06" */
+  formatDateShort(dateStr: string): string {
+    if (!dateStr) return '';
+    const parts = dateStr.split('-');
+    return parts.length === 3 ? `${parts[2]}/${parts[1]}` : dateStr;
   }
 
   loadTickerTrace(ticker: string) {

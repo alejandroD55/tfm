@@ -254,6 +254,13 @@ export class ApiService {
       { headers: this.authHeaders, params });
   }
 
+  /** Semana de precios OHLCV alrededor de una fecha (±3 días hábiles) */
+  getOhlcvWeek(ticker: string, date: string): Observable<OhlcvWeekResponse> {
+    return this.http.get<OhlcvWeekResponse>(
+      `${this.baseUrl}/ohlcv/${ticker.toUpperCase()}/week/${date}`,
+      { headers: this.authHeaders });
+  }
+
   // ─── Pipeline trigger ─────────────────────────────────────────────
   /** Lanza el pipeline (completo o para un ticker concreto) */
   runPipeline(body: { ticker?: string; tickers?: string[]; batch_date?: string }): Observable<{
@@ -391,4 +398,22 @@ export interface MacroNewsResponse {
   date:     string;
   total:    number;
   articles: MacroArticle[];
+}
+
+// ─── DTOs de OHLCV semanal ────────────────────────────────────────────────────
+
+export interface OhlcvPoint {
+  date:   string;
+  open:   number;
+  high:   number;
+  low:    number;
+  close:  number;
+  volume: number;
+}
+
+export interface OhlcvWeekResponse {
+  ticker:      string;
+  target_date: string;
+  points:      OhlcvPoint[];
+  total:       number;
 }

@@ -13,5 +13,8 @@ trafilatura
 requests
 tqdm
 python-dotenv
-newsapi-python
+groq
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+# newsapi-python eliminado — sustituido por GDELT (gratuito, sin API key, acceso histórico completo)
 feedparser

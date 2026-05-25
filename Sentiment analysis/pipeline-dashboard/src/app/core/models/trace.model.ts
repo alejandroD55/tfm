@@ -83,11 +83,18 @@ export interface SentimentDetail {
   limitation:         string;
 }
 
+export interface MacroContext {
+  macro_sentiment:  string;
+  risk_regime:      string;
+  macro_adjustment: number;
+}
+
 export interface TickerInference {
   prob_up:        number;
   prob_down:      number;
   signal:         string;
   threshold_used: number | number[];
+  macro_context?: MacroContext;
 }
 
 export interface TickerTrace {

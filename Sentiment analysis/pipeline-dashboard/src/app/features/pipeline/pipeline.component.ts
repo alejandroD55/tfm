@@ -40,7 +40,17 @@ export class PipelineComponent implements OnInit {
   loading = true;
   batches: BatchSummary[] = [];
   latestHealth: PipelineHealth | null = null;
-  
+  totalDates = 0;
+
+  // Selector de rango de fechas
+  pageSize = 30;
+  readonly pageSizeOptions = [
+    { value: 14,   label: 'Últimas 2 semanas' },
+    { value: 30,   label: 'Último mes' },
+    { value: 90,   label: 'Últimos 3 meses' },
+    { value: 9999, label: 'Todo el histórico' },
+  ];
+
   // Gráficos
   statusPieChart: ChartDataPoint[] = [];
   coverageChart: ChartDataPoint[] = [];
@@ -66,13 +76,16 @@ export class PipelineComponent implements OnInit {
   }
 
   ngOnInit() { this.loadData(); }
-  refresh()  { this.loading = true; this.loadData(); }
+  refresh()  { this.loading = true; this.batches = []; this.loadData(); }
+
+  onPageSizeChange() { this.loading = true; this.batches = []; this.loadData(); }
 
   private loadData() {
     this.reportSvc.listAvailableDates().pipe(
       switchMap(dates => {
         if (!dates.length) { this.loading = false; return of([]); }
-        const toLoad = dates.slice(0, 14); // Cargamos los últimos 14 días
+        this.totalDates = dates.length;
+        const toLoad = dates.slice(0, this.pageSize);
         return forkJoin(toLoad.map(d => this.reportSvc.loadReport(d.date)));
       })
     ).subscribe({

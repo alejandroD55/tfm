@@ -11,7 +11,7 @@ import { MatChipsModule } from '@angular/material/chips';
 import { switchMap } from 'rxjs';
 import { TraceService } from '../../core/services/trace.service';
 import { ReportService } from '../../core/services/report.service';
-import { BayesianTrace, ModelConfig } from '../../core/models/trace.model';
+import { BayesianTrace, ModelConfig, TickerTrace } from '../../core/models/trace.model';
 import { ReportDateEntry } from '../../core/models/report.model';
 
 @Component({
@@ -33,7 +33,11 @@ export class AuditComponent implements OnInit {
   trace: BayesianTrace | null = null;
   model: ModelConfig | null   = null;
   availableDates: ReportDateEntry[] = [];
-  selectedDate  = ''; // Lo dejamos solo para descargar internamente el último archivo, no se muestra
+  selectedDate  = '';
+
+  // Walkthrough por ticker
+  tickerKeys: string[] = [];
+  expandedTicker = '';
 
   cptRows:            any[] = [];
   cptFilterSentiment  = '';
@@ -58,7 +62,6 @@ export class AuditComponent implements OnInit {
       switchMap(dates => {
         this.availableDates = dates;
         if (!dates.length) { this.loading = false; return []; }
-        // Forzamos que siempre coja la última versión disponible
         this.selectedDate = dates[0].date;
         return this.traceSvc.getTrace(this.selectedDate);
       })
@@ -71,6 +74,7 @@ export class AuditComponent implements OnInit {
   onDateChange(date: string) {
     this.loading = true;
     this.trace   = null;
+    this.expandedTicker = '';
     this.traceSvc.getTrace(date).subscribe({
       next: t => { this.processTrace(t); this.loading = false; },
       error: () => { this.loading = false; },
@@ -81,6 +85,10 @@ export class AuditComponent implements OnInit {
     this.trace = t;
     this.model = t.model_config;
     this.limitations = t.model_config.known_limitations || [];
+    this.tickerKeys = Object.keys(t.tickers || {});
+    if (this.tickerKeys.length > 0 && !this.expandedTicker) {
+      this.expandedTicker = this.tickerKeys[0];
+    }
 
     if (t.model_config.priors) {
       this.priorNodes = Object.entries(t.model_config.priors).map(([name, vals]) => ({
@@ -94,6 +102,39 @@ export class AuditComponent implements OnInit {
     if (t.model_config.cpt_market_direction.values_P_up) {
       this.cptRows = this.traceSvc.parseCptMatrix(t.model_config.cpt_market_direction.values_P_up);
     }
+  }
+
+  getTickerTrace(ticker: string): TickerTrace | null {
+    return this.trace?.tickers?.[ticker] ?? null;
+  }
+
+  toggleTicker(ticker: string) {
+    this.expandedTicker = this.expandedTicker === ticker ? '' : ticker;
+  }
+
+  // Porcentaje dominante del sentimiento FinBERT
+  dominantSentimentPct(ticker: string): number {
+    const t = this.getTickerTrace(ticker);
+    if (!t?.sentiment_detail?.dominant) return 0;
+    const sent = t.sentiment_detail.dominant.sentiment;
+    return t.sentiment_detail.distribution?.[sent]?.pct ?? 0;
+  }
+
+  // Clase CSS para el estado de una señal
+  signalClass(signal: string): string {
+    return signal === 'BUY' ? 'signal-buy' : signal === 'SELL' ? 'signal-sell' : 'signal-hold';
+  }
+
+  signalLabel(signal: string): string {
+    return signal === 'BUY' ? 'COMPRAR' : signal === 'SELL' ? 'CASH' : 'MANTENER';
+  }
+
+  stateClass(state: string): string {
+    const positive = ['bullish', 'oversold', 'uptrend', 'low'];
+    const negative = ['bearish', 'overbought', 'downtrend', 'high'];
+    if (positive.includes(state)) return 'state-positive';
+    if (negative.includes(state)) return 'state-negative';
+    return 'state-neutral';
   }
 
   // Traducción estricta para la UI

@@ -681,6 +681,110 @@
 
                 </div>
 
+                <!-- ── PRECIO SEMANAL ─────────────────────────────────────────── -->
+                <div class="week-chart-section">
+                  <div class="wcs-header">
+                    <mat-icon>candlestick_chart</mat-icon>
+                    <span>Precio de Cierre — Semana del {{ selectedDate }}</span>
+                    <span class="wcs-sub">±3 sesiones hábiles alrededor del día analizado</span>
+                  </div>
+
+                  @if (isOhlcvLoading(row.ticker)) {
+                    <div class="wcs-loading">
+                      <mat-spinner diameter="22"></mat-spinner>
+                      <span>Cargando precios históricos...</span>
+                    </div>
+                  } @else if (getOhlcvPoints(row.ticker).length > 0) {
+
+                    <div class="wcs-chart">
+                      <svg viewBox="0 0 560 140" class="week-svg" aria-label="Gráfico de precio semanal">
+                        <defs>
+                          <linearGradient [attr.id]="'wg-' + row.ticker" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%"   stop-color="var(--brand-500)" stop-opacity="0.22"/>
+                            <stop offset="100%" stop-color="var(--brand-500)" stop-opacity="0"/>
+                          </linearGradient>
+                        </defs>
+
+                        <!-- Eje X e Y de fondo -->
+                        <line x1="44" y1="18" x2="44"  y2="112" stroke="var(--border)" stroke-width="0.8"/>
+                        <line x1="44" y1="112" x2="516" y2="112" stroke="var(--border)" stroke-width="0.8"/>
+
+                        <!-- Líneas de guía horizontales -->
+                        <line x1="44" y1="65" x2="516" y2="65" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="3,4" opacity="0.6"/>
+
+                        <!-- Etiquetas de precio (eje Y) -->
+                        <text x="40" y="22"  text-anchor="end" class="svg-axis-label">{{ getWeekSvgData(row.ticker).maxClose | number:'1.0-0' }}</text>
+                        <text x="40" y="115" text-anchor="end" class="svg-axis-label">{{ getWeekSvgData(row.ticker).minClose | number:'1.0-0' }}</text>
+
+                        <!-- Área bajo la curva -->
+                        @if (getWeekSvgData(row.ticker).areaPath) {
+                          <path [attr.d]="getWeekSvgData(row.ticker).areaPath"
+                                [attr.fill]="'url(#wg-' + row.ticker + ')'" />
+                        }
+
+                        <!-- Línea de precio -->
+                        @if (getWeekSvgData(row.ticker).path) {
+                          <path [attr.d]="getWeekSvgData(row.ticker).path"
+                                fill="none" stroke="var(--brand-500)" stroke-width="2"
+                                stroke-linejoin="round" stroke-linecap="round"/>
+                        }
+
+                        <!-- Línea vertical del día analizado + puntos -->
+                        @for (pt of getWeekSvgData(row.ticker).points; track pt.date) {
+
+                          @if (pt.isTarget) {
+                            <!-- Línea vertical destacada -->
+                            <line [attr.x1]="pt.x" y1="18" [attr.x2]="pt.x" y2="112"
+                                  stroke="var(--brand-400)" stroke-width="1.5"
+                                  stroke-dasharray="4,3" opacity="0.75"/>
+                            <!-- Halo exterior -->
+                            <circle [attr.cx]="pt.x" [attr.cy]="pt.y" r="8"
+                                    fill="var(--brand-500)" opacity="0.15"/>
+                            <!-- Punto central -->
+                            <circle [attr.cx]="pt.x" [attr.cy]="pt.y" r="5"
+                                    fill="var(--brand-500)" stroke="white" stroke-width="2"/>
+                            <!-- Precio encima -->
+                            <rect [attr.x]="pt.x - 28" [attr.y]="pt.y - 22" width="56" height="16"
+                                  rx="4" fill="var(--brand-600)" opacity="0.9"/>
+                            <text [attr.x]="pt.x" [attr.y]="pt.y - 11"
+                                  text-anchor="middle" class="svg-price-highlight">
+                              ${{ pt.close | number:'1.2-2' }}
+                            </text>
+                            <!-- Fecha bajo el eje -->
+                            <text [attr.x]="pt.x" y="128" text-anchor="middle" class="svg-axis-label svg-axis-target">
+                              {{ formatDateShort(pt.date) }}
+                            </text>
+                          } @else {
+                            <!-- Punto normal -->
+                            <circle [attr.cx]="pt.x" [attr.cy]="pt.y" r="3.5"
+                                    fill="var(--surface, white)" stroke="var(--brand-400)" stroke-width="1.5"/>
+                            <!-- Precio pequeño -->
+                            <text [attr.x]="pt.x" [attr.y]="pt.y - 8"
+                                  text-anchor="middle" class="svg-price-label">
+                              {{ pt.close | number:'1.2-2' }}
+                            </text>
+                            <!-- Fecha bajo el eje -->
+                            <text [attr.x]="pt.x" y="128" text-anchor="middle" class="svg-axis-label">
+                              {{ formatDateShort(pt.date) }}
+                            </text>
+                          }
+                        }
+                      </svg>
+
+                      <!-- Leyenda -->
+                      <div class="wcs-legend">
+                        <span class="wcs-leg-item wcs-leg-line"></span>
+                        <span class="wcs-leg-txt">Precio cierre</span>
+                        <span class="wcs-leg-item wcs-leg-target"></span>
+                        <span class="wcs-leg-txt">Día analizado</span>
+                      </div>
+                    </div>
+
+                  } @else {
+                    <p class="wcs-empty">Sin datos de precios disponibles para esta semana.</p>
+                  }
+                </div>
+
                 <!-- ── FILA 2: Recomendaciones por perfil de riesgo ── -->
                 <div class="risk-profiles-section">
                   <div class="rp-header">

@@ -24,7 +24,7 @@ import psycopg2
 import trafilatura
 from dotenv import load_dotenv
 from tqdm import tqdm
-from newsapi import NewsApiClient
+# newsapi eliminado — se usa GDELT (gratuito, sin API key, acceso histórico completo)
 import feedparser
 from psycopg2.extensions import AsIs
 import argparse
@@ -51,7 +51,7 @@ def get_args():
 # =============================================================================
 # VARIABLES Y CONFIGURACIÓN
 # =============================================================================
-TICKERS        = ["SPY", "IWM", "GLD", "XLE"]
+TICKERS        = ["SPY", "IWM", "GLD", "XLE", "NVDA"]
 DAYS_BACK      = 365
 INITIAL_CAP    = 10_000.0
 RISK_FREE_RATE = 0.02
@@ -273,8 +273,8 @@ from mongo_utils import (
 
 def get_db_connection():
     return psycopg2.connect(
-        host=DB_CONFIG["host"], port=5432, user=DB_CONFIG["user"],
-        password=DB_CONFIG["password"], database=DB_CONFIG["database"], sslmode="require"
+        host=DB_CONFIG["host"], port=DB_CONFIG["port"], user=DB_CONFIG["user"],
+        password=DB_CONFIG["password"], database=DB_CONFIG["database"], sslmode="prefer"
     )
 
 def pg_upsert_signal(conn, date_str, ticker, signal, prob_up, prob_down):
@@ -380,42 +380,63 @@ def fetch_vix_historical(start_d: date, end_d: date) -> pd.Series:
         return df["Close"]
     return pd.Series(dtype=float)
 
+def fetch_gdelt_news(query: str, target_date, n: int = 5) -> list:
+    """
+    Obtiene artículos de GDELT v2 para un query y fecha histórica (±1 día).
+    GDELT es gratuito, no requiere API key y cubre noticias desde 2013.
+    """
+    start_dt = (target_date - timedelta(days=1)).strftime("%Y%m%d%H%M%S")
+    end_dt   = (target_date + timedelta(days=1)).strftime("%Y%m%d%H%M%S")
+    try:
+        resp = requests.get(
+            "https://api.gdeltproject.org/api/v2/doc/doc",
+            params={
+                "query":         query,
+                "mode":          "artlist",
+                "maxrecords":    n,
+                "startdatetime": start_dt,
+                "enddatetime":   end_dt,
+                "format":        "json",
+                "sourcelang":    "english",
+            },
+            timeout=15
+        )
+        if resp.status_code == 200:
+            return (resp.json() or {}).get("articles", [])
+    except Exception as e:
+        logger.debug(f"GDELT error para '{query}': {e}")
+    return []
+
+
 def ingest_macro_news(date_str):
     articles = []
     seen = set()
-    
-    # Convertimos la fecha del batch a objeto fecha para comparar
     target_date = pd.to_datetime(date_str).date()
-    
-    if GROQ_API_KEY: 
-        client = NewsApiClient(api_key=os.getenv("NEWSAPI_KEY", ""))
-        for cat, queries in MACRO_QUERIES.items():
-            for query in queries:
+
+    # ── GDELT: fuente histórica gratuita, sin API key, cubre todo el backtest ──
+    for cat, queries in MACRO_QUERIES.items():
+        for query_tag in queries:
+            for art in fetch_gdelt_news(query_tag, target_date, n=5):
+                url   = art.get("url", "")
+                title = art.get("title", "")
+                fp    = _fingerprint(url, title)
+                if fp in seen or not title:
+                    continue
+                seen.add(fp)
+                # seendate de GDELT tiene formato: YYYYMMDDTHHMMSSZ
+                raw_dt = art.get("seendate", "")
                 try:
-                    resp = client.get_everything(q=query, page_size=5)
-                    for item in (resp.get("articles") or []):
-                        # Convertir fecha de la noticia de NewsAPI a objeto date
-                        pub_at = pd.to_datetime(item.get("publishedAt")).date()
-                        
-                        # Filtro temporal estricto: +/- 1 día del target_date
-                        if abs((pub_at - target_date).days) > 1:
-                            continue
+                    pub_dt = datetime.strptime(raw_dt, "%Y%m%dT%H%M%SZ").isoformat()
+                except Exception:
+                    pub_dt = target_date.isoformat()
+                articles.append(_normalize_macro(
+                    title, url,
+                    art.get("domain", "gdelt"),
+                    pub_dt, cat, query_tag
+                ))
+            time.sleep(0.3)  # cortesía con la API pública de GDELT
 
-                        fp = _fingerprint(item.get("url"), item.get("title"))
-                        if fp not in seen:
-                            seen.add(fp)
-                            articles.append(_normalize_macro(
-                                item.get("title"), 
-                                item.get("url"), 
-                                item.get("source", {}).get("name", "newsapi"), 
-                                item.get("publishedAt"), 
-                                "macro", 
-                                query, 
-                                item.get("description", "")
-                            ))
-                except Exception as e:
-                    logger.debug(f"Error NewsAPI en {date_str}: {e}")
-
+    # ── RSS en tiempo real (complemento para ejecuciones live del mismo día) ──
     for name, url in RSS_FEEDS.items():
         try:
             parsed = feedparser.parse(url)
@@ -521,22 +542,28 @@ def _calc_backtesting(signals_df: pd.DataFrame) -> Tuple[Dict, Dict]:
             current_position = 0 
             
         trades_rets = []
+        days_invested = 0
         signals_count = ts["signal"].value_counts().to_dict()
 
         for _, row in ts.iterrows():
             price = float(row["close_price"]) if row["close_price"] else 0.0
             if price == 0: continue
             sig = row["signal"]
-            
+
             if sig == "BUY" and current_position == 0:
                 current_position = 1
                 entry_p = price
-            elif sig in ("SELL", "HOLD") and current_position == 1:
+            elif sig == "SELL" and current_position == 1:
+                # Solo SELL cierra la posición; HOLD la mantiene abierta
                 ret = (price - entry_p) / entry_p
                 capital *= 1 + ret
                 trades_rets.append(float(ret))
                 current_position = 0
-                
+            # HOLD: no hacer nada — se mantiene la posición actual
+
+            if current_position == 1:
+                days_invested += 1
+
             daily_eq = capital * (1 + (price - entry_p) / entry_p) if current_position == 1 and entry_p > 0 else capital
             equity.append(daily_eq)
 
@@ -569,7 +596,7 @@ def _calc_backtesting(signals_df: pd.DataFrame) -> Tuple[Dict, Dict]:
             "win_rate": round(float(wins / len(trades_rets)), 4) if trades_rets else 0.0,
             "avg_trade_return": round(float(np.mean(trades_rets)), 4) if trades_rets else 0.0,
             "profit_factor": round(float(profit_factor), 4),
-            "time_in_market_ratio": round(float(signals_count.get("BUY", 0) / max(len(ts), 1)), 4),
+            "time_in_market_ratio": round(float(days_invested / max(len(ts), 1)), 4),
         }
     return metrics, diagnostics
 
@@ -913,7 +940,7 @@ def run_pipeline(start_date_str=None, end_date_str=None):
                     "avg_max_drawdown": round(np.mean([m["max_drawdown"] for m in metrics.values()]), 4) if metrics else 0, # CORRECCIÓN: Añadido para el dashboard
                     "total_closed_trades": sum(item.get("trades_closed", 0) for item in diagnostics.values()) if diagnostics else 0,
                 },
-                "backtesting_config": {"initial_capital": INITIAL_CAP, "risk_free_rate": RISK_FREE_RATE, "period_days": DAYS_BACK, "strategy_type": "Long/Cash"},
+                "backtesting_config": {"initial_capital": INITIAL_CAP, "risk_free_rate": RISK_FREE_RATE, "period_days": DAYS_BACK, "strategy_type": "Long/Cash", "sharpe_annualized": True, "limitation": "El backtesting asume ejecucion al cierre. Estrategia Long/Cash: BUY entra al mercado, SELL cierra posicion, HOLD mantiene posicion abierta."},
                 "trace_artifact": f"mongo:bayesian_traces/{date_str}"
             }
             upsert_report(report_data)

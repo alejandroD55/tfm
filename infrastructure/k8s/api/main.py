@@ -1069,6 +1069,87 @@ def get_ohlcv(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/ohlcv/{ticker}/week/{date}", tags=["Raw Data"])
+def get_ohlcv_week(
+    ticker: str,
+    date: str,
+    x_api_key: str = Header(default=""),
+):
+    """
+    Devuelve los precios OHLCV de la semana comercial alrededor de una fecha
+    (hasta 3 días antes + día objetivo + hasta 3 días después, máx 7 puntos).
+    Fuente: MongoDB coleccion ohlcv.
+    Usado por el gráfico semanal del panel de señales.
+    """
+    check_api_key(x_api_key)
+    if not date or len(date) != 10:
+        raise HTTPException(status_code=400, detail="Formato: YYYY-MM-DD")
+    try:
+        db = _require_mongo()
+        ticker_u = ticker.upper()
+        from datetime import datetime as _dt, timedelta as _td
+
+        target = _dt.strptime(date, "%Y-%m-%d").date()
+        start  = str(target - _td(days=14))   # buffer amplio para festivos
+        end    = str(target + _td(days=14))
+
+        docs = list(
+            db["ohlcv"]
+            .find(
+                {"ticker": ticker_u, "batch_date": {"$gte": start, "$lte": end}},
+                {"_id": 0, "batch_date": 1, "rows": 1},
+            )
+            .sort("batch_date", 1)
+        )
+
+        # Aplanar documentos → lista de puntos diarios
+        points: list[dict] = []
+        for doc in docs:
+            for row in (doc.get("rows") or []):
+                d = row.get("date") or doc["batch_date"]
+                c = row.get("close")
+                if d and c:
+                    points.append({
+                        "date":   d,
+                        "open":   float(row.get("open", 0) or 0),
+                        "high":   float(row.get("high", 0) or 0),
+                        "low":    float(row.get("low", 0) or 0),
+                        "close":  float(c),
+                        "volume": float(row.get("volume", 0) or 0),
+                    })
+
+        # Deduplicar y ordenar
+        seen: set[str] = set()
+        unique = []
+        for p in sorted(points, key=lambda x: x["date"]):
+            if p["date"] not in seen:
+                seen.add(p["date"])
+                unique.append(p)
+
+        # Seleccionar ventana: 3 antes + objetivo + 3 después
+        idx = next((i for i, p in enumerate(unique) if p["date"] == date), -1)
+        if idx == -1:
+            # Usar los puntos más cercanos disponibles
+            before = [p for p in unique if p["date"] < date][-3:]
+            after  = [p for p in unique if p["date"] > date][:3]
+            window = before + after
+        else:
+            start_i = max(0, idx - 3)
+            window  = unique[start_i: idx + 4]   # +3 después
+
+        return {
+            "ticker":      ticker_u,
+            "target_date": date,
+            "points":      window,
+            "total":       len(window),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("get_ohlcv_week error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ─── Pipeline trigger ─────────────────────────────────────────────────────────
 
 

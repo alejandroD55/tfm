@@ -11,10 +11,23 @@
         Monitorización en tiempo real del pipeline de datos y modelos orquestado mediante AWS Step Functions.
       </p>
     </div>
-    <button class="btn btn-ghost" (click)="refresh()">
-      <mat-icon>refresh</mat-icon>
-      <span>Refrescar datos</span>
-    </button>
+    <div class="head-controls">
+      <div class="range-selector">
+        <mat-icon>date_range</mat-icon>
+        <select class="aurora-select" [(ngModel)]="pageSize" (ngModelChange)="onPageSizeChange()">
+          @for (opt of pageSizeOptions; track opt.value) {
+            <option [value]="opt.value">{{ opt.label }}</option>
+          }
+        </select>
+        @if (totalDates > 0) {
+          <span class="total-badge">{{ batches.length }} de {{ totalDates }} ejecuciones</span>
+        }
+      </div>
+      <button class="btn btn-ghost" (click)="refresh()">
+        <mat-icon>refresh</mat-icon>
+        <span>Refrescar</span>
+      </button>
+    </div>
   </header>
 
   <mat-accordion class="glossary-accordion">

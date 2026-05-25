@@ -692,6 +692,74 @@
   }
 }
 
+/* ─── Weekly OHLCV Price Chart ─────────────────────────────────────────────── */
+
+.week-chart-section {
+  margin: 0 0 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 14px 16px 10px;
+}
+
+.wcs-header {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 12px;
+  font-size: 13px; font-weight: 700; color: var(--slate-800);
+  mat-icon { font-size: 18px; height: 18px; width: 18px; color: var(--brand-500); }
+}
+.wcs-sub {
+  font-size: 11px; font-weight: 400; color: var(--slate-400);
+  margin-left: 2px;
+}
+
+.wcs-loading {
+  display: flex; align-items: center; gap: 10px;
+  padding: 16px 0; font-size: 13px; color: var(--slate-500);
+}
+
+.wcs-empty {
+  font-size: 12px; color: var(--slate-400); margin: 8px 0 4px;
+}
+
+.wcs-chart {
+  display: flex; flex-direction: column; gap: 6px;
+}
+
+.week-svg {
+  width: 100%; height: auto;
+  display: block; overflow: visible;
+}
+
+/* SVG text styles (applied via CSS class on SVG text elements) */
+.week-svg .svg-axis-label {
+  font-size: 9px; fill: var(--slate-400);
+  font-family: inherit;
+}
+.week-svg .svg-axis-target {
+  fill: var(--brand-600); font-weight: 700; font-size: 9.5px;
+}
+.week-svg .svg-price-highlight {
+  font-size: 9px; fill: white; font-weight: 700; font-family: inherit;
+}
+.week-svg .svg-price-label {
+  font-size: 8px; fill: var(--slate-400); font-family: inherit;
+}
+
+.wcs-legend {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--slate-500);
+  padding: 2px 0 4px;
+}
+.wcs-leg-item {
+  display: inline-block; height: 3px; border-radius: 2px; width: 20px;
+}
+.wcs-leg-line   { background: var(--brand-500); }
+.wcs-leg-target { background: var(--brand-500); border-radius: 50%; width: 10px; height: 10px; }
+.wcs-leg-txt    { margin-right: 10px; }
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+
 @media (max-width: 1491px) and (min-width: 1101px) {
   .charts-grid-layout {
     grid-template-columns: 1.6fr 1fr;
