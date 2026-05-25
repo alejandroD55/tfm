@@ -404,31 +404,33 @@ def _is_correct(signal: str, outcome: str | None) -> bool | None:
 def upsert_signal_outcomes(connection, batch_date: str, signals_df: pd.DataFrame,
                            explanations_raw: list, run_id: str):
     """
-    Persiste señales del día en signal_outcomes (paso 1: precio D0 y nodos).
-    Además actualiza outcomes de días anteriores (D+1, D+3, D+5) si ya tienen precio D0.
+    Persiste señales del día en signal_outcomes (paso 1: precio D0, nodos Y MACRO).
+    Además actualiza outcomes de días anteriores (D+1, D+3, D+5).
     """
     cursor = connection.cursor()
 
-    # ── Paso 1: insertar señales de hoy ───────────────────────────────────────
-    # Leer señales + nodos de evidencia desde Aurora (signal_explanations join trading_signals)
+    # ── Paso 1: insertar señales de hoy (AHORA INCLUYE JOIN MACRO) ────────────
     cursor.execute("""
         SELECT ts.ticker, ts.signal, ts.prob_up, ts.prob_down,
-               se.sentiment_state, se.rsi_state, se.trend_state, se.volatility_state
+               se.sentiment_state, se.rsi_state, se.trend_state, se.volatility_state,
+               ms.macro_sentiment, mr.risk_regime, mr.macro_adjustment
         FROM trading_signals ts
-        LEFT JOIN signal_explanations se
-               ON ts.batch_date = se.batch_date AND ts.ticker = se.ticker
+        LEFT JOIN signal_explanations se ON ts.batch_date = se.batch_date AND ts.ticker = se.ticker
+        LEFT JOIN macro_sentiment_scores ms ON ts.batch_date = ms.batch_date
+        LEFT JOIN market_regime_state mr ON ts.batch_date = mr.batch_date
         WHERE ts.batch_date = %s
     """, (batch_date,))
     rows = cursor.fetchall()
 
     for row in rows:
-        ticker, signal, prob_up, prob_down, sent, rsi, trend, vol = row
+        ticker, signal, prob_up, prob_down, sent, rsi, trend, vol, macro_sent, risk_reg, macro_adj = row
         price_d0 = get_close_price(ticker, batch_date)
         cursor.execute("""
             INSERT INTO signal_outcomes
                 (batch_date, ticker, run_id, signal, prob_up, prob_down,
-                 sentiment_state, rsi_state, trend_state, volatility_state, price_d0)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 sentiment_state, rsi_state, trend_state, volatility_state, price_d0,
+                 macro_sentiment, risk_regime, macro_adjustment)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (batch_date, ticker) DO UPDATE SET
                 signal           = EXCLUDED.signal,
                 prob_up          = EXCLUDED.prob_up,
@@ -438,16 +440,17 @@ def upsert_signal_outcomes(connection, batch_date: str, signals_df: pd.DataFrame
                 trend_state      = EXCLUDED.trend_state,
                 volatility_state = EXCLUDED.volatility_state,
                 price_d0         = EXCLUDED.price_d0,
+                macro_sentiment  = EXCLUDED.macro_sentiment,
+                risk_regime      = EXCLUDED.risk_regime,
+                macro_adjustment = EXCLUDED.macro_adjustment,
                 updated_at       = CURRENT_TIMESTAMP
         """, (batch_date, ticker, run_id, signal,
               float(prob_up) if prob_up else None,
               float(prob_down) if prob_down else None,
-              sent, rsi, trend, vol, price_d0))
+              sent, rsi, trend, vol, price_d0, 
+              macro_sent, risk_reg, float(macro_adj) if macro_adj else 0.0))
 
     # ── Paso 2: actualizar outcomes de días anteriores ─────────────────────────
-    # Para D+1: buscar señales del día batch_date - 1
-    # Para D+3: buscar señales del día batch_date - 3
-    # Para D+5: buscar señales del día batch_date - 5
     today = pd.to_datetime(batch_date).date()
     for days_ago, col_price, col_outcome, col_correct in [
         (1, "price_d1", "outcome_d1", "correct_d1"),
@@ -455,13 +458,6 @@ def upsert_signal_outcomes(connection, batch_date: str, signals_df: pd.DataFrame
         (5, "price_d5", "outcome_d5", "correct_d5"),
     ]:
         target_date = str(today - timedelta(days=days_ago))
-        cursor.execute("""
-            SELECT ticker, signal, price_d0
-            FROM signal_outcomes
-            WHERE batch_date = %s AND price_d0 IS NOT NULL AND %s IS NULL
-        """, (target_date, psycopg2.extensions.AsIs(col_outcome)))
-
-        # Evitar error de columna dinámica con consulta directa
         cursor.execute(f"""
             SELECT ticker, signal, price_d0
             FROM signal_outcomes
@@ -470,7 +466,7 @@ def upsert_signal_outcomes(connection, batch_date: str, signals_df: pd.DataFrame
         pending = cursor.fetchall()
 
         for ticker, signal, price_d0 in pending:
-            price_dn = get_close_price(ticker, batch_date)   # el precio de hoy ES D+N
+            price_dn = get_close_price(ticker, batch_date)
             outcome  = _outcome(price_d0, price_dn)
             correct  = _is_correct(signal, outcome)
             if outcome:
@@ -483,8 +479,7 @@ def upsert_signal_outcomes(connection, batch_date: str, signals_df: pd.DataFrame
 
     connection.commit()
     cursor.close()
-    logger.info(f"signal_outcomes: {len(rows)} señales de hoy insertadas/actualizadas, "
-                f"outcomes históricos de D+1/D+3/D+5 actualizados")
+    logger.info(f"signal_outcomes: {len(rows)} señales de hoy insertadas, históricos actualizados.")
 
 
 def upsert_pipeline_kpi(connection, batch_date, run_id, trigger_type, stage, metrics):
