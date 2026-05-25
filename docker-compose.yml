@@ -67,6 +67,11 @@ services:
       DATALAKE_BUCKET: ${DATALAKE_BUCKET:-tfm-unir-datalake}
       DASHBOARD_API_KEY: ${DASHBOARD_API_KEY:-dev-local-key}
       PRESIGN_TTL_SEC: "900"
+      # MongoDB Atlas — necesario para leer reports, traces, etc.
+      MONGODB_URI: ${MONGODB_URI}
+      MONGODB_DB: ${MONGODB_DB:-tfm}
+      # Finnhub — para búsqueda de instrumentos
+      FINNHUB_API_KEY: ${FINNHUB_API_KEY:-}
       # Credenciales AWS para leer S3 (del fichero .env)
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}

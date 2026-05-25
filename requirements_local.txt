@@ -1,10 +1,8 @@
 # =============================================================================
 # requirements_local.txt — Dependencias para local_backtest_runner.py
+#                          + FastAPI local (run_api_local.sh)
 # =============================================================================
 # Instalar con:
-#   pip install -r requirements_local.txt
-#
-# Para evitar conflictos con paquetes del sistema (macOS/Linux):
 #   pip install -r requirements_local.txt --break-system-packages
 #
 # Ollama NO va aquí — es un proceso separado.
@@ -47,3 +45,8 @@ tqdm>=4.65.0
 
 # ── Visualización (opcional, para gráficas de backtesting) ───────────────────
 matplotlib>=3.7.0
+
+# ── FastAPI local (run_api_local.sh) — mismo stack que el pod API en EKS ─────
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.0.0

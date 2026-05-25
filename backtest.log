@@ -465,3 +465,15 @@
 2026-05-22 14:21:32,904 [INFO]   🔴 IWM: estrategia -4.4%  B&H +40.5%  Alpha -44.9%  Sharpe -1.80  → caso positivo (small caps)
 2026-05-22 14:21:32,904 [INFO]   🔴 SPY: estrategia +1.0%  B&H +28.8%  Alpha -27.8%  Sharpe -0.23  → caso negativo (esperado α≈0 o negativo)
 2026-05-22 14:21:32,904 [INFO] =================================================================
+2026-05-23 11:30:48,384 [INFO] mongo_utils importado correctamente desde shared/
+2026-05-23 11:30:48,537 [INFO]   Reporte 2026-05-22: 3 tickers, guardado en MongoDB reports y Aurora actualizado.
+2026-05-23 11:39:30,418 [INFO] mongo_utils importado correctamente desde shared/
+2026-05-23 11:39:30,419 [INFO]   OHLCV SPY…
+2026-05-23 11:39:30,425 [INFO] Failed to create TzCache, reason: Cannot read and write in TzCache folder: '/Users/alejandroramosuparela/Library/Caches/py-yfinance'. TzCache will not be used. Tip: You can direct cache to use a different location with 'set_tz_cache_location(mylocation)'
+2026-05-23 11:39:30,425 [INFO] Failed to create CookieCache, reason: Cannot read and write in CookieCache folder: '/Users/alejandroramosuparela/Library/Caches/py-yfinance'. CookieCache will not be used. Tip: You can direct cache to use a different location with 'set_tz_cache_location(mylocation)'
+2026-05-23 11:39:31,828 [INFO]   OHLCV IWM…
+2026-05-23 11:39:32,789 [INFO]   OHLCV GLD…
+2026-05-23 11:39:33,570 [INFO]   SPY: desde caché (SPY_202505_202605.json)
+2026-05-23 11:39:33,587 [INFO]   IWM: desde caché (IWM_202505_202605.json)
+2026-05-23 11:39:33,596 [INFO]   GLD: desde caché (GLD_202505_202605.json)
+2026-05-23 11:39:34,625 [INFO] MongoDB Atlas: conexion establecida

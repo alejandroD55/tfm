@@ -6,9 +6,10 @@ export const environment = {
   // El script imprime estos valores al final del despliegue.
   // ──────────────────────────────────────────────────────────────────
   // En EKS, nginx proxea /api/ → pod tfm-api-service. No necesitas URL absoluta.
-  // En desarrollo local, puedes usar: 'http://localhost:8000' y arrancar main.py con uvicorn.
+  // En docker compose local, nginx proxea /api/ → tfm-api:8000.
+  // En ng serve, proxy.conf.json redirige /api/ → http://localhost:8000.
   apiGatewayUrl: '/api',
-  apiKey:        'REEMPLAZA_CON_TU_API_KEY',   // el mismo que pases a deploy_k8s.sh
+  apiKey:        'dev-local-key',   // coincide con DASHBOARD_API_KEY en docker-compose / .env
 
   // ──────────────────────────────────────────────────────────────────
   // Credenciales locales del dashboard (no AWS)
