@@ -2,9 +2,10 @@
 """
 local_backtest_runner.py — Pipeline TFM local: 365 días de backtesting
 =======================================================================
-Orquesta el flujo de MLOps en local para que sea EXACTAMENTE IGUAL 
+Orquesta el flujo de MLOps en local para que sea EXACTAMENTE IGUAL
 al entorno de AWS (Lambdas + StepFunctions).
 """
+
 import groq
 import os
 import sys
@@ -14,7 +15,7 @@ import threading
 import logging
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta, timezone, date
+from datetime import datetime, timedelta, date
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -26,9 +27,9 @@ import psycopg2
 import trafilatura
 from dotenv import load_dotenv
 from tqdm import tqdm
+
 # newsapi eliminado — se usa GDELT (gratuito, sin API key, acceso histórico completo)
 import feedparser
-from psycopg2.extensions import AsIs
 import argparse
 
 warnings.filterwarnings("ignore")
@@ -37,46 +38,57 @@ _REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_REPO_ROOT, "shared"))
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", handlers=[logging.StreamHandler(sys.stdout)])
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("trafilatura").setLevel(logging.CRITICAL)
 
 load_dotenv()
 
+
 def get_args():
     parser = argparse.ArgumentParser(description="TFM Backtester Local")
-    parser.add_argument("--start", type=str, help="Fecha inicio YYYY-MM-DD", default=None)
+    parser.add_argument(
+        "--start", type=str, help="Fecha inicio YYYY-MM-DD", default=None
+    )
     parser.add_argument("--end", type=str, help="Fecha fin YYYY-MM-DD", default=None)
     parser.add_argument(
-        "--tickers", type=str, default=None,
-        help="Subset de tickers separados por coma, ej: ARKK,XBI. Si no se indica, usa TICKERS global."
+        "--tickers",
+        type=str,
+        default=None,
+        help="Subset de tickers separados por coma, ej: ARKK,XBI. Si no se indica, usa TICKERS global.",
     )
     return parser.parse_args()
+
 
 # =============================================================================
 # VARIABLES Y CONFIGURACIÓN
 # =============================================================================
-TICKERS        = ["SPY", "IWM", "GLD", "XLE", "NVDA"]
-DAYS_BACK      = 365
-INITIAL_CAP    = 10_000.0
+TICKERS = ["SPY", "IWM", "GLD", "XLE", "NVDA"]
+DAYS_BACK = 365
+INITIAL_CAP = 10_000.0
 RISK_FREE_RATE = 0.02
 
-FINNHUB_API_KEY   = os.getenv("FINNHUB_API_KEY", "")
-MONGODB_URI       = os.getenv("MONGODB_URI", "")
-GROQ_API_KEY      = os.getenv("GROQ_API_KEY", "")
+FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
+MONGODB_URI = os.getenv("MONGODB_URI", "")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 DB_CONFIG = {
-    "host":     os.getenv("POSTGRES_HOST",     "localhost"),
-    "port":     int(os.getenv("POSTGRES_PORT", "5432")),
-    "user":     os.getenv("POSTGRES_USER",     "tfmadmin"),
+    "host": os.getenv("POSTGRES_HOST", "localhost"),
+    "port": int(os.getenv("POSTGRES_PORT", "5432")),
+    "user": os.getenv("POSTGRES_USER", "tfmadmin"),
     "password": os.getenv("POSTGRES_PASSWORD", "localpassword123"),
-    "database": os.getenv("POSTGRES_DB",       "tfm"),
+    "database": os.getenv("POSTGRES_DB", "tfm"),
 }
 
 CACHE_DIR = Path("cache")
 (CACHE_DIR / "news").mkdir(parents=True, exist_ok=True)
 (CACHE_DIR / "ohlcv").mkdir(parents=True, exist_ok=True)
+
 
 def _sf(v) -> Optional[float]:
     try:
@@ -84,52 +96,93 @@ def _sf(v) -> Optional[float]:
         return None if np.isnan(f) else f
     except Exception:
         return None
-    
+
+
 MACRO_QUERIES = {
-    "monetary_policy": ["Federal Reserve interest rates decision", "Fed hawkish dovish monetary policy", "ECB interest rates inflation Europe"],
-    "inflation": ["CPI inflation data consumer prices", "PCE inflation Federal Reserve target"],
-    "macro_economy": ["GDP growth recession economic outlook", "unemployment jobs report nonfarm payrolls"],
-    "geopolitical": ["geopolitical tensions war conflict markets", "Russia Ukraine war sanctions economy"],
+    "monetary_policy": [
+        "Federal Reserve interest rates decision",
+        "Fed hawkish dovish monetary policy",
+        "ECB interest rates inflation Europe",
+    ],
+    "inflation": [
+        "CPI inflation data consumer prices",
+        "PCE inflation Federal Reserve target",
+    ],
+    "macro_economy": [
+        "GDP growth recession economic outlook",
+        "unemployment jobs report nonfarm payrolls",
+    ],
+    "geopolitical": [
+        "geopolitical tensions war conflict markets",
+        "Russia Ukraine war sanctions economy",
+    ],
 }
 
 # Queries GDELT por ticker — misma lógica que ETF_SEARCH_TERMS en lambda_ingestion.
 # Se usan para enriquecer la ingesta histórica cuando Finnhub devuelve pocos artículos.
 TICKER_GDELT_QUERIES: Dict[str, List[str]] = {
-    "SPY":  ["SPY S&P 500 ETF stock market index", "S&P 500 index fund performance"],
-    "IWM":  ["IWM Russell 2000 small cap ETF", "Russell 2000 small cap stocks rally"],
-    "GLD":  ["GLD gold ETF price rally", "gold commodity price market hedge"],
-    "XLE":  ["XLE energy sector ETF oil stocks", "energy stocks oil gas price market"],
-    "NVDA": ["NVIDIA stock earnings AI semiconductor", "NVDA GPU artificial intelligence chips"],
-    "ARKK": ["ARK Innovation ETF Cathie Wood", "ARKK disruptive technology growth fund"],
-    "XBI":  ["XBI SPDR biotech ETF FDA approval", "biotech pharmaceutical drug approval stocks"],
+    "SPY": ["SPY S&P 500 ETF stock market index", "S&P 500 index fund performance"],
+    "IWM": ["IWM Russell 2000 small cap ETF", "Russell 2000 small cap stocks rally"],
+    "GLD": ["GLD gold ETF price rally", "gold commodity price market hedge"],
+    "XLE": ["XLE energy sector ETF oil stocks", "energy stocks oil gas price market"],
+    "NVDA": [
+        "NVIDIA stock earnings AI semiconductor",
+        "NVDA GPU artificial intelligence chips",
+        "DeepSeek NVIDIA AI chips competition",  # ← añadir esta línea
+    ],
+    "ARKK": [
+        "ARK Innovation ETF Cathie Wood",
+        "ARKK disruptive technology growth fund",
+    ],
+    "XBI": [
+        "XBI SPDR biotech ETF FDA approval",
+        "biotech pharmaceutical drug approval stocks",
+    ],
 }
 
 RSS_FEEDS = {
     "reuters": "https://feeds.reuters.com/reuters/businessNews",
     "cnbc": "https://www.cnbc.com/id/20910258/device/rss/rss.html",
-    "ft": "https://www.ft.com/world?format=rss"
+    "ft": "https://www.ft.com/world?format=rss",
 }
+
 
 def _fingerprint(url: str, headline: str) -> str:
     import hashlib
+
     key = (url or headline or "").strip().lower()
     return hashlib.md5(key.encode()).hexdigest()
 
+
 def _normalize_macro(headline, url, source, dt, category, query_tag, summary=""):
     return {
-        "headline": headline.strip(), "url": url, "source": source,
-        "datetime": dt, "summary": summary, "category": category, "query_tag": query_tag
+        "headline": headline.strip(),
+        "url": url,
+        "source": source,
+        "datetime": dt,
+        "summary": summary,
+        "category": category,
+        "query_tag": query_tag,
     }
+
 
 MODEL_CONFIG = {
     "version": "1.2.0",
     "description": "Red bayesiana v1.2: umbrales calibrados (SELL≤0.28, BUY≥0.52), priors con drift alcista historico, macro_adj amortiguado en uptrend",
     "discretization": {
-        "rsi": {"oversold_below": 30, "overbought_above": 70, "neutral_range": [30, 70]},
+        "rsi": {
+            "oversold_below": 30,
+            "overbought_above": 70,
+            "neutral_range": [30, 70],
+        },
         "trend": {"rule": "SMA20 > SMA50 = uptrend"},
-        "volatility": {"high_if_band_width_ratio_above": 0.05}
+        "volatility": {"high_if_band_width_ratio_above": 0.05},
     },
-    "signal_thresholds": {"BUY": {"prob_up_above": 0.52}, "SELL": {"prob_up_below": 0.28}, "HOLD": {"range": [0.28, 0.52]}},
+    "signal_thresholds": {
+        "BUY": {"prob_up_above": 0.52},
+        "SELL": {"prob_up_below": 0.28},
+        "HOLD": {"range": [0.28, 0.52]},
+    },
     "priors": {
         # Sesgo ligeramente alcista: mercados suben ~60% de los días históricamente
         "Sentiment": {"bullish": 0.35, "bearish": 0.25, "neutral": 0.40},
@@ -138,21 +191,95 @@ MODEL_CONFIG = {
         "Volatility": {"low": 0.62, "high": 0.38},
     },
     "cpt_market_direction": {
-        "variable": "MarketDirection", "states": ["down", "up"],
+        "variable": "MarketDirection",
+        "states": ["down", "up"],
         # Orden: (Sentiment x RSI x Trend x Volatility)
         # Corrección clave: P_up para overbought en uptrend sube ~+0.08
         # porque en un mercado alcista, overbought tiende a continuar, no revertir
-        "values_P_down": [0.12,0.22,0.25,0.18,0.25,0.30,0.22,0.35,0.08,0.12,0.40,0.45,
-                          0.70,0.75,0.80,0.75,0.80,0.85,0.80,0.85,0.50,0.55,0.90,0.95,
-                          0.42,0.48,0.52,0.47,0.52,0.58,0.52,0.58,0.22,0.28,0.62,0.68],
-        "values_P_up":   [0.88,0.78,0.75,0.82,0.75,0.70,0.78,0.65,0.92,0.88,0.60,0.55,
-                          0.30,0.25,0.20,0.25,0.20,0.15,0.20,0.15,0.50,0.45,0.10,0.05,
-                          0.58,0.52,0.48,0.53,0.48,0.42,0.48,0.42,0.78,0.72,0.38,0.32],
+        "values_P_down": [
+            0.12,
+            0.22,
+            0.25,
+            0.18,
+            0.25,
+            0.30,
+            0.22,
+            0.35,
+            0.08,
+            0.12,
+            0.40,
+            0.45,
+            0.70,
+            0.75,
+            0.80,
+            0.75,
+            0.80,
+            0.85,
+            0.80,
+            0.85,
+            0.50,
+            0.55,
+            0.90,
+            0.95,
+            0.42,
+            0.48,
+            0.52,
+            0.47,
+            0.52,
+            0.58,
+            0.52,
+            0.58,
+            0.22,
+            0.28,
+            0.62,
+            0.68,
+        ],
+        "values_P_up": [
+            0.88,
+            0.78,
+            0.75,
+            0.82,
+            0.75,
+            0.70,
+            0.78,
+            0.65,
+            0.92,
+            0.88,
+            0.60,
+            0.55,
+            0.30,
+            0.25,
+            0.20,
+            0.25,
+            0.20,
+            0.15,
+            0.20,
+            0.15,
+            0.50,
+            0.45,
+            0.10,
+            0.05,
+            0.58,
+            0.52,
+            0.48,
+            0.53,
+            0.48,
+            0.42,
+            0.48,
+            0.42,
+            0.78,
+            0.72,
+            0.38,
+            0.32,
+        ],
     },
-    "known_limitations": ["El confidence score de FinBERT no entra en la inferencia", "Voto mayoritario"],
+    "known_limitations": [
+        "El confidence score de FinBERT no entra en la inferencia",
+        "Voto mayoritario",
+    ],
     "hysteresis": {
         "sell_confirmation_days": 2,
-        "buy_confirmation_days":  1,
+        "buy_confirmation_days": 1,
         "rationale": (
             "Persistencia de señal: SELL solo actúa si se repite N días consecutivos. "
             "Evita salidas falsas por una noticia bearish puntual en tendencia alcista."
@@ -160,13 +287,13 @@ MODEL_CONFIG = {
     },
 }
 
-BUY_THRESHOLD  = MODEL_CONFIG["signal_thresholds"]["BUY"]["prob_up_above"]
+BUY_THRESHOLD = MODEL_CONFIG["signal_thresholds"]["BUY"]["prob_up_above"]
 SELL_THRESHOLD = MODEL_CONFIG["signal_thresholds"]["SELL"]["prob_up_below"]
 
 # ── Hysteresis / Signal Persistence ──────────────────────────────────────────
 # SELL necesita N días consecutivos para confirmarse; BUY actúa inmediatamente.
 SELL_CONFIRMATION_DAYS: int = MODEL_CONFIG["hysteresis"]["sell_confirmation_days"]
-BUY_CONFIRMATION_DAYS:  int = MODEL_CONFIG["hysteresis"]["buy_confirmation_days"]
+BUY_CONFIRMATION_DAYS: int = MODEL_CONFIG["hysteresis"]["buy_confirmation_days"]
 
 # =============================================================================
 # IA LOCAL: FINBERT & GROQ
@@ -184,9 +311,10 @@ _finbert_lock = threading.Lock()
 # Rate limiter preciso para Groq free tier (~30 rpm = 1 llamada cada 2s seguro).
 # _groq_last_ts guarda el timestamp de la última llamada completada.
 # _groq_ts_lock protege la lectura/escritura de ese timestamp.
-_GROQ_MIN_INTERVAL_S = 2.1          # segundos entre llamadas (margen sobre 30 rpm)
+_GROQ_MIN_INTERVAL_S = 2.1  # segundos entre llamadas (margen sobre 30 rpm)
 _groq_last_ts: List[float] = [0.0]  # lista mutable para poder modificar desde closures
 _groq_ts_lock = threading.Lock()
+
 
 def _groq_rate_wait() -> None:
     """Bloquea el hilo actual hasta que sea seguro lanzar otra llamada a Groq."""
@@ -203,14 +331,22 @@ def get_finbert():
     if _finbert_pipeline is None:
         logger.info("Cargando FinBERT local en RAM...")
         from transformers import pipeline as hf_pipeline
-        _finbert_pipeline = hf_pipeline("text-classification", model="ProsusAI/finbert", truncation=True, max_length=512)
+
+        _finbert_pipeline = hf_pipeline(
+            "text-classification",
+            model="ProsusAI/finbert",
+            truncation=True,
+            max_length=512,
+        )
     return _finbert_pipeline
+
 
 def get_groq_client():
     global _groq_client
     if _groq_client is None and GROQ_API_KEY:
         _groq_client = groq.Groq(api_key=GROQ_API_KEY)
     return _groq_client
+
 
 def extract_and_summarize(ticker: str, headline: str, url: str) -> str:
     """
@@ -231,61 +367,92 @@ def extract_and_summarize(ticker: str, headline: str, url: str) -> str:
     if client:
         prompt = f"Ticker: {ticker}\nHeadline: {headline}\nContent:\n{content}\n\nSummarize this financial news objectively in 1 or 2 sentences, preserving its original tone. Do not invent information. Reply ONLY with the summary in plain text without markdown."
         try:
-            _groq_rate_wait()   # rate limiter preciso — reemplaza time.sleep fijo
+            _groq_rate_wait()  # rate limiter preciso — reemplaza time.sleep fijo
             response = client.chat.completions.create(
                 model="llama-3.1-8b-instant",
-                messages=[{"role": "system", "content": "You are a financial analyst."}, {"role": "user", "content": prompt}],
-                temperature=0.0, max_tokens=150
+                messages=[
+                    {"role": "system", "content": "You are a financial analyst."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.0,
+                max_tokens=150,
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
             logger.debug(f"Groq falló: {e}")
     return headline
 
+
 def analyze_sentiment_local(headline: str) -> Optional[Dict]:
     """Thread-safe: adquiere _finbert_lock antes de llamar al modelo."""
-    if not headline or len(headline.strip()) < 20: return None
+    if not headline or len(headline.strip()) < 20:
+        return None
     try:
         with _finbert_lock:
             results = get_finbert()(headline)[0]
         label, score = results["label"].lower(), float(results["score"])
-        if score < 0.55: return None
+        if score < 0.55:
+            return None
         lmap = {"positive": "bullish", "negative": "bearish", "neutral": "neutral"}
-        return {"sentiment": lmap.get(label, "neutral"), "confidence": round(score, 4), "justification": f"FinBERT local"}
+        return {
+            "sentiment": lmap.get(label, "neutral"),
+            "confidence": round(score, 4),
+            "justification": "FinBERT local",
+        }
     except Exception:
         return None
+
 
 def run_finbert_macro_local(articles: list) -> dict:
     if not articles:
         return {"score": 0.0, "state": "neutral", "distribution": {}, "n_articles": 0}
-    
-    weighted_sum = 0.0; weight_total = 0.0; scored = 0
+
+    weighted_sum = 0.0
+    weight_total = 0.0
+    scored = 0
     distribution = {"bullish": 0, "neutral": 0, "bearish": 0}
 
     for art in articles[:50]:
         headline = art.get("headline", "")
-        if len(headline) < 20: continue
+        if len(headline) < 20:
+            continue
         try:
             with _finbert_lock:
                 res = get_finbert()(headline)[0]
-            score = float(res['score'])
-            label = res['label'].lower()
-            if score < 0.55: continue
-            
+            score = float(res["score"])
+            label = res["label"].lower()
+            if score < 0.55:
+                continue
+
             s_map = {"positive": "bullish", "negative": "bearish", "neutral": "neutral"}
             sent = s_map.get(label, "neutral")
             val = 1.0 if sent == "bullish" else (-1.0 if sent == "bearish" else 0.0)
-            
+
             weighted_sum += val * score
             weight_total += 1.0
             scored += 1
             distribution[sent] += 1
-        except Exception: pass
-        
-    if weight_total == 0: return {"score": 0.0, "state": "neutral", "distribution": distribution, "n_articles": 0}
+        except Exception:
+            pass
+
+    if weight_total == 0:
+        return {
+            "score": 0.0,
+            "state": "neutral",
+            "distribution": distribution,
+            "n_articles": 0,
+        }
     f_score = weighted_sum / weight_total
-    state = "bullish" if f_score > 0.20 else ("bearish" if f_score < -0.20 else "neutral")
-    return {"score": round(f_score, 4), "state": state, "distribution": distribution, "n_articles": scored}
+    state = (
+        "bullish" if f_score > 0.20 else ("bearish" if f_score < -0.20 else "neutral")
+    )
+    return {
+        "score": round(f_score, 4),
+        "state": state,
+        "distribution": distribution,
+        "n_articles": scored,
+    }
+
 
 def aggregate_sentiment_local(samples: list) -> Tuple[str, float, dict]:
     if not samples:
@@ -294,9 +461,11 @@ def aggregate_sentiment_local(samples: list) -> Tuple[str, float, dict]:
     for s in samples:
         dist[s["sentiment"]] += 1
     total = len(samples)
-    distribution = {k: {"count": v, "pct": round(v / total * 100, 1)} for k, v in dist.items()}
+    distribution = {
+        k: {"count": v, "pct": round(v / total * 100, 1)} for k, v in dist.items()
+    }
     dominant_sentiment = max(dist, key=dist.get) if dist else "neutral"
-    
+
     best_conf = 0.0
     for s in samples:
         if s["sentiment"] == dominant_sentiment and s["confidence"] > best_conf:
@@ -308,74 +477,125 @@ def aggregate_sentiment_local(samples: list) -> Tuple[str, float, dict]:
         "distribution": distribution,
         "dominant": {"sentiment": dominant_sentiment, "confidence": best_conf},
         "headlines_sample": samples,
-        "limitation": "Se utiliza Voto Mayoritario de todos los titulares del día."
+        "limitation": "Se utiliza Voto Mayoritario de todos los titulares del día.",
     }
     return dominant_sentiment, best_conf, detail
 
+
 def build_reasoning_local(evidence_states, prob_up, signal):
     parts = []
-    s, r, t, v = (evidence_states.get(k) for k in ("Sentiment", "RSI", "Trend", "Volatility"))
-    if s == "bullish": parts.append("sentimiento positivo")
-    elif s == "bearish": parts.append("sentimiento negativo")
-    
-    if r == "overbought" and t == "uptrend": parts.append("Fuerte Momentum Alcista (RSI>70 + Tendencia)")
-    elif r == "oversold": parts.append("RSI sobrevendido -> presion compradora")
-    elif r == "overbought": parts.append("RSI sobrecomprado -> posible correccion")
-    
-    if t == "uptrend" and r != "overbought": parts.append("tendencia alcista (SMA20>SMA50)")
-    elif t == "downtrend": parts.append("tendencia bajista (SMA20<SMA50)")
-    
-    if v == "high": parts.append("alta volatilidad")
-    
-    th = MODEL_CONFIG["signal_thresholds"]["BUY"]["prob_up_above"] if signal == "BUY" else (MODEL_CONFIG["signal_thresholds"]["SELL"]["prob_up_below"] if signal == "SELL" else MODEL_CONFIG["signal_thresholds"]["HOLD"]["range"])
+    s, r, t, v = (
+        evidence_states.get(k) for k in ("Sentiment", "RSI", "Trend", "Volatility")
+    )
+    if s == "bullish":
+        parts.append("sentimiento positivo")
+    elif s == "bearish":
+        parts.append("sentimiento negativo")
+
+    if r == "overbought" and t == "uptrend":
+        parts.append("Fuerte Momentum Alcista (RSI>70 + Tendencia)")
+    elif r == "oversold":
+        parts.append("RSI sobrevendido -> presion compradora")
+    elif r == "overbought":
+        parts.append("RSI sobrecomprado -> posible correccion")
+
+    if t == "uptrend" and r != "overbought":
+        parts.append("tendencia alcista (SMA20>SMA50)")
+    elif t == "downtrend":
+        parts.append("tendencia bajista (SMA20<SMA50)")
+
+    if v == "high":
+        parts.append("alta volatilidad")
+
+    th = (
+        MODEL_CONFIG["signal_thresholds"]["BUY"]["prob_up_above"]
+        if signal == "BUY"
+        else (
+            MODEL_CONFIG["signal_thresholds"]["SELL"]["prob_up_below"]
+            if signal == "SELL"
+            else MODEL_CONFIG["signal_thresholds"]["HOLD"]["range"]
+        )
+    )
     return f"Evidencias: {', '.join(parts) if parts else 'mixtas'}. P(subida)={prob_up:.2%} -> senal {signal} (umbral: {th})."
+
 
 # =============================================================================
 # MONGODB & AURORA HELPERS
 # =============================================================================
 from mongo_utils import (
-    upsert_raw_news, upsert_ohlcv_bulk, upsert_news, upsert_filtered_news,
-    upsert_bayesian_report, upsert_bayesian_trace, upsert_macro_context, 
-    upsert_report, upsert_macro_news, read_macro_news, upsert_quant_audit_report
+    upsert_raw_news,
+    upsert_ohlcv_bulk,
+    upsert_news,
+    upsert_filtered_news,
+    upsert_bayesian_report,
+    upsert_bayesian_trace,
+    upsert_macro_context,
+    upsert_report,
+    upsert_macro_news,
+    read_macro_news,
+    upsert_quant_audit_report,
 )
-from quant_observability import compute_contribution_analysis, compute_quant_audit_report
+from quant_observability import (
+    compute_contribution_analysis,
+    compute_quant_audit_report,
+)
+
 
 def get_db_connection():
     return psycopg2.connect(
-        host=DB_CONFIG["host"], port=DB_CONFIG["port"], user=DB_CONFIG["user"],
-        password=DB_CONFIG["password"], database=DB_CONFIG["database"], sslmode="prefer"
+        host=DB_CONFIG["host"],
+        port=DB_CONFIG["port"],
+        user=DB_CONFIG["user"],
+        password=DB_CONFIG["password"],
+        database=DB_CONFIG["database"],
+        sslmode="prefer",
     )
+
 
 def pg_upsert_signal(conn, date_str, ticker, signal, prob_up, prob_down):
     with conn.cursor() as c:
-        c.execute("""
+        c.execute(
+            """
             INSERT INTO trading_signals (batch_date, ticker, signal, prob_up, prob_down) VALUES (%s,%s,%s,%s,%s)
             ON CONFLICT (batch_date, ticker) DO UPDATE SET signal=EXCLUDED.signal, prob_up=EXCLUDED.prob_up, prob_down=EXCLUDED.prob_down
-        """, (date_str, ticker, signal, float(prob_up), float(prob_down)))
+        """,
+            (date_str, ticker, signal, float(prob_up), float(prob_down)),
+        )
     conn.commit()
+
 
 def pg_upsert_batch_log(conn, batch_date, run_id, tickers, status):
     try:
         with conn.cursor() as c:
-            c.execute("""
+            c.execute(
+                """
                 INSERT INTO batch_log (batch_date, run_id, trigger_type, status, tickers_processed)
                 VALUES (%s, %s, 'manual', %s, %s)
                 ON CONFLICT (run_id) DO UPDATE SET status = EXCLUDED.status, updated_at = CURRENT_TIMESTAMP
-            """, (batch_date, run_id, status, len(tickers)))
+            """,
+                (batch_date, run_id, status, len(tickers)),
+            )
         conn.commit()
     except Exception as e:
         conn.rollback()
         logger.warning(f"Error batch_log: {e}")
 
-def pg_upsert_pipeline_kpi(connection, batch_date, run_id, trigger_type, stage, metrics):
+
+def pg_upsert_pipeline_kpi(
+    connection, batch_date, run_id, trigger_type, stage, metrics
+):
     cursor = connection.cursor()
-    cursor.execute("""
+    cursor.execute(
+        """
         INSERT INTO pipeline_kpis (batch_date, run_id, trigger_type, stage, metrics) 
         VALUES (%s, %s, %s, %s, %s::jsonb)
         ON CONFLICT (run_id, stage) DO UPDATE SET metrics = EXCLUDED.metrics, updated_at = CURRENT_TIMESTAMP
-    """, (batch_date, run_id, trigger_type, stage, json.dumps(metrics)))
+    """,
+        (batch_date, run_id, trigger_type, stage, json.dumps(metrics)),
+    )
     connection.commit()
     cursor.close()
+
 
 # NUEVO: EXTRAER HISTÓRICO DE AURORA (Para clonar AWS lambda_report.py)
 def get_trading_data(connection, report_date, days_back=DAYS_BACK):
@@ -396,31 +616,52 @@ def get_trading_data(connection, report_date, days_back=DAYS_BACK):
         signals_df = pd.DataFrame(
             cursor.fetchall(),
             columns=[
-                "batch_date", "ticker", "signal", "prob_up", "prob_down",
-                "close_price", "rsi_14", "sma_20", "sma_50",
-                "bb_upper", "bb_middle", "bb_lower"
-            ]
+                "batch_date",
+                "ticker",
+                "signal",
+                "prob_up",
+                "prob_down",
+                "close_price",
+                "rsi_14",
+                "sma_20",
+                "sma_50",
+                "bb_upper",
+                "bb_middle",
+                "bb_lower",
+            ],
         )
         cursor.close()
         return signals_df
     except Exception:
         raise
 
+
 def get_signal_outcomes(connection, report_date, days_back=DAYS_BACK):
     try:
         cursor = connection.cursor()
         end_date = pd.to_datetime(report_date).date()
         start_date = end_date - timedelta(days=days_back)
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT batch_date, ticker, signal, prob_up, outcome_d1, outcome_d3,
                    outcome_d5, correct_d1, correct_d3, correct_d5
             FROM signal_outcomes
             WHERE batch_date >= %s AND batch_date <= %s
             ORDER BY batch_date, ticker
-        """, (start_date, end_date))
+        """,
+            (start_date, end_date),
+        )
         cols = [
-            "batch_date", "ticker", "signal", "prob_up", "outcome_d1", "outcome_d3",
-            "outcome_d5", "correct_d1", "correct_d3", "correct_d5"
+            "batch_date",
+            "ticker",
+            "signal",
+            "prob_up",
+            "outcome_d1",
+            "outcome_d3",
+            "outcome_d5",
+            "correct_d1",
+            "correct_d3",
+            "correct_d5",
         ]
         rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
         cursor.close()
@@ -429,49 +670,81 @@ def get_signal_outcomes(connection, report_date, days_back=DAYS_BACK):
         logger.warning(f"No se pudieron leer signal_outcomes para auditoria: {exc}")
         return []
 
+
 # =============================================================================
 # DATOS Y LÓGICA DE BACKTESTING
 # =============================================================================
-def fetch_ohlcv_all(tickers: List[str], start_date: date, end_date: date) -> Dict[str, pd.DataFrame]:
+def fetch_ohlcv_all(
+    tickers: List[str], start_date: date, end_date: date
+) -> Dict[str, pd.DataFrame]:
     # Descargamos con un "lookback" extra de 80 días para asegurar el cálculo de SMA50
     download_start = start_date - timedelta(days=80)
     result = {}
     for ticker in tickers:
-        df = yf.download(ticker, start=str(download_start), end=str(end_date), progress=False)
+        df = yf.download(
+            ticker, start=str(download_start), end=str(end_date), progress=False
+        )
         if not df.empty:
-            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.droplevel(1)
             df.index = pd.to_datetime(df.index)
             result[ticker] = df
     return result
 
+
 def fetch_news_historical(ticker: str, start_d: date, end_d: date) -> Dict[str, List]:
-    cache_file = CACHE_DIR / "news" / f"{ticker}_{start_d.strftime('%Y%m')}_{end_d.strftime('%Y%m')}.json"
+    cache_file = (
+        CACHE_DIR
+        / "news"
+        / f"{ticker}_{start_d.strftime('%Y%m')}_{end_d.strftime('%Y%m')}.json"
+    )
     if cache_file.exists():
-        with open(cache_file, encoding="utf-8") as fh: return json.load(fh)
-    if not FINNHUB_API_KEY: return {}
-    
+        with open(cache_file, encoding="utf-8") as fh:
+            return json.load(fh)
+    if not FINNHUB_API_KEY:
+        return {}
+
     news_by_date, current = {}, start_d.replace(day=1)
     while current <= end_d:
         next_m = date(current.year + (current.month == 12), (current.month % 12) + 1, 1)
         month_end = min(next_m - timedelta(days=1), end_d)
-        resp = requests.get("https://finnhub.io/api/v1/company-news", params={"symbol": ticker, "from": str(current), "to": str(month_end), "token": FINNHUB_API_KEY}, timeout=15)
+        resp = requests.get(
+            "https://finnhub.io/api/v1/company-news",
+            params={
+                "symbol": ticker,
+                "from": str(current),
+                "to": str(month_end),
+                "token": FINNHUB_API_KEY,
+            },
+            timeout=15,
+        )
         if resp.status_code == 200:
-            for art in (resp.json() or []):
-                dt = datetime.utcfromtimestamp(art.get("datetime", 0)).strftime("%Y-%m-%d")
+            for art in resp.json() or []:
+                dt = datetime.utcfromtimestamp(art.get("datetime", 0)).strftime(
+                    "%Y-%m-%d"
+                )
                 if art.get("headline"):
-                    news_by_date.setdefault(dt, []).append({
-                        "headline": art["headline"], 
-                        "url": art.get("url", ""),
-                        "source": art.get("source", "finnhub"),
-                        "datetime": datetime.utcfromtimestamp(art.get("datetime", 0)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                        "summary": art.get("summary", "")
-                    })
+                    news_by_date.setdefault(dt, []).append(
+                        {
+                            "headline": art["headline"],
+                            "url": art.get("url", ""),
+                            "source": art.get("source", "finnhub"),
+                            "datetime": datetime.utcfromtimestamp(
+                                art.get("datetime", 0)
+                            ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            "summary": art.get("summary", ""),
+                        }
+                    )
         time.sleep(1.2)
         current = next_m
-    with open(cache_file, "w", encoding="utf-8") as fh: json.dump(news_by_date, fh)
+    with open(cache_file, "w", encoding="utf-8") as fh:
+        json.dump(news_by_date, fh)
     return news_by_date
 
-def fetch_gdelt_ticker_news_historical(ticker: str, start_d: date, end_d: date) -> Dict[str, List]:
+
+def fetch_gdelt_ticker_news_historical(
+    ticker: str, start_d: date, end_d: date
+) -> Dict[str, List]:
     """
     Pre-fetcha artículos de GDELT v2 para un ticker concreto sobre todo el rango del backtest.
     Usa TICKER_GDELT_QUERIES para queries específicos por ticker.
@@ -479,7 +752,11 @@ def fetch_gdelt_ticker_news_historical(ticker: str, start_d: date, end_d: date) 
 
     Retorna {date_str: [article_dict, ...]} en el mismo formato que fetch_news_historical().
     """
-    cache_file = CACHE_DIR / "news" / f"gdelt_{ticker}_{start_d.strftime('%Y%m')}_{end_d.strftime('%Y%m')}.json"
+    cache_file = (
+        CACHE_DIR
+        / "news"
+        / f"gdelt_{ticker}_{start_d.strftime('%Y%m')}_{end_d.strftime('%Y%m')}.json"
+    )
     if cache_file.exists():
         with open(cache_file, encoding="utf-8") as fh:
             return json.load(fh)
@@ -488,7 +765,9 @@ def fetch_gdelt_ticker_news_historical(ticker: str, start_d: date, end_d: date) 
     news_by_date: Dict[str, List] = {}
     business_days = pd.bdate_range(start=str(start_d), end=str(end_d))
 
-    logger.info(f"[GDELT ticker] Pre-fetching {ticker} ({len(business_days)} días, {len(queries)} queries)…")
+    logger.info(
+        f"[GDELT ticker] Pre-fetching {ticker} ({len(business_days)} días, {len(queries)} queries)…"
+    )
     for bd in business_days:
         target_date = bd.date()
         date_str = target_date.strftime("%Y-%m-%d")
@@ -498,7 +777,7 @@ def fetch_gdelt_ticker_news_historical(ticker: str, start_d: date, end_d: date) 
         for query in queries:
             for art in fetch_gdelt_news(query, target_date, n=5):
                 title = art.get("title", "").strip()
-                url   = art.get("url", "")
+                url = art.get("url", "")
                 if not title:
                     continue
                 fp = _fingerprint(url, title)
@@ -510,14 +789,16 @@ def fetch_gdelt_ticker_news_historical(ticker: str, start_d: date, end_d: date) 
                     pub_dt = datetime.strptime(raw_dt, "%Y%m%dT%H%M%SZ").isoformat()
                 except Exception:
                     pub_dt = date_str
-                day_articles.append({
-                    "headline": title,
-                    "url":      url,
-                    "source":   art.get("domain", "gdelt"),
-                    "datetime": pub_dt,
-                    "summary":  "",
-                })
-            time.sleep(0.3)   # cortesía con la API pública de GDELT
+                day_articles.append(
+                    {
+                        "headline": title,
+                        "url": url,
+                        "source": art.get("domain", "gdelt"),
+                        "datetime": pub_dt,
+                        "summary": "",
+                    }
+                )
+            time.sleep(0.3)  # cortesía con la API pública de GDELT
 
         if day_articles:
             news_by_date[date_str] = day_articles
@@ -526,7 +807,9 @@ def fetch_gdelt_ticker_news_historical(ticker: str, start_d: date, end_d: date) 
         json.dump(news_by_date, fh)
 
     total_arts = sum(len(v) for v in news_by_date.values())
-    logger.info(f"[GDELT ticker] {ticker}: {total_arts} artículos en {len(news_by_date)} días → cacheado")
+    logger.info(
+        f"[GDELT ticker] {ticker}: {total_arts} artículos en {len(news_by_date)} días → cacheado"
+    )
     return news_by_date
 
 
@@ -543,14 +826,18 @@ def fetch_yfinance_ticker_news(ticker: str, target_date_str: str) -> List[Dict]:
         articles = []
         for item in raw:
             # yfinance ≥0.2.x anida el contenido en item["content"]
-            content  = item.get("content", item)
+            content = item.get("content", item)
             headline = (content.get("title") or item.get("title") or "").strip()
             if not headline:
                 continue
             url_data = content.get("canonicalUrl") or {}
-            url      = (url_data.get("url") if isinstance(url_data, dict) else "") or item.get("link", "")
+            url = (
+                url_data.get("url") if isinstance(url_data, dict) else ""
+            ) or item.get("link", "")
             provider = content.get("provider") or {}
-            source   = (provider.get("displayName") if isinstance(provider, dict) else "") or "yahoo_finance"
+            source = (
+                provider.get("displayName") if isinstance(provider, dict) else ""
+            ) or "yahoo_finance"
             pub_date = content.get("pubDate") or item.get("providerPublishTime") or ""
 
             # Normalizar fecha de publicación
@@ -564,13 +851,17 @@ def fetch_yfinance_ticker_news(ticker: str, target_date_str: str) -> List[Dict]:
             if pub_str and pub_str != target_date_str:
                 continue
 
-            articles.append({
-                "headline": headline,
-                "url":      url,
-                "source":   source,
-                "datetime": pub_date if isinstance(pub_date, str) else str(pub_date),
-                "summary":  "",
-            })
+            articles.append(
+                {
+                    "headline": headline,
+                    "url": url,
+                    "source": source,
+                    "datetime": (
+                        pub_date if isinstance(pub_date, str) else str(pub_date)
+                    ),
+                    "summary": "",
+                }
+            )
         return articles
     except Exception as e:
         logger.debug(f"[YFinance news] {ticker}: {e}")
@@ -579,7 +870,7 @@ def fetch_yfinance_ticker_news(ticker: str, target_date_str: str) -> List[Dict]:
 
 def merge_ticker_articles(
     finnhub_arts: List[Dict],
-    gdelt_arts:   List[Dict],
+    gdelt_arts: List[Dict],
     yfinance_arts: List[Dict],
 ) -> List[Dict]:
     """
@@ -592,10 +883,10 @@ def merge_ticker_articles(
 
     for art in finnhub_arts + gdelt_arts + yfinance_arts:
         headline = art.get("headline", "").strip()
-        url      = art.get("url", "")
+        url = art.get("url", "")
         if not headline:
             continue
-        fp    = _fingerprint(url, headline)
+        fp = _fingerprint(url, headline)
         title = headline.lower()
         if fp in seen_fps or title in seen_titles:
             continue
@@ -607,12 +898,19 @@ def merge_ticker_articles(
 
 
 def fetch_vix_historical(start_d: date, end_d: date) -> pd.Series:
-    df = yf.download("^VIX", start=str(start_d - timedelta(days=5)), end=str(end_d + timedelta(days=1)), progress=False)
+    df = yf.download(
+        "^VIX",
+        start=str(start_d - timedelta(days=5)),
+        end=str(end_d + timedelta(days=1)),
+        progress=False,
+    )
     if not df.empty:
-        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.droplevel(1)
         df.index = pd.to_datetime(df.index)
         return df["Close"]
     return pd.Series(dtype=float)
+
 
 def fetch_gdelt_news(query: str, target_date, n: int = 5) -> list:
     """
@@ -620,20 +918,20 @@ def fetch_gdelt_news(query: str, target_date, n: int = 5) -> list:
     GDELT es gratuito, no requiere API key y cubre noticias desde 2013.
     """
     start_dt = (target_date - timedelta(days=1)).strftime("%Y%m%d%H%M%S")
-    end_dt   = (target_date + timedelta(days=1)).strftime("%Y%m%d%H%M%S")
+    end_dt = (target_date + timedelta(days=1)).strftime("%Y%m%d%H%M%S")
     try:
         resp = requests.get(
             "https://api.gdeltproject.org/api/v2/doc/doc",
             params={
-                "query":         query,
-                "mode":          "artlist",
-                "maxrecords":    n,
+                "query": query,
+                "mode": "artlist",
+                "maxrecords": n,
                 "startdatetime": start_dt,
-                "enddatetime":   end_dt,
-                "format":        "json",
-                "sourcelang":    "english",
+                "enddatetime": end_dt,
+                "format": "json",
+                "sourcelang": "english",
             },
-            timeout=15
+            timeout=15,
         )
         if resp.status_code == 200:
             return (resp.json() or {}).get("articles", [])
@@ -651,9 +949,9 @@ def ingest_macro_news(date_str):
     for cat, queries in MACRO_QUERIES.items():
         for query_tag in queries:
             for art in fetch_gdelt_news(query_tag, target_date, n=5):
-                url   = art.get("url", "")
+                url = art.get("url", "")
                 title = art.get("title", "")
-                fp    = _fingerprint(url, title)
+                fp = _fingerprint(url, title)
                 if fp in seen or not title:
                     continue
                 seen.add(fp)
@@ -663,11 +961,11 @@ def ingest_macro_news(date_str):
                     pub_dt = datetime.strptime(raw_dt, "%Y%m%dT%H%M%SZ").isoformat()
                 except Exception:
                     pub_dt = target_date.isoformat()
-                articles.append(_normalize_macro(
-                    title, url,
-                    art.get("domain", "gdelt"),
-                    pub_dt, cat, query_tag
-                ))
+                articles.append(
+                    _normalize_macro(
+                        title, url, art.get("domain", "gdelt"), pub_dt, cat, query_tag
+                    )
+                )
             time.sleep(0.3)  # cortesía con la API pública de GDELT
 
     # ── RSS en tiempo real (complemento para ejecuciones live del mismo día) ──
@@ -681,75 +979,151 @@ def ingest_macro_news(date_str):
                     pub_date = date(*pub[:3])
                     if abs((pub_date - target_date).days) > 1:
                         continue
-                
+
                 fp = _fingerprint(entry.get("link"), entry.get("title"))
                 if fp not in seen:
                     seen.add(fp)
                     summary = entry.get("summary", "") or entry.get("description", "")
-                    articles.append(_normalize_macro(
-                        entry.get("title"), 
-                        entry.get("link"), 
-                        name, 
-                        datetime.strptime(date_str, "%Y-%m-%d").isoformat(), 
-                        "macro", 
-                        name, 
-                        summary
-                    ))
-        except Exception: pass
+                    articles.append(
+                        _normalize_macro(
+                            entry.get("title"),
+                            entry.get("link"),
+                            name,
+                            datetime.strptime(date_str, "%Y-%m-%d").isoformat(),
+                            "macro",
+                            name,
+                            summary,
+                        )
+                    )
+        except Exception:
+            pass
 
     if articles:
         upsert_macro_news(date_str, articles)
     else:
-        logger.info(f"[{date_str}] No se encontraron noticias macro en rango temporal para {date_str}.")
+        logger.info(
+            f"[{date_str}] No se encontraron noticias macro en rango temporal para {date_str}."
+        )
 
-def calculate_indicators_for_date(ohlcv_df: pd.DataFrame, target_date: str) -> Optional[Dict]:
-    try: import pandas_ta_classic as ta
-    except ImportError: import pandas_ta as ta
+
+def calculate_indicators_for_date(
+    ohlcv_df: pd.DataFrame, target_date: str
+) -> Optional[Dict]:
+    try:
+        import pandas_ta_classic as ta
+    except ImportError:
+        import pandas_ta as ta
 
     target_dt = pd.to_datetime(target_date)
     df = ohlcv_df[ohlcv_df.index <= target_dt].copy()
-    if len(df) < 50: return None
+    if len(df) < 50:
+        return None
 
-    close  = df["Close"]
-    rsi    = ta.rsi(close, length=14)
+    close = df["Close"]
+    rsi = ta.rsi(close, length=14)
     sma_20 = ta.sma(close, length=20)
     sma_50 = ta.sma(close, length=50)
     bbands = ta.bbands(close, length=20, std=2)
 
-    def last(s): return _sf(s.iloc[-1]) if s is not None and len(s) > 0 else None
+    def last(s):
+        return _sf(s.iloc[-1]) if s is not None and len(s) > 0 else None
 
     bb_upper = bb_mid = bb_lower = None
     if bbands is not None and not bbands.empty and len(bbands.columns) >= 3:
         bb_lower = _sf(bbands.iloc[-1, 0])
-        bb_mid   = _sf(bbands.iloc[-1, 1])
+        bb_mid = _sf(bbands.iloc[-1, 1])
         bb_upper = _sf(bbands.iloc[-1, 2])
 
     cl = _sf(close.iloc[-1])
     s20, s50 = last(sma_20), last(sma_50)
     sma_spread = round(float(s20) - float(s50), 4) if s20 and s50 else None
-    bb_width = round((float(bb_upper) - float(bb_lower)) / float(cl), 6) if bb_upper and bb_lower and cl else None
+    bb_width = (
+        round((float(bb_upper) - float(bb_lower)) / float(cl), 6)
+        if bb_upper and bb_lower and cl
+        else None
+    )
 
-    return {"close": cl, "rsi_14": last(rsi), "sma_20": s20, "sma_50": s50, "sma_spread": sma_spread, "bb_upper": bb_upper, "bb_middle": bb_mid, "bb_lower": bb_lower, "bb_width": bb_width}
+    return {
+        "close": cl,
+        "rsi_14": last(rsi),
+        "sma_20": s20,
+        "sma_50": s50,
+        "sma_spread": sma_spread,
+        "bb_upper": bb_upper,
+        "bb_middle": bb_mid,
+        "bb_lower": bb_lower,
+        "bb_width": bb_width,
+    }
+
 
 def get_bn_model():
     from pgmpy.models import DiscreteBayesianNetwork as BayesianNetwork
     from pgmpy.factors.discrete import TabularCPD
-    model = BayesianNetwork([("Sentiment","MarketDirection"), ("RSI","MarketDirection"), ("Trend","MarketDirection"), ("Volatility","MarketDirection")])
+
+    model = BayesianNetwork(
+        [
+            ("Sentiment", "MarketDirection"),
+            ("RSI", "MarketDirection"),
+            ("Trend", "MarketDirection"),
+            ("Volatility", "MarketDirection"),
+        ]
+    )
     c = MODEL_CONFIG["cpt_market_direction"]
     p = MODEL_CONFIG["priors"]
     model.add_cpds(
-        TabularCPD("Sentiment", 3, [[p.get("Sentiment")["bullish"]], [p.get("Sentiment")["bearish"]], [p.get("Sentiment")["neutral"]]], state_names={"Sentiment": ["bullish", "bearish", "neutral"]}),
-        TabularCPD("RSI", 3, [[p["RSI"]["oversold"]], [p["RSI"]["neutral"]], [p["RSI"]["overbought"]]], state_names={"RSI": ["oversold", "neutral", "overbought"]}),
-        TabularCPD("Trend", 2, [[p["Trend"]["uptrend"]], [p["Trend"]["downtrend"]]], state_names={"Trend": ["uptrend", "downtrend"]}),
-        TabularCPD("Volatility", 2, [[p["Volatility"]["low"]], [p["Volatility"]["high"]]], state_names={"Volatility": ["low", "high"]}),
-        TabularCPD("MarketDirection", 2, values=[c["values_P_down"], c["values_P_up"]], evidence=["Sentiment","RSI","Trend","Volatility"], evidence_card=[3,3,2,2], state_names={"MarketDirection": ["down", "up"], "Sentiment": ["bullish", "bearish", "neutral"], "RSI": ["oversold", "neutral", "overbought"], "Trend": ["uptrend", "downtrend"], "Volatility": ["low", "high"]})
+        TabularCPD(
+            "Sentiment",
+            3,
+            [
+                [p.get("Sentiment")["bullish"]],
+                [p.get("Sentiment")["bearish"]],
+                [p.get("Sentiment")["neutral"]],
+            ],
+            state_names={"Sentiment": ["bullish", "bearish", "neutral"]},
+        ),
+        TabularCPD(
+            "RSI",
+            3,
+            [[p["RSI"]["oversold"]], [p["RSI"]["neutral"]], [p["RSI"]["overbought"]]],
+            state_names={"RSI": ["oversold", "neutral", "overbought"]},
+        ),
+        TabularCPD(
+            "Trend",
+            2,
+            [[p["Trend"]["uptrend"]], [p["Trend"]["downtrend"]]],
+            state_names={"Trend": ["uptrend", "downtrend"]},
+        ),
+        TabularCPD(
+            "Volatility",
+            2,
+            [[p["Volatility"]["low"]], [p["Volatility"]["high"]]],
+            state_names={"Volatility": ["low", "high"]},
+        ),
+        TabularCPD(
+            "MarketDirection",
+            2,
+            values=[c["values_P_down"], c["values_P_up"]],
+            evidence=["Sentiment", "RSI", "Trend", "Volatility"],
+            evidence_card=[3, 3, 2, 2],
+            state_names={
+                "MarketDirection": ["down", "up"],
+                "Sentiment": ["bullish", "bearish", "neutral"],
+                "RSI": ["oversold", "neutral", "overbought"],
+                "Trend": ["uptrend", "downtrend"],
+                "Volatility": ["low", "high"],
+            },
+        ),
     )
     return model
 
+
 def run_bayesian_inference(evidence: Dict, macro_adj: float) -> Tuple[str, float]:
     from pgmpy.inference import VariableElimination
+
     infer = VariableElimination(get_bn_model())
-    result = infer.query(variables=["MarketDirection"], evidence=evidence, show_progress=False)
+    result = infer.query(
+        variables=["MarketDirection"], evidence=evidence, show_progress=False
+    )
     prob_up_raw = float(result.values[1])
 
     # En tendencia alcista confirmada, amortiguamos el macro_adj negativo al 40%
@@ -760,10 +1134,14 @@ def run_bayesian_inference(evidence: Dict, macro_adj: float) -> Tuple[str, float
         effective_macro_adj = macro_adj * 0.40
 
     prob_up_adj = round(max(0.0, min(1.0, prob_up_raw + effective_macro_adj)), 4)
-    if prob_up_adj >= BUY_THRESHOLD: signal = "BUY"
-    elif prob_up_adj <= SELL_THRESHOLD: signal = "SELL"
-    else: signal = "HOLD"
+    if prob_up_adj >= BUY_THRESHOLD:
+        signal = "BUY"
+    elif prob_up_adj <= SELL_THRESHOLD:
+        signal = "SELL"
+    else:
+        signal = "HOLD"
     return signal, prob_up_adj
+
 
 def apply_hysteresis_signal(
     raw_signal: str,
@@ -807,26 +1185,27 @@ def _calc_backtesting(signals_df: pd.DataFrame) -> Tuple[Dict, Dict]:
     if signals_df.empty:
         logger.warning("No hay señales para calcular métricas de backtesting.")
         return metrics, diagnostics
-        
+
     for ticker in signals_df["ticker"].unique():
         ts = signals_df[signals_df["ticker"] == ticker].sort_values("batch_date")
         capital = INITIAL_CAP
         equity = [capital]
-        
-        current_position = 1 
+
+        current_position = 1
         if len(ts) > 0 and pd.notna(ts.iloc[0]["close_price"]):
             entry_p = float(ts.iloc[0]["close_price"])
         else:
             entry_p = 0.0
-            current_position = 0 
-            
+            current_position = 0
+
         trades_rets = []
         days_invested = 0
         signals_count = ts["signal"].value_counts().to_dict()
 
         for _, row in ts.iterrows():
             price = float(row["close_price"]) if row["close_price"] else 0.0
-            if price == 0: continue
+            if price == 0:
+                continue
             sig = row["signal"]
 
             if sig == "BUY" and current_position == 0:
@@ -843,7 +1222,11 @@ def _calc_backtesting(signals_df: pd.DataFrame) -> Tuple[Dict, Dict]:
             if current_position == 1:
                 days_invested += 1
 
-            daily_eq = capital * (1 + (price - entry_p) / entry_p) if current_position == 1 and entry_p > 0 else capital
+            daily_eq = (
+                capital * (1 + (price - entry_p) / entry_p)
+                if current_position == 1 and entry_p > 0
+                else capital
+            )
             equity.append(daily_eq)
 
         final_eq = capital
@@ -862,40 +1245,63 @@ def _calc_backtesting(signals_df: pd.DataFrame) -> Tuple[Dict, Dict]:
         else:
             sharpe = max_dd = 0.0
 
-        metrics[ticker] = {"cumulative_return": round(float(cum_ret), 4), "sharpe_ratio": round(float(sharpe), 4), "max_drawdown": round(float(max_dd), 4), "final_equity": round(float(final_eq), 2)}
-        
+        metrics[ticker] = {
+            "cumulative_return": round(float(cum_ret), 4),
+            "sharpe_ratio": round(float(sharpe), 4),
+            "max_drawdown": round(float(max_dd), 4),
+            "final_equity": round(float(final_eq), 2),
+        }
+
         wins = sum(1 for value in trades_rets if value > 0)
         gross_profit = sum(value for value in trades_rets if value > 0)
         gross_loss = abs(sum(value for value in trades_rets if value < 0))
-        profit_factor = (gross_profit / gross_loss) if gross_loss > 1e-9 else (gross_profit if gross_profit > 0 else 0.0)
+        profit_factor = (
+            (gross_profit / gross_loss)
+            if gross_loss > 1e-9
+            else (gross_profit if gross_profit > 0 else 0.0)
+        )
 
         diagnostics[ticker] = {
-            "signals": {"BUY": int(signals_count.get("BUY", 0)), "SELL": int(signals_count.get("SELL", 0)), "HOLD": int(signals_count.get("HOLD", 0))},
+            "signals": {
+                "BUY": int(signals_count.get("BUY", 0)),
+                "SELL": int(signals_count.get("SELL", 0)),
+                "HOLD": int(signals_count.get("HOLD", 0)),
+            },
             "trades_closed": len(trades_rets),
-            "win_rate": round(float(wins / len(trades_rets)), 4) if trades_rets else 0.0,
-            "avg_trade_return": round(float(np.mean(trades_rets)), 4) if trades_rets else 0.0,
+            "win_rate": (
+                round(float(wins / len(trades_rets)), 4) if trades_rets else 0.0
+            ),
+            "avg_trade_return": (
+                round(float(np.mean(trades_rets)), 4) if trades_rets else 0.0
+            ),
             "profit_factor": round(float(profit_factor), 4),
             "time_in_market_ratio": round(float(days_invested / max(len(ts), 1)), 4),
         }
     return metrics, diagnostics
 
+
 def get_close_price(ticker: str, date_str: str) -> Optional[float]:
     try:
         target = pd.to_datetime(date_str).date()
-        if target > datetime.now().date(): return None 
+        if target > datetime.now().date():
+            return None
         start = target - timedelta(days=1)
-        end   = target + timedelta(days=6)
+        end = target + timedelta(days=6)
         df = yf.download(ticker, start=start, end=end, progress=False)
-        if df.empty: return None
-        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
+        if df.empty:
+            return None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.droplevel(1)
         df.index = pd.to_datetime(df.index).date
         candidates = [d for d in df.index if d >= target]
-        if not candidates: return None
+        if not candidates:
+            return None
         row = df.loc[min(candidates)]
         close = row.get("Close") or row.get("close")
         return float(close) if close else None
     except Exception:
         return None
+
 
 def update_signal_outcomes_historical(conn, signals_list):
     logger.info("🔄 Procesando outcomes históricos (D0 Insert + D+1, D+3, D+5)...")
@@ -907,8 +1313,9 @@ def update_signal_outcomes_historical(conn, signals_list):
         d0_str = sig["batch_date"]
         d0 = pd.to_datetime(d0_str)
         p0 = sig["close_price"]
-        
-        cursor.execute("""
+
+        cursor.execute(
+            """
             INSERT INTO signal_outcomes 
                 (batch_date, ticker, run_id, signal, prob_up, prob_down,
                  sentiment_state, rsi_state, trend_state, volatility_state, price_d0,
@@ -921,10 +1328,24 @@ def update_signal_outcomes_historical(conn, signals_list):
                 price_d0 = EXCLUDED.price_d0, macro_sentiment = EXCLUDED.macro_sentiment,
                 risk_regime = EXCLUDED.risk_regime, macro_adjustment = EXCLUDED.macro_adjustment,
                 updated_at = CURRENT_TIMESTAMP
-        """, (d0_str, ticker, sig["run_id"], sig["signal"], sig["prob_up"], sig["prob_down"],
-              sig["sentiment_state"], sig["rsi_state"], sig["trend_state"], sig["volatility_state"], 
-              float(p0) if p0 else None, 
-              sig["macro_sentiment"], sig["risk_regime"], sig["macro_adjustment"]))
+        """,
+            (
+                d0_str,
+                ticker,
+                sig["run_id"],
+                sig["signal"],
+                sig["prob_up"],
+                sig["prob_down"],
+                sig["sentiment_state"],
+                sig["rsi_state"],
+                sig["trend_state"],
+                sig["volatility_state"],
+                float(p0) if p0 else None,
+                sig["macro_sentiment"],
+                sig["risk_regime"],
+                sig["macro_adjustment"],
+            ),
+        )
 
         for days, col_p, col_o, col_correct in [
             (1, "price_d1", "outcome_d1", "correct_d1"),
@@ -932,78 +1353,139 @@ def update_signal_outcomes_historical(conn, signals_list):
             (5, "price_d5", "outcome_d5", "correct_d5"),
         ]:
             target_date = (d0 + timedelta(days=days)).strftime("%Y-%m-%d")
-            
+
             if (ticker, target_date) not in price_cache:
-                price_cache[(ticker, target_date)] = get_close_price(ticker, target_date)
+                price_cache[(ticker, target_date)] = get_close_price(
+                    ticker, target_date
+                )
             price_dn = price_cache[(ticker, target_date)]
-            
+
             if price_dn and p0 and p0 > 0:
                 change = (price_dn - p0) / p0
-                outcome = "UP" if change > 0.005 else ("DOWN" if change < -0.005 else "FLAT")
-                correct = (sig["signal"] == "BUY" and outcome == "UP") or \
-                          (sig["signal"] == "SELL" and outcome == "DOWN") or \
-                          (sig["signal"] == "HOLD" and outcome == "FLAT")
-                
-                cursor.execute(f"""
+                outcome = (
+                    "UP" if change > 0.005 else ("DOWN" if change < -0.005 else "FLAT")
+                )
+                correct = (
+                    (sig["signal"] == "BUY" and outcome == "UP")
+                    or (sig["signal"] == "SELL" and outcome == "DOWN")
+                    or (sig["signal"] == "HOLD" and outcome == "FLAT")
+                )
+
+                cursor.execute(
+                    f"""
                     UPDATE signal_outcomes 
                     SET {col_p} = %s, {col_o} = %s, {col_correct} = %s, updated_at = CURRENT_TIMESTAMP 
                     WHERE batch_date = %s AND ticker = %s
-                """, (float(price_dn), outcome, correct, d0_str, ticker))
-    
+                """,
+                    (float(price_dn), outcome, correct, d0_str, ticker),
+                )
+
     conn.commit()
     cursor.close()
     logger.info("✅ Outcomes históricos actualizados.")
 
+
 def get_pipeline_health(connection, report_date, run_id):
     cursor = connection.cursor()
-    cursor.execute("SELECT tickers_processed, status FROM batch_log WHERE run_id = %s LIMIT 1", (run_id,))
+    cursor.execute(
+        "SELECT tickers_processed, status FROM batch_log WHERE run_id = %s LIMIT 1",
+        (run_id,),
+    )
     batch_row = cursor.fetchone()
     if not batch_row:
-        cursor.execute("SELECT tickers_processed, status FROM batch_log WHERE batch_date = %s ORDER BY updated_at DESC LIMIT 1", (report_date,))
+        cursor.execute(
+            "SELECT tickers_processed, status FROM batch_log WHERE batch_date = %s ORDER BY updated_at DESC LIMIT 1",
+            (report_date,),
+        )
         batch_row = cursor.fetchone()
-    cursor.execute("SELECT COUNT(DISTINCT ticker) FROM technical_indicators WHERE batch_date = %s", (report_date,))
+    cursor.execute(
+        "SELECT COUNT(DISTINCT ticker) FROM technical_indicators WHERE batch_date = %s",
+        (report_date,),
+    )
     indicator_tickers = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(DISTINCT ticker) FROM trading_signals WHERE batch_date = %s", (report_date,))
+    cursor.execute(
+        "SELECT COUNT(DISTINCT ticker) FROM trading_signals WHERE batch_date = %s",
+        (report_date,),
+    )
     signal_tickers = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM sentiment_scores WHERE batch_date = %s", (report_date,))
+    cursor.execute(
+        "SELECT COUNT(*) FROM sentiment_scores WHERE batch_date = %s", (report_date,)
+    )
     headlines = cursor.fetchone()[0]
-    cursor.execute("SELECT stage, metrics FROM pipeline_kpis WHERE run_id = %s", (run_id,))
+    cursor.execute(
+        "SELECT stage, metrics FROM pipeline_kpis WHERE run_id = %s", (run_id,)
+    )
     stage_metrics = {row[0]: row[1] for row in cursor.fetchall()}
     cursor.close()
-    tickers_expected = int(batch_row[0]) if batch_row and batch_row[0] is not None else 0
+    tickers_expected = (
+        int(batch_row[0]) if batch_row and batch_row[0] is not None else 0
+    )
     return {
         "batch_status": batch_row[1] if batch_row else "UNKNOWN",
         "tickers_expected": tickers_expected,
         "tickers_with_indicators": int(indicator_tickers or 0),
         "tickers_with_signals": int(signal_tickers or 0),
         "headlines_scored": int(headlines or 0),
-        "coverage_ratio": round(float((signal_tickers or 0) / tickers_expected), 4) if tickers_expected else 0.0,
+        "coverage_ratio": (
+            round(float((signal_tickers or 0) / tickers_expected), 4)
+            if tickers_expected
+            else 0.0
+        ),
         "stage_kpis": stage_metrics,
     }
 
+
 def get_explanations_sample(connection, report_date, limit=10):
     cursor = connection.cursor()
-    cursor.execute("""
+    cursor.execute(
+        """
         SELECT e.ticker, ts.signal, ts.prob_up, ts.prob_down, e.sentiment_state, e.rsi_state, e.trend_state, e.volatility_state
         FROM signal_explanations e JOIN trading_signals ts ON ts.batch_date = e.batch_date AND ts.ticker = e.ticker
         WHERE e.batch_date = %s ORDER BY ts.prob_up DESC LIMIT %s
-    """, (report_date, limit))
+    """,
+        (report_date, limit),
+    )
     rows = cursor.fetchall()
     cursor.close()
-    return [{"ticker": r[0], "signal": r[1], "prob_up": round(float(r[2]), 4) if r[2] is not None else None,
-             "prob_down": round(float(r[3]), 4) if r[3] is not None else None,
-             "evidence": {"sentiment": r[4], "rsi": r[5], "trend": r[6], "volatility": r[7]}} for r in rows]
+    return [
+        {
+            "ticker": r[0],
+            "signal": r[1],
+            "prob_up": round(float(r[2]), 4) if r[2] is not None else None,
+            "prob_down": round(float(r[3]), 4) if r[3] is not None else None,
+            "evidence": {
+                "sentiment": r[4],
+                "rsi": r[5],
+                "trend": r[6],
+                "volatility": r[7],
+            },
+        }
+        for r in rows
+    ]
+
 
 def compute_benchmark(signals_df):
     benchmark = {}
     for ticker in signals_df["ticker"].unique():
         ticker_df = signals_df[signals_df["ticker"] == ticker].sort_values("batch_date")
-        if ticker_df.empty: continue
-        first_price = float(ticker_df.iloc[0]["close_price"]) if ticker_df.iloc[0]["close_price"] else 0.0
-        last_price = float(ticker_df.iloc[-1]["close_price"]) if ticker_df.iloc[-1]["close_price"] else 0.0
-        buy_hold_return = ((last_price - first_price) / first_price) if first_price > 0 else 0.0
+        if ticker_df.empty:
+            continue
+        first_price = (
+            float(ticker_df.iloc[0]["close_price"])
+            if ticker_df.iloc[0]["close_price"]
+            else 0.0
+        )
+        last_price = (
+            float(ticker_df.iloc[-1]["close_price"])
+            if ticker_df.iloc[-1]["close_price"]
+            else 0.0
+        )
+        buy_hold_return = (
+            ((last_price - first_price) / first_price) if first_price > 0 else 0.0
+        )
         benchmark[ticker] = round(float(buy_hold_return), 4)
     return benchmark
+
 
 # =============================================================================
 # 4b. WORKER POR TICKER (thread-safe, conexión PG propia)
@@ -1018,7 +1500,7 @@ def _process_ticker_day(
     macro_adj: float,
     macro_sentiment: str,
     risk_regime: str,
-    signal_history: List[str],   # copia del historial del ticker (no compartida)
+    signal_history: List[str],  # copia del historial del ticker (no compartida)
 ) -> Optional[Dict]:
     """
     Procesa un ticker para un día concreto en un hilo independiente.
@@ -1033,7 +1515,11 @@ def _process_ticker_day(
         thread_conn = get_db_connection()
 
         ohlcv_df = ohlcv_all.get(ticker)
-        ind = calculate_indicators_for_date(ohlcv_df, date_str) if ohlcv_df is not None else None
+        ind = (
+            calculate_indicators_for_date(ohlcv_df, date_str)
+            if ohlcv_df is not None
+            else None
+        )
         if not ind:
             return None
 
@@ -1041,29 +1527,48 @@ def _process_ticker_day(
         target_dt = pd.to_datetime(date_str)
         if target_dt in ohlcv_df.index:
             row_data = ohlcv_df.loc[target_dt]
-            upsert_ohlcv_bulk(date_str, ticker, [{
-                "date": date_str, "close": ind["close"],
-                "open":   float(row_data.get("Open",   0) or 0),
-                "high":   float(row_data.get("High",   0) or 0),
-                "low":    float(row_data.get("Low",    0) or 0),
-                "volume": float(row_data.get("Volume", 0) or 0),
-            }])
+            upsert_ohlcv_bulk(
+                date_str,
+                ticker,
+                [
+                    {
+                        "date": date_str,
+                        "close": ind["close"],
+                        "open": float(row_data.get("Open", 0) or 0),
+                        "high": float(row_data.get("High", 0) or 0),
+                        "low": float(row_data.get("Low", 0) or 0),
+                        "volume": float(row_data.get("Volume", 0) or 0),
+                    }
+                ],
+            )
 
         with thread_conn.cursor() as c:
-            c.execute("""
+            c.execute(
+                """
                 INSERT INTO technical_indicators
                     (batch_date, ticker, close_price, rsi_14, sma_20, sma_50, bb_upper, bb_middle, bb_lower)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (batch_date, ticker) DO NOTHING
-            """, (date_str, ticker, ind["close"], ind["rsi_14"], ind["sma_20"],
-                  ind["sma_50"], ind["bb_upper"], ind["bb_middle"], ind["bb_lower"]))
+            """,
+                (
+                    date_str,
+                    ticker,
+                    ind["close"],
+                    ind["rsi_14"],
+                    ind["sma_20"],
+                    ind["sma_50"],
+                    ind["bb_upper"],
+                    ind["bb_middle"],
+                    ind["bb_lower"],
+                ),
+            )
         thread_conn.commit()
 
         # ── Ingesta multi-fuente ─────────────────────────────────────────────
-        finnhub_arts  = news_all.get(ticker, {}).get(date_str, [])
-        gdelt_arts    = gdelt_ticker_news.get(ticker, {}).get(date_str, [])
+        finnhub_arts = news_all.get(ticker, {}).get(date_str, [])
+        gdelt_arts = gdelt_ticker_news.get(ticker, {}).get(date_str, [])
         yfinance_arts = fetch_yfinance_ticker_news(ticker, date_str)
-        articles      = merge_ticker_articles(finnhub_arts, gdelt_arts, yfinance_arts)
+        articles = merge_ticker_articles(finnhub_arts, gdelt_arts, yfinance_arts)
 
         if articles:
             upsert_raw_news(date_str, ticker, articles)
@@ -1075,46 +1580,73 @@ def _process_ticker_day(
 
         # ── Groq (LLM) + FinBERT por artículo ───────────────────────────────
         processed_headlines: List[str] = []
-        sentiment_samples:   List[Dict] = []
+        sentiment_samples: List[Dict] = []
         kpis = {"total_headlines": 0, "processed_headlines": 0}
 
         for art in articles[:20]:
             kpis["total_headlines"] += 1
             # extract_and_summarize usa _groq_rate_wait() → thread-safe
-            summary = extract_and_summarize(ticker, art.get("headline", ""), art.get("url", ""))
+            summary = extract_and_summarize(
+                ticker, art.get("headline", ""), art.get("url", "")
+            )
             # analyze_sentiment_local usa _finbert_lock → thread-safe
             sdata = analyze_sentiment_local(summary)
 
             if sdata:
                 kpis["processed_headlines"] += 1
                 upsert_news(date_str, ticker, art, sdata)
-                sentiment_samples.append({
-                    "headline": summary,
-                    "sentiment": sdata["sentiment"],
-                    "confidence": sdata["confidence"],
-                })
+                sentiment_samples.append(
+                    {
+                        "headline": summary,
+                        "sentiment": sdata["sentiment"],
+                        "confidence": sdata["confidence"],
+                    }
+                )
                 with thread_conn.cursor() as c:
-                    c.execute("""
+                    c.execute(
+                        """
                         INSERT INTO sentiment_scores
                             (batch_date, ticker, headline, sentiment, confidence, justification)
                         VALUES (%s,%s,%s,%s,%s,%s)
                         ON CONFLICT (batch_date, ticker, headline) DO NOTHING
-                    """, (date_str, ticker, art.get("headline", "")[:250],
-                          sdata["sentiment"], sdata["confidence"], sdata["justification"]))
+                    """,
+                        (
+                            date_str,
+                            ticker,
+                            art.get("headline", "")[:250],
+                            sdata["sentiment"],
+                            sdata["confidence"],
+                            sdata["justification"],
+                        ),
+                    )
                 thread_conn.commit()
                 processed_headlines.append(summary)
 
         if processed_headlines:
-            upsert_filtered_news(date_str, ticker, processed_headlines, "Backtest local")
+            upsert_filtered_news(
+                date_str, ticker, processed_headlines, "Backtest local"
+            )
 
         # ── Agregación de sentimiento y evidencias ───────────────────────────
-        dom_sent, best_conf, sentiment_detail = aggregate_sentiment_local(sentiment_samples)
+        dom_sent, best_conf, sentiment_detail = aggregate_sentiment_local(
+            sentiment_samples
+        )
 
         evidence = {
             "Sentiment": dom_sent,
-            "RSI":        "oversold" if ind["rsi_14"] < 30 else ("overbought" if ind["rsi_14"] > 70 else "neutral"),
-            "Trend":      "uptrend"  if (ind["sma_20"] and ind["sma_50"] and ind["sma_20"] > ind["sma_50"]) else "downtrend",
-            "Volatility": "high"     if (ind["bb_width"] and ind["bb_width"] > 0.05) else "low",
+            "RSI": (
+                "oversold"
+                if ind["rsi_14"] < 30
+                else ("overbought" if ind["rsi_14"] > 70 else "neutral")
+            ),
+            "Trend": (
+                "uptrend"
+                if (ind["sma_20"] and ind["sma_50"] and ind["sma_20"] > ind["sma_50"])
+                else "downtrend"
+            ),
+            "Volatility": (
+                "high" if (ind["bb_width"] and ind["bb_width"] > 0.05) else "low"
+            ),
         }
 
         # ── Inferencia bayesiana ─────────────────────────────────────────────
@@ -1123,20 +1655,26 @@ def _process_ticker_day(
         try:
             contribution_analysis = compute_contribution_analysis(
                 evidence,
-                probability_fn=lambda ev, adj=macro_adj: run_bayesian_inference(ev, adj)[1],
+                probability_fn=lambda ev, adj=macro_adj: run_bayesian_inference(
+                    ev, adj
+                )[1],
                 no_macro_probability_fn=lambda ev: run_bayesian_inference(ev, 0.0)[1],
             )
             contribution_analysis["macro_context"] = {
                 "macro_sentiment": macro_sentiment,
-                "risk_regime":     risk_regime,
+                "risk_regime": risk_regime,
                 "macro_adjustment": macro_adj,
             }
         except Exception as exc:
-            logger.warning(f"contribution_analysis fallo para {ticker} {date_str}: {exc}")
+            logger.warning(
+                f"contribution_analysis fallo para {ticker} {date_str}: {exc}"
+            )
             contribution_analysis = {}
 
         # ── Hysteresis (sobre la copia local del historial) ──────────────────
-        confirmed_signal, hysteresis_status = apply_hysteresis_signal(raw_signal, signal_history)
+        confirmed_signal, hysteresis_status = apply_hysteresis_signal(
+            raw_signal, signal_history
+        )
         new_history = (signal_history + [confirmed_signal])[-SELL_CONFIRMATION_DAYS:]
 
         if raw_signal != confirmed_signal:
@@ -1145,37 +1683,43 @@ def _process_ticker_day(
                 f"→ confirmed={confirmed_signal} ({hysteresis_status})"
             )
 
-        signal   = confirmed_signal
+        signal = confirmed_signal
         reasoning = build_reasoning_local(evidence, prob_up, signal)
 
         # ── Trace + persistencia ─────────────────────────────────────────────
         trace_data = {
             "raw_values": {
-                "close_price": ind["close"], "rsi_14": ind["rsi_14"],
-                "sma_20": ind["sma_20"], "sma_50": ind["sma_50"],
-                "bb_upper": ind["bb_upper"], "bb_lower": ind["bb_lower"],
+                "close_price": ind["close"],
+                "rsi_14": ind["rsi_14"],
+                "sma_20": ind["sma_20"],
+                "sma_50": ind["sma_50"],
+                "bb_upper": ind["bb_upper"],
+                "bb_lower": ind["bb_lower"],
                 "bb_width_ratio": ind["bb_width"],
             },
             "discretization": {
-                "sentiment_raw": dom_sent, "sentiment_conf": best_conf,
-                "sentiment_state": evidence["Sentiment"], "rsi_state": evidence["RSI"],
-                "trend_state": evidence["Trend"], "volatility_state": evidence["Volatility"],
+                "sentiment_raw": dom_sent,
+                "sentiment_conf": best_conf,
+                "sentiment_state": evidence["Sentiment"],
+                "rsi_state": evidence["RSI"],
+                "trend_state": evidence["Trend"],
+                "volatility_state": evidence["Volatility"],
             },
             "sentiment_detail": sentiment_detail,
             "inference": {
-                "signal":            signal,
-                "raw_signal":        raw_signal,
+                "signal": signal,
+                "raw_signal": raw_signal,
                 "hysteresis_status": hysteresis_status,
-                "prob_up":           prob_up,
-                "prob_down":         round(1 - prob_up, 4),
+                "prob_up": prob_up,
+                "prob_down": round(1 - prob_up, 4),
                 "threshold_used": (
                     MODEL_CONFIG["signal_thresholds"]["BUY"]["prob_up_above"]
                     if signal == "BUY"
                     else MODEL_CONFIG["signal_thresholds"]["SELL"]["prob_up_below"]
                 ),
                 "macro_context": {
-                    "macro_sentiment":  macro_sentiment,
-                    "risk_regime":      risk_regime,
+                    "macro_sentiment": macro_sentiment,
+                    "risk_regime": risk_regime,
                     "macro_adjustment": macro_adj,
                 },
             },
@@ -1184,9 +1728,12 @@ def _process_ticker_day(
         }
         upsert_bayesian_report(date_str, ticker, trace_data, MODEL_CONFIG["version"])
 
-        pg_upsert_signal(thread_conn, date_str, ticker, signal, prob_up, round(1 - prob_up, 4))
+        pg_upsert_signal(
+            thread_conn, date_str, ticker, signal, prob_up, round(1 - prob_up, 4)
+        )
         with thread_conn.cursor() as c:
-            c.execute("""
+            c.execute(
+                """
                 INSERT INTO signal_explanations
                     (batch_date, ticker, sentiment_state, rsi_state, trend_state, volatility_state)
                 VALUES (%s,%s,%s,%s,%s,%s)
@@ -1195,30 +1742,47 @@ def _process_ticker_day(
                     rsi_state=EXCLUDED.rsi_state,
                     trend_state=EXCLUDED.trend_state,
                     volatility_state=EXCLUDED.volatility_state
-            """, (date_str, ticker, evidence["Sentiment"], evidence["RSI"],
-                  evidence["Trend"], evidence["Volatility"]))
+            """,
+                (
+                    date_str,
+                    ticker,
+                    evidence["Sentiment"],
+                    evidence["RSI"],
+                    evidence["Trend"],
+                    evidence["Volatility"],
+                ),
+            )
         thread_conn.commit()
 
         signal_record = {
-            "batch_date": date_str, "ticker": ticker, "run_id": run_id,
-            "signal": signal, "prob_up": prob_up, "prob_down": round(1 - prob_up, 4),
+            "batch_date": date_str,
+            "ticker": ticker,
+            "run_id": run_id,
+            "signal": signal,
+            "prob_up": prob_up,
+            "prob_down": round(1 - prob_up, 4),
             "close_price": ind["close"],
-            "sentiment_state": evidence["Sentiment"], "rsi_state": evidence["RSI"],
-            "trend_state": evidence["Trend"],         "volatility_state": evidence["Volatility"],
-            "macro_sentiment": macro_sentiment, "risk_regime": risk_regime,
+            "sentiment_state": evidence["Sentiment"],
+            "rsi_state": evidence["RSI"],
+            "trend_state": evidence["Trend"],
+            "volatility_state": evidence["Volatility"],
+            "macro_sentiment": macro_sentiment,
+            "risk_regime": risk_regime,
             "macro_adjustment": macro_adj,
         }
 
         return {
-            "ticker":        ticker,
-            "trace_data":    trace_data,
+            "ticker": ticker,
+            "trace_data": trace_data,
             "signal_record": signal_record,
-            "new_history":   new_history,
-            "kpis":          kpis,
+            "new_history": new_history,
+            "kpis": kpis,
         }
 
     except Exception as e:
-        logger.error(f"[thread] Error procesando {ticker} {date_str}: {e}", exc_info=True)
+        logger.error(
+            f"[thread] Error procesando {ticker} {date_str}: {e}", exc_info=True
+        )
         return None
     finally:
         if thread_conn:
@@ -1233,15 +1797,23 @@ def _process_ticker_day(
 # =============================================================================
 def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
     # Fechas por argumento o por defecto
-    end_d = pd.to_datetime(end_date_str).date() if end_date_str else datetime.now().date()
-    start_d = pd.to_datetime(start_date_str).date() if start_date_str else (end_d - timedelta(days=DAYS_BACK))
+    end_d = (
+        pd.to_datetime(end_date_str).date() if end_date_str else datetime.now().date()
+    )
+    start_d = (
+        pd.to_datetime(start_date_str).date()
+        if start_date_str
+        else (end_d - timedelta(days=DAYS_BACK))
+    )
 
     active_tickers = tickers_override if tickers_override else TICKERS
-    logger.info(f"🚀 Iniciando Bootstrap Local TFM | Rango: {start_d} a {end_d} | Tickers: {active_tickers}")
+    logger.info(
+        f"🚀 Iniciando Bootstrap Local TFM | Rango: {start_d} a {end_d} | Tickers: {active_tickers}"
+    )
 
     # ── 1. DESCARGA INICIAL DE DATOS ──
     # Para poder calcular indicadores en start_d, la lambda descarga días extra.
-    ohlcv_all  = fetch_ohlcv_all(active_tickers, start_d, end_d)
+    ohlcv_all = fetch_ohlcv_all(active_tickers, start_d, end_d)
     vix_series = fetch_vix_historical(start_d, end_d)
 
     # ── Prefetch paralelo de noticias (Finnhub + GDELT) ──────────────────────
@@ -1256,11 +1828,13 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
     news_all: Dict[str, Dict] = {}
     gdelt_ticker_news: Dict[str, Dict] = {}
     with ThreadPoolExecutor(max_workers=min(2, len(active_tickers))) as exe:
-        prefetch_futs = {exe.submit(_prefetch_ticker_news, t): t for t in active_tickers}
+        prefetch_futs = {
+            exe.submit(_prefetch_ticker_news, t): t for t in active_tickers
+        }
         for fut in as_completed(prefetch_futs):
             t, finnhub_data, gdelt_data = fut.result()
-            news_all[t]           = finnhub_data
-            gdelt_ticker_news[t]  = gdelt_data
+            news_all[t] = finnhub_data
+            gdelt_ticker_news[t] = gdelt_data
     logger.info("✅ Prefetch completado")
 
     conn = get_db_connection()
@@ -1291,37 +1865,74 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
         run_id = f"backtest-{date_str}"
         global_kpis = {"total_headlines": 0, "processed_headlines": 0}
 
-        if conn: pg_upsert_batch_log(conn, date_str, run_id, active_tickers, "STARTED")
+        if conn:
+            pg_upsert_batch_log(conn, date_str, run_id, active_tickers, "STARTED")
 
         # --- A) Ingesta y Macro (Clon lambda_macro_ingestion / lambda_macro_context) ---
         ingest_macro_news(date_str)
         macro_articles = read_macro_news(date_str)
         macro_sentiment_data = run_finbert_macro_local(macro_articles)
-        
+
         macro_sentiment = macro_sentiment_data["state"]
         macro_score = macro_sentiment_data["score"]
         n_macro_articles = macro_sentiment_data["n_articles"]
 
-        vix = _sf(vix_series[vix_series.index <= bd].iloc[-1]) if not vix_series[vix_series.index <= bd].empty else None
-        risk_regime = "RISK_OFF" if vix and vix > 25 else ("RISK_ON" if vix and vix < 18 else "NEUTRAL")
-        macro_adj = -0.04 if risk_regime == "RISK_OFF" else (0.04 if risk_regime == "RISK_ON" else 0.0)
-        
-        upsert_macro_context(date_str, macro_sentiment, risk_regime, macro_adj, {"vix": vix, "n_articles": n_macro_articles})
-        
+        vix = (
+            _sf(vix_series[vix_series.index <= bd].iloc[-1])
+            if not vix_series[vix_series.index <= bd].empty
+            else None
+        )
+        risk_regime = (
+            "RISK_OFF"
+            if vix and vix > 25
+            else ("RISK_ON" if vix and vix < 18 else "NEUTRAL")
+        )
+        macro_adj = (
+            -0.04
+            if risk_regime == "RISK_OFF"
+            else (0.04 if risk_regime == "RISK_ON" else 0.0)
+        )
+
+        upsert_macro_context(
+            date_str,
+            macro_sentiment,
+            risk_regime,
+            macro_adj,
+            {"vix": vix, "n_articles": n_macro_articles},
+        )
+
         if conn:
             try:
                 with conn.cursor() as c:
-                    c.execute("""
+                    c.execute(
+                        """
                         INSERT INTO market_regime_state (batch_date, run_id, risk_regime, macro_adjustment, vix)
                         VALUES (%s, %s, %s, %s, %s)
                         ON CONFLICT (batch_date) DO UPDATE SET risk_regime=EXCLUDED.risk_regime, macro_adjustment=EXCLUDED.macro_adjustment, vix=EXCLUDED.vix
-                    """, (date_str, run_id, risk_regime, float(macro_adj), float(vix) if vix else None))
-                    
-                    c.execute("""
+                    """,
+                        (
+                            date_str,
+                            run_id,
+                            risk_regime,
+                            float(macro_adj),
+                            float(vix) if vix else None,
+                        ),
+                    )
+
+                    c.execute(
+                        """
                         INSERT INTO macro_sentiment_scores (batch_date, run_id, macro_sentiment, score, n_articles)
                         VALUES (%s, %s, %s, %s, %s)
                         ON CONFLICT (batch_date) DO UPDATE SET macro_sentiment=EXCLUDED.macro_sentiment, score=EXCLUDED.score, n_articles=EXCLUDED.n_articles
-                    """, (date_str, run_id, macro_sentiment, float(macro_score), n_macro_articles))
+                    """,
+                        (
+                            date_str,
+                            run_id,
+                            macro_sentiment,
+                            float(macro_score),
+                            n_macro_articles,
+                        ),
+                    )
                 conn.commit()
             except Exception as e:
                 conn.rollback()
@@ -1336,9 +1947,15 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
         ticker_futures = {
             ticker_executor.submit(
                 _process_ticker_day,
-                ticker, date_str, run_id,
-                ohlcv_all, news_all, gdelt_ticker_news,
-                macro_adj, macro_sentiment, risk_regime,
+                ticker,
+                date_str,
+                run_id,
+                ohlcv_all,
+                news_all,
+                gdelt_ticker_news,
+                macro_adj,
+                macro_sentiment,
+                risk_regime,
                 list(signal_history_per_ticker[ticker]),  # copia — evita race condition
             ): ticker
             for ticker in active_tickers
@@ -1350,20 +1967,24 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
                 continue
             t = result["ticker"]
             # Actualizar estado compartido desde el hilo principal (sin races)
-            tickers_trace[t]                  = result["trace_data"]
+            tickers_trace[t] = result["trace_data"]
             daily_signals_for_outcomes.append(result["signal_record"])
-            signal_history_per_ticker[t]      = result["new_history"]
-            global_kpis["total_headlines"]    += result["kpis"]["total_headlines"]
+            signal_history_per_ticker[t] = result["new_history"]
+            global_kpis["total_headlines"] += result["kpis"]["total_headlines"]
             global_kpis["processed_headlines"] += result["kpis"]["processed_headlines"]
 
-        upsert_bayesian_trace(date_str, {"tickers": tickers_trace, "model_config": MODEL_CONFIG})
-        
+        upsert_bayesian_trace(
+            date_str, {"tickers": tickers_trace, "model_config": MODEL_CONFIG}
+        )
+
         # --- C) REPORTE DIARIO E IDÉNTICO A AWS (Clon lambda_report) ---
         if conn:
             # 1. Obtenemos señales del último año desde la BBDD (Esto da memoria al sistema)
             hist_signals_df = get_trading_data(conn, date_str, days_back=DAYS_BACK)
             metrics, diagnostics = _calc_backtesting(hist_signals_df)
-            benchmark = compute_benchmark(hist_signals_df) if not hist_signals_df.empty else {}
+            benchmark = (
+                compute_benchmark(hist_signals_df) if not hist_signals_df.empty else {}
+            )
             health = get_pipeline_health(conn, date_str, run_id) if run_id else {}
             explanations = get_explanations_sample(conn, date_str, limit=10)
             quant_audit_report = compute_quant_audit_report(
@@ -1373,10 +1994,10 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
                 model_config=MODEL_CONFIG,
             )
             upsert_quant_audit_report(date_str, quant_audit_report)
-            
+
             report_data = {
                 "report_date": date_str,
-                "data_period_days": DAYS_BACK, # Usamos DAYS_BACK, como en AWS
+                "data_period_days": DAYS_BACK,  # Usamos DAYS_BACK, como en AWS
                 "generated_at": datetime.now().isoformat(),
                 "pipeline_health": health,
                 "signal_diagnostics": diagnostics,
@@ -1384,35 +2005,73 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
                     t: {
                         "strategy_cumulative_return": metrics[t]["cumulative_return"],
                         "buy_hold_cumulative_return": benchmark.get(t, 0.0),
-                        "alpha_vs_benchmark": round(metrics[t]["cumulative_return"] - benchmark.get(t, 0.0), 4)
-                    } for t in metrics
+                        "alpha_vs_benchmark": round(
+                            metrics[t]["cumulative_return"] - benchmark.get(t, 0.0), 4
+                        ),
+                    }
+                    for t in metrics
                 },
                 "top_signal_explanations": explanations,
                 "backtesting_metrics": metrics,
                 "summary": {
                     "total_tickers": len(metrics),
-                    "avg_cumulative_return": round(np.mean([m["cumulative_return"] for m in metrics.values()]), 4) if metrics else 0,
-                    "avg_sharpe_ratio": round(np.mean([m["sharpe_ratio"] for m in metrics.values()]), 4) if metrics else 0,
-                    "avg_max_drawdown": round(np.mean([m["max_drawdown"] for m in metrics.values()]), 4) if metrics else 0, # CORRECCIÓN: Añadido para el dashboard
-                    "total_closed_trades": sum(item.get("trades_closed", 0) for item in diagnostics.values()) if diagnostics else 0,
+                    "avg_cumulative_return": (
+                        round(
+                            np.mean([m["cumulative_return"] for m in metrics.values()]),
+                            4,
+                        )
+                        if metrics
+                        else 0
+                    ),
+                    "avg_sharpe_ratio": (
+                        round(np.mean([m["sharpe_ratio"] for m in metrics.values()]), 4)
+                        if metrics
+                        else 0
+                    ),
+                    "avg_max_drawdown": (
+                        round(np.mean([m["max_drawdown"] for m in metrics.values()]), 4)
+                        if metrics
+                        else 0
+                    ),  # CORRECCIÓN: Añadido para el dashboard
+                    "total_closed_trades": (
+                        sum(
+                            item.get("trades_closed", 0)
+                            for item in diagnostics.values()
+                        )
+                        if diagnostics
+                        else 0
+                    ),
                 },
-                "backtesting_config": {"initial_capital": INITIAL_CAP, "risk_free_rate": RISK_FREE_RATE, "period_days": DAYS_BACK, "strategy_type": "Long/Cash", "sharpe_annualized": True, "limitation": "El backtesting asume ejecucion al cierre. Estrategia Long/Cash: BUY entra al mercado, SELL cierra posicion, HOLD mantiene posicion abierta."},
+                "backtesting_config": {
+                    "initial_capital": INITIAL_CAP,
+                    "risk_free_rate": RISK_FREE_RATE,
+                    "period_days": DAYS_BACK,
+                    "strategy_type": "Long/Cash",
+                    "sharpe_annualized": True,
+                    "limitation": "El backtesting asume ejecucion al cierre. Estrategia Long/Cash: BUY entra al mercado, SELL cierra posicion, HOLD mantiene posicion abierta.",
+                },
                 "trace_artifact": f"mongo:bayesian_traces/{date_str}",
                 "quant_audit_artifact": f"mongo:quant_audit_reports/{date_str}",
             }
             upsert_report(report_data)
-        
-        pg_upsert_pipeline_kpi(conn, date_str, run_id, "scheduled", "ingestion", global_kpis)
+
+        pg_upsert_pipeline_kpi(
+            conn, date_str, run_id, "scheduled", "ingestion", global_kpis
+        )
         pg_upsert_batch_log(conn, date_str, run_id, active_tickers, "COMPLETED")
-        
+
         if conn and daily_signals_for_outcomes:
             update_signal_outcomes_historical(conn, daily_signals_for_outcomes)
 
     ticker_executor.shutdown(wait=True)
-    if conn: conn.close()
+    if conn:
+        conn.close()
     logger.info("✅ BACKTESTING COMPLETADO")
+
 
 if __name__ == "__main__":
     args = get_args()
-    tickers_list = [t.strip().upper() for t in args.tickers.split(",")] if args.tickers else None
+    tickers_list = (
+        [t.strip().upper() for t in args.tickers.split(",")] if args.tickers else None
+    )
     run_pipeline(args.start, args.end, tickers_override=tickers_list)
