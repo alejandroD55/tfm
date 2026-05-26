@@ -42,6 +42,13 @@ export class SidebarComponent {
       description: 'Sharpe · Drawdown · Alpha vs Buy & Hold',
     },
     {
+      label:       'Exposición',
+      icon:        'area_chart',
+      route:       '/exposure',
+      description: 'Exposición continua · Régimen de mercado · Binario vs Probabilístico',
+      badge:       'NEW',
+    },
+    {
       label:       'Explorador',
       icon:        'search',
       route:       '/explorer',

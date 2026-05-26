@@ -62,6 +62,27 @@ def get_args():
         default=None,
         help="Subset de tickers separados por coma, ej: ARKK,XBI. Si no se indica, usa TICKERS global.",
     )
+    parser.add_argument(
+        "--debug-news",
+        action="store_true",
+        help="Muestra trazas detalladas de ingesta de noticias por ticker/dia/fuente.",
+    )
+    parser.add_argument(
+        "--debug-news-headlines",
+        type=int,
+        default=None,
+        help="Numero de titulares de ejemplo a mostrar por ticker/dia cuando --debug-news esta activo.",
+    )
+    parser.add_argument(
+        "--refresh-news-cache",
+        action="store_true",
+        help="Ignora y regenera caches de noticias historicas Finnhub/GDELT para el rango solicitado.",
+    )
+    parser.add_argument(
+        "--disable-gdelt",
+        action="store_true",
+        help="Desactiva GDELT para evitar rate limits de la API publica.",
+    )
     return parser.parse_args()
 
 
@@ -76,6 +97,22 @@ RISK_FREE_RATE = 0.02
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
 MONGODB_URI = os.getenv("MONGODB_URI", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+ALPHAVANTAGE_API_KEY = os.getenv("ALPHAVANTAGE_API_KEY", "")
+
+DEBUG_NEWS = os.getenv("BOOTSTRAP_DEBUG_NEWS", "").lower() in ("1", "true", "yes", "on")
+DEBUG_NEWS_HEADLINES = int(os.getenv("BOOTSTRAP_DEBUG_NEWS_HEADLINES", "3"))
+REFRESH_NEWS_CACHE = os.getenv("BOOTSTRAP_REFRESH_NEWS_CACHE", "").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+DISABLE_GDELT = os.getenv("BOOTSTRAP_DISABLE_GDELT", "").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 DB_CONFIG = {
     "host": os.getenv("POSTGRES_HOST", "localhost"),
@@ -126,9 +163,12 @@ TICKER_GDELT_QUERIES: Dict[str, List[str]] = {
     "GLD": ["GLD gold ETF price rally", "gold commodity price market hedge"],
     "XLE": ["XLE energy sector ETF oil stocks", "energy stocks oil gas price market"],
     "NVDA": [
-        "NVIDIA stock earnings AI semiconductor",
-        "NVDA GPU artificial intelligence chips",
-        "DeepSeek NVIDIA AI chips competition",  # ← añadir esta línea
+        "NVIDIA stock earnings semiconductor",
+        "NVIDIA GPU artificial intelligence chips",
+        "DeepSeek NVIDIA chips competition",
+        "DeepSeek Nvidia shares plunge",
+        "DeepSeek Nvidia stock crash",
+        "DeepSeek Nvidia market selloff",
     ],
     "ARKK": [
         "ARK Innovation ETF Cathie Wood",
@@ -164,6 +204,26 @@ def _normalize_macro(headline, url, source, dt, category, query_tag, summary="")
         "category": category,
         "query_tag": query_tag,
     }
+
+
+def _count_news(news_by_date: Dict[str, List]) -> Tuple[int, int]:
+    return sum(len(v) for v in news_by_date.values()), len(news_by_date)
+
+
+def _news_debug(message: str) -> None:
+    if DEBUG_NEWS:
+        logger.info(message)
+
+
+def _headline_samples(articles: List[Dict], limit: Optional[int] = None) -> List[str]:
+    max_items = DEBUG_NEWS_HEADLINES if limit is None else limit
+    if max_items <= 0:
+        return []
+    return [
+        (art.get("headline") or "").replace("\n", " ").strip()[:180]
+        for art in articles[:max_items]
+        if art.get("headline")
+    ]
 
 
 MODEL_CONFIG = {
@@ -309,10 +369,8 @@ _groq_client = None
 _finbert_lock = threading.Lock()
 
 # Rate limiter preciso para Groq free tier (~30 rpm = 1 llamada cada 2s seguro).
-# _groq_last_ts guarda el timestamp de la última llamada completada.
-# _groq_ts_lock protege la lectura/escritura de ese timestamp.
-_GROQ_MIN_INTERVAL_S = 2.1  # segundos entre llamadas (margen sobre 30 rpm)
-_groq_last_ts: List[float] = [0.0]  # lista mutable para poder modificar desde closures
+_GROQ_MIN_INTERVAL_S = 2.1
+_groq_last_ts: List[float] = [0.0]
 _groq_ts_lock = threading.Lock()
 
 
@@ -326,15 +384,45 @@ def _groq_rate_wait() -> None:
         _groq_last_ts[0] = time.time()
 
 
+# Rate limiter global para GDELT (API pública, límite blando y variable).
+# Un solo lock compartido entre todos los hilos evita los 429 incluso
+# cuando varios tickers se prefetchan en paralelo.
+_GDELT_MIN_INTERVAL_S = float(os.getenv("BOOTSTRAP_GDELT_INTERVAL_S", "10.0"))
+_gdelt_last_ts: List[float] = [0.0]
+_gdelt_ts_lock = threading.Lock()
+
+
+def _gdelt_rate_wait() -> None:
+    """Bloquea el hilo actual hasta que sea seguro lanzar otra llamada a GDELT."""
+    with _gdelt_ts_lock:
+        now = time.time()
+        wait = _GDELT_MIN_INTERVAL_S - (now - _gdelt_last_ts[0])
+        if wait > 0:
+            time.sleep(wait)
+        _gdelt_last_ts[0] = time.time()
+
+
 def get_finbert():
     global _finbert_pipeline
     if _finbert_pipeline is None:
-        logger.info("Cargando FinBERT local en RAM...")
+        logger.info("Cargando FinBERT local...")
         from transformers import pipeline as hf_pipeline
+        import torch
+
+        if torch.backends.mps.is_available():
+            device = "mps"
+        elif torch.cuda.is_available():
+            device = 0
+        else:
+            device = -1
+
+        device_label = device if isinstance(device, str) else ("cuda:0" if device == 0 else "cpu")
+        logger.info(f"FinBERT usará dispositivo: {device_label}")
 
         _finbert_pipeline = hf_pipeline(
             "text-classification",
             model="ProsusAI/finbert",
+            device=device,
             truncation=True,
             max_length=512,
         )
@@ -597,6 +685,37 @@ def pg_upsert_pipeline_kpi(
     cursor.close()
 
 
+def pg_upsert_position_state(
+    conn,
+    date_str: str,
+    ticker: str,
+    prob_up: float,
+    regime: str,
+    target_exposure: float,
+    smoothed_exposure: float,
+    exposure_delta: float,
+):
+    """Persiste el estado de exposición diario en la tabla position_state."""
+    with conn.cursor() as c:
+        c.execute(
+            """
+            INSERT INTO position_state
+                (batch_date, ticker, prob_up, market_regime,
+                 target_exposure, smoothed_exposure, exposure_delta)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (batch_date, ticker) DO UPDATE SET
+                prob_up           = EXCLUDED.prob_up,
+                market_regime     = EXCLUDED.market_regime,
+                target_exposure   = EXCLUDED.target_exposure,
+                smoothed_exposure = EXCLUDED.smoothed_exposure,
+                exposure_delta    = EXCLUDED.exposure_delta
+            """,
+            (date_str, ticker, float(prob_up), regime,
+             float(target_exposure), float(smoothed_exposure), float(exposure_delta)),
+        )
+    conn.commit()
+
+
 # NUEVO: EXTRAER HISTÓRICO DE AURORA (Para clonar AWS lambda_report.py)
 def get_trading_data(connection, report_date, days_back=DAYS_BACK):
     try:
@@ -677,12 +796,12 @@ def get_signal_outcomes(connection, report_date, days_back=DAYS_BACK):
 def fetch_ohlcv_all(
     tickers: List[str], start_date: date, end_date: date
 ) -> Dict[str, pd.DataFrame]:
-    # Descargamos con un "lookback" extra de 80 días para asegurar el cálculo de SMA50
-    download_start = start_date - timedelta(days=80)
+    # Descargamos con un "lookback" extra de 250 días para asegurar SMA50, SMA200 y ATH drawdown
+    download_start = start_date - timedelta(days=250)
     result = {}
     for ticker in tickers:
         df = yf.download(
-            ticker, start=str(download_start), end=str(end_date), progress=False
+            ticker, start=str(download_start), end=str(end_date), progress=False, repair=False
         )
         if not df.empty:
             if isinstance(df.columns, pd.MultiIndex):
@@ -698,10 +817,18 @@ def fetch_news_historical(ticker: str, start_d: date, end_d: date) -> Dict[str, 
         / "news"
         / f"{ticker}_{start_d.strftime('%Y%m')}_{end_d.strftime('%Y%m')}.json"
     )
-    if cache_file.exists():
+    if cache_file.exists() and not REFRESH_NEWS_CACHE:
         with open(cache_file, encoding="utf-8") as fh:
-            return json.load(fh)
+            cached = json.load(fh)
+        total, days = _count_news(cached)
+        _news_debug(
+            f"[news-cache] Finnhub {ticker}: {total} articulos en {days} dias desde {cache_file}"
+        )
+        return cached
+    if cache_file.exists() and REFRESH_NEWS_CACHE:
+        _news_debug(f"[news-cache] Finnhub {ticker}: ignorando cache por --refresh-news-cache")
     if not FINNHUB_API_KEY:
+        _news_debug(f"[Finnhub] {ticker}: sin FINNHUB_API_KEY, fuente omitida")
         return {}
 
     news_by_date, current = {}, start_d.replace(day=1)
@@ -735,11 +862,198 @@ def fetch_news_historical(ticker: str, start_d: date, end_d: date) -> Dict[str, 
                             "summary": art.get("summary", ""),
                         }
                     )
+        else:
+            logger.warning(
+                f"[Finnhub] {ticker} {current:%Y-%m}: HTTP {resp.status_code} - {resp.text[:160]}"
+            )
         time.sleep(1.2)
         current = next_m
     with open(cache_file, "w", encoding="utf-8") as fh:
         json.dump(news_by_date, fh)
+    total, days = _count_news(news_by_date)
+    logger.info(f"[Finnhub] {ticker}: {total} articulos en {days} dias -> cacheado")
     return news_by_date
+
+
+def fetch_alpha_vantage_news_historical(
+    ticker: str, start_d: date, end_d: date
+) -> Dict[str, List]:
+    """
+    Fuente alternativa para eventos historicos por ticker.
+    Alpha Vantage NEWS_SENTIMENT permite consultar rango completo en una llamada.
+    """
+    cache_file = (
+        CACHE_DIR
+        / "news"
+        / f"alphavantage_{ticker}_{start_d.strftime('%Y%m')}_{end_d.strftime('%Y%m')}.json"
+    )
+    if cache_file.exists() and not REFRESH_NEWS_CACHE:
+        with open(cache_file, encoding="utf-8") as fh:
+            cached = json.load(fh)
+        total, days = _count_news(cached)
+        _news_debug(
+            f"[news-cache] AlphaVantage {ticker}: {total} articulos en {days} dias desde {cache_file}"
+        )
+        return cached
+    if cache_file.exists() and REFRESH_NEWS_CACHE:
+        _news_debug(
+            f"[news-cache] AlphaVantage {ticker}: ignorando cache por --refresh-news-cache"
+        )
+    if not ALPHAVANTAGE_API_KEY:
+        _news_debug(f"[AlphaVantage] {ticker}: sin ALPHAVANTAGE_API_KEY, fuente omitida")
+        return {}
+
+    start_ts = start_d.strftime("%Y%m%dT0000")
+    end_ts = (end_d + timedelta(days=1)).strftime("%Y%m%dT0000")
+    try:
+        resp = requests.get(
+            "https://www.alphavantage.co/query",
+            params={
+                "function": "NEWS_SENTIMENT",
+                "tickers": ticker,
+                "time_from": start_ts,
+                "time_to": end_ts,
+                "sort": "RELEVANCE",
+                "limit": 1000,
+                "apikey": ALPHAVANTAGE_API_KEY,
+            },
+            timeout=30,
+        )
+        data = resp.json() if resp.text.strip() else {}
+    except Exception as exc:
+        logger.warning(f"[AlphaVantage] {ticker}: error consultando noticias: {exc}")
+        return {}
+
+    if "Information" in data or "Note" in data:
+        logger.warning(
+            f"[AlphaVantage] {ticker}: limite/API respuesta={data.get('Information') or data.get('Note')}"
+        )
+        return {}
+
+    news_by_date: Dict[str, List] = {}
+    for item in data.get("feed", []) or []:
+        headline = (item.get("title") or "").strip()
+        if not headline:
+            continue
+        raw_time = item.get("time_published", "")
+        try:
+            dt = datetime.strptime(raw_time[:13], "%Y%m%dT%H%M")
+            date_str = dt.strftime("%Y-%m-%d")
+            dt_str = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        except Exception:
+            date_str = start_d.isoformat()
+            dt_str = raw_time or date_str
+        source_name = item.get("source") or "alpha_vantage"
+        news_by_date.setdefault(date_str, []).append(
+            {
+                "headline": headline,
+                "url": item.get("url", ""),
+                "source": f"alphavantage:{source_name}",
+                "datetime": dt_str,
+                "summary": item.get("summary", ""),
+            }
+        )
+
+    with open(cache_file, "w", encoding="utf-8") as fh:
+        json.dump(news_by_date, fh)
+    total, days = _count_news(news_by_date)
+    logger.info(f"[AlphaVantage] {ticker}: {total} articulos en {days} dias -> cacheado")
+    if DEBUG_NEWS:
+        for d in sorted(news_by_date):
+            logger.info(
+                f"[AlphaVantage] {ticker} {d}: {len(news_by_date[d])} "
+                f"samples={_headline_samples(news_by_date[d])}"
+            )
+    return news_by_date
+
+
+def fetch_alpha_vantage_macro_news(date_str: str) -> List[Dict]:
+    """
+    Fuente macro alternativa a GDELT para backtesting local.
+    Usa Alpha Vantage NEWS_SENTIMENT con topics macro/mercado en una sola llamada diaria.
+    """
+    cache_file = CACHE_DIR / "news" / f"alphavantage_macro_{date_str}.json"
+    if cache_file.exists() and not REFRESH_NEWS_CACHE:
+        with open(cache_file, encoding="utf-8") as fh:
+            cached = json.load(fh)
+        _news_debug(
+            f"[news-cache] AlphaVantage macro {date_str}: {len(cached)} articulos desde {cache_file}"
+        )
+        return cached
+    if cache_file.exists() and REFRESH_NEWS_CACHE:
+        _news_debug(
+            f"[news-cache] AlphaVantage macro {date_str}: ignorando cache por --refresh-news-cache"
+        )
+    if not ALPHAVANTAGE_API_KEY:
+        _news_debug(f"[AlphaVantage macro] {date_str}: sin ALPHAVANTAGE_API_KEY, fuente omitida")
+        return []
+
+    target_date = pd.to_datetime(date_str).date()
+    start_ts = (target_date - timedelta(days=1)).strftime("%Y%m%dT0000")
+    end_ts = (target_date + timedelta(days=1)).strftime("%Y%m%dT2359")
+    try:
+        resp = requests.get(
+            "https://www.alphavantage.co/query",
+            params={
+                "function": "NEWS_SENTIMENT",
+                "topics": "economy_macro,economy_monetary,financial_markets",
+                "time_from": start_ts,
+                "time_to": end_ts,
+                "sort": "RELEVANCE",
+                "limit": 200,
+                "apikey": ALPHAVANTAGE_API_KEY,
+            },
+            timeout=30,
+        )
+        data = resp.json() if resp.text.strip() else {}
+    except Exception as exc:
+        logger.warning(f"[AlphaVantage macro] {date_str}: error consultando noticias: {exc}")
+        return []
+
+    if "Information" in data or "Note" in data:
+        logger.warning(
+            f"[AlphaVantage macro] {date_str}: limite/API respuesta={data.get('Information') or data.get('Note')}"
+        )
+        return []
+
+    articles: List[Dict] = []
+    seen: set = set()
+    for item in data.get("feed", []) or []:
+        headline = (item.get("title") or "").strip()
+        url = item.get("url", "")
+        if not headline:
+            continue
+        fp = _fingerprint(url, headline)
+        if fp in seen:
+            continue
+        seen.add(fp)
+        raw_time = item.get("time_published", "")
+        try:
+            dt = datetime.strptime(raw_time[:13], "%Y%m%dT%H%M")
+            dt_str = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        except Exception:
+            dt_str = raw_time or date_str
+        source_name = item.get("source") or "alpha_vantage"
+        articles.append(
+            _normalize_macro(
+                headline,
+                url,
+                f"alphavantage:{source_name}",
+                dt_str,
+                "macro",
+                "alphavantage_topics",
+                item.get("summary", ""),
+            )
+        )
+
+    with open(cache_file, "w", encoding="utf-8") as fh:
+        json.dump(articles, fh)
+    logger.info(f"[AlphaVantage macro] {date_str}: {len(articles)} articulos -> cacheado")
+    if DEBUG_NEWS and articles:
+        logger.info(
+            f"[AlphaVantage macro] {date_str}: samples={_headline_samples(articles)}"
+        )
+    return articles
 
 
 def fetch_gdelt_ticker_news_historical(
@@ -752,14 +1066,25 @@ def fetch_gdelt_ticker_news_historical(
 
     Retorna {date_str: [article_dict, ...]} en el mismo formato que fetch_news_historical().
     """
+    if DISABLE_GDELT:
+        logger.info(f"[GDELT ticker] {ticker}: fuente desactivada")
+        return {}
+
     cache_file = (
         CACHE_DIR
         / "news"
         / f"gdelt_{ticker}_{start_d.strftime('%Y%m')}_{end_d.strftime('%Y%m')}.json"
     )
-    if cache_file.exists():
+    if cache_file.exists() and not REFRESH_NEWS_CACHE:
         with open(cache_file, encoding="utf-8") as fh:
-            return json.load(fh)
+            cached = json.load(fh)
+        total, days = _count_news(cached)
+        _news_debug(
+            f"[news-cache] GDELT {ticker}: {total} articulos en {days} dias desde {cache_file}"
+        )
+        return cached
+    if cache_file.exists() and REFRESH_NEWS_CACHE:
+        _news_debug(f"[news-cache] GDELT {ticker}: ignorando cache por --refresh-news-cache")
 
     queries = TICKER_GDELT_QUERIES.get(ticker, [ticker])
     news_by_date: Dict[str, List] = {}
@@ -773,9 +1098,12 @@ def fetch_gdelt_ticker_news_historical(
         date_str = target_date.strftime("%Y-%m-%d")
         seen: set = set()
         day_articles: List = []
+        query_counts: Dict[str, int] = {}
 
         for query in queries:
-            for art in fetch_gdelt_news(query, target_date, n=5):
+            raw_articles = fetch_gdelt_news(query, target_date, n=8)
+            query_counts[query] = len(raw_articles)
+            for art in raw_articles:
                 title = art.get("title", "").strip()
                 url = art.get("url", "")
                 if not title:
@@ -798,10 +1126,14 @@ def fetch_gdelt_ticker_news_historical(
                         "summary": "",
                     }
                 )
-            time.sleep(0.3)  # cortesía con la API pública de GDELT
+            # No sleep aquí: _gdelt_rate_wait() dentro de fetch_gdelt_news() ya gestiona el límite global.
 
         if day_articles:
             news_by_date[date_str] = day_articles
+        _news_debug(
+            f"[GDELT ticker] {ticker} {date_str}: raw_por_query={query_counts} "
+            f"dedup={len(day_articles)} samples={_headline_samples(day_articles)}"
+        )
 
     with open(cache_file, "w", encoding="utf-8") as fh:
         json.dump(news_by_date, fh)
@@ -870,18 +1202,19 @@ def fetch_yfinance_ticker_news(ticker: str, target_date_str: str) -> List[Dict]:
 
 def merge_ticker_articles(
     finnhub_arts: List[Dict],
+    alphavantage_arts: List[Dict],
     gdelt_arts: List[Dict],
     yfinance_arts: List[Dict],
 ) -> List[Dict]:
     """
     Combina artículos de las 3 fuentes con deduplicación por fingerprint.
-    Orden de prioridad: Finnhub → GDELT → YFinance.
+    Orden de prioridad: Finnhub → AlphaVantage → GDELT → YFinance.
     """
     seen_fps: set = set()
     seen_titles: set = set()
     merged: List[Dict] = []
 
-    for art in finnhub_arts + gdelt_arts + yfinance_arts:
+    for art in finnhub_arts + alphavantage_arts + gdelt_arts + yfinance_arts:
         headline = art.get("headline", "").strip()
         url = art.get("url", "")
         if not headline:
@@ -903,6 +1236,7 @@ def fetch_vix_historical(start_d: date, end_d: date) -> pd.Series:
         start=str(start_d - timedelta(days=5)),
         end=str(end_d + timedelta(days=1)),
         progress=False,
+        repair=False,
     )
     if not df.empty:
         if isinstance(df.columns, pd.MultiIndex):
@@ -912,31 +1246,81 @@ def fetch_vix_historical(start_d: date, end_d: date) -> pd.Series:
     return pd.Series(dtype=float)
 
 
-def fetch_gdelt_news(query: str, target_date, n: int = 5) -> list:
+def fetch_gdelt_news(query: str, target_date, n: int = 5, _retries: int = 3) -> list:
     """
     Obtiene artículos de GDELT v2 para un query y fecha histórica (±1 día).
     GDELT es gratuito, no requiere API key y cubre noticias desde 2013.
+
+    Rate limit: 1 req / 5 s (enforced por _gdelt_rate_wait).
+    Retry automático con backoff exponencial en 429 y timeouts.
     """
     start_dt = (target_date - timedelta(days=1)).strftime("%Y%m%d%H%M%S")
-    end_dt = (target_date + timedelta(days=1)).strftime("%Y%m%d%H%M%S")
-    try:
-        resp = requests.get(
-            "https://api.gdeltproject.org/api/v2/doc/doc",
-            params={
-                "query": query,
-                "mode": "artlist",
-                "maxrecords": n,
-                "startdatetime": start_dt,
-                "enddatetime": end_dt,
-                "format": "json",
-                "sourcelang": "english",
-            },
-            timeout=15,
-        )
-        if resp.status_code == 200:
-            return (resp.json() or {}).get("articles", [])
-    except Exception as e:
-        logger.debug(f"GDELT error para '{query}': {e}")
+    end_dt   = (target_date + timedelta(days=1)).strftime("%Y%m%d%H%M%S")
+    params   = {
+        "query":         query,
+        "mode":          "artlist",
+        "maxrecords":    n,
+        "startdatetime": start_dt,
+        "enddatetime":   end_dt,
+        "format":        "json",
+        "sourcelang":    "english",
+    }
+
+    for attempt in range(_retries):
+        _gdelt_rate_wait()   # ← respeta el límite de 1 req / 5 s globalmente
+        try:
+            resp = requests.get(
+                "https://api.gdeltproject.org/api/v2/doc/doc",
+                params=params,
+                timeout=20,
+            )
+            if resp.status_code == 200:
+                try:
+                    data = resp.json() if resp.text.strip() else {}
+                except ValueError:
+                    body = resp.text[:160]
+                    if "keyword that was too short" in resp.text.lower():
+                        logger.warning(
+                            f"[GDELT] query invalida por keyword corta query='{query}' "
+                            f"fecha={target_date}: {body!r}"
+                        )
+                        return []
+                    wait = _GDELT_MIN_INTERVAL_S * (attempt + 1)
+                    logger.warning(
+                        f"[GDELT] respuesta no JSON query='{query}' fecha={target_date} "
+                        f"status=200 body={body!r} "
+                        f"→ reintento {attempt + 1}/{_retries} en {wait:.0f}s"
+                    )
+                    time.sleep(wait)
+                    continue
+                return (data or {}).get("articles", [])
+            if resp.status_code == 429:
+                wait = _GDELT_MIN_INTERVAL_S * (2 ** attempt)   # backoff exponencial
+                logger.warning(
+                    f"[GDELT] 429 query='{query}' fecha={target_date} "
+                    f"→ reintento {attempt + 1}/{_retries} en {wait:.0f}s"
+                )
+                time.sleep(wait)
+                continue
+            # Otro código HTTP no recuperable
+            if DEBUG_NEWS:
+                logger.warning(
+                    f"[GDELT] HTTP {resp.status_code} query='{query}' fecha={target_date} "
+                    f"body={resp.text[:120]}"
+                )
+            return []
+        except requests.exceptions.Timeout:
+            wait = _GDELT_MIN_INTERVAL_S * (attempt + 1)
+            logger.warning(
+                f"[GDELT] timeout query='{query}' fecha={target_date} "
+                f"→ reintento {attempt + 1}/{_retries} en {wait:.0f}s"
+            )
+            time.sleep(wait)
+        except Exception as e:
+            logger.warning(f"[GDELT] error query='{query}' fecha={target_date}: {e}")
+            return []
+
+    logger.warning(f"[GDELT] todos los reintentos agotados query='{query}' fecha={target_date}")
     return []
 
 
@@ -945,28 +1329,39 @@ def ingest_macro_news(date_str):
     seen = set()
     target_date = pd.to_datetime(date_str).date()
 
-    # ── GDELT: fuente histórica gratuita, sin API key, cubre todo el backtest ──
-    for cat, queries in MACRO_QUERIES.items():
-        for query_tag in queries:
-            for art in fetch_gdelt_news(query_tag, target_date, n=5):
-                url = art.get("url", "")
-                title = art.get("title", "")
-                fp = _fingerprint(url, title)
-                if fp in seen or not title:
-                    continue
-                seen.add(fp)
-                # seendate de GDELT tiene formato: YYYYMMDDTHHMMSSZ
-                raw_dt = art.get("seendate", "")
-                try:
-                    pub_dt = datetime.strptime(raw_dt, "%Y%m%dT%H%M%SZ").isoformat()
-                except Exception:
-                    pub_dt = target_date.isoformat()
-                articles.append(
-                    _normalize_macro(
-                        title, url, art.get("domain", "gdelt"), pub_dt, cat, query_tag
+    # ── Alpha Vantage: alternativa macro histórica en una llamada diaria ──────
+    for art in fetch_alpha_vantage_macro_news(date_str):
+        fp = _fingerprint(art.get("url", ""), art.get("headline", ""))
+        if fp in seen:
+            continue
+        seen.add(fp)
+        articles.append(art)
+
+    # ── GDELT: fuente histórica gratuita, pero frágil/rate-limited ────────────
+    if DISABLE_GDELT:
+        _news_debug(f"[GDELT macro] {date_str}: fuente desactivada")
+    else:
+        for cat, queries in MACRO_QUERIES.items():
+            for query_tag in queries:
+                for art in fetch_gdelt_news(query_tag, target_date, n=5):
+                    url = art.get("url", "")
+                    title = art.get("title", "")
+                    fp = _fingerprint(url, title)
+                    if fp in seen or not title:
+                        continue
+                    seen.add(fp)
+                    # seendate de GDELT tiene formato: YYYYMMDDTHHMMSSZ
+                    raw_dt = art.get("seendate", "")
+                    try:
+                        pub_dt = datetime.strptime(raw_dt, "%Y%m%dT%H%M%SZ").isoformat()
+                    except Exception:
+                        pub_dt = target_date.isoformat()
+                    articles.append(
+                        _normalize_macro(
+                            title, url, art.get("domain", "gdelt"), pub_dt, cat, query_tag
+                        )
                     )
-                )
-            time.sleep(0.3)  # cortesía con la API pública de GDELT
+                # No sleep aquí: _gdelt_rate_wait() dentro de fetch_gdelt_news() ya gestiona el límite global.
 
     # ── RSS en tiempo real (complemento para ejecuciones live del mismo día) ──
     for name, url in RSS_FEEDS.items():
@@ -1023,6 +1418,7 @@ def calculate_indicators_for_date(
     rsi = ta.rsi(close, length=14)
     sma_20 = ta.sma(close, length=20)
     sma_50 = ta.sma(close, length=50)
+    sma_200 = ta.sma(close, length=200)
     bbands = ta.bbands(close, length=20, std=2)
 
     def last(s):
@@ -1036,6 +1432,7 @@ def calculate_indicators_for_date(
 
     cl = _sf(close.iloc[-1])
     s20, s50 = last(sma_20), last(sma_50)
+    s200 = last(sma_200)
     sma_spread = round(float(s20) - float(s50), 4) if s20 and s50 else None
     bb_width = (
         round((float(bb_upper) - float(bb_lower)) / float(cl), 6)
@@ -1043,16 +1440,22 @@ def calculate_indicators_for_date(
         else None
     )
 
+    # Drawdown desde máximo histórico disponible en la ventana de datos
+    ath = _sf(close.max())
+    drawdown_from_ath = round((float(cl) - float(ath)) / float(ath), 4) if cl and ath and ath > 0 else None
+
     return {
         "close": cl,
         "rsi_14": last(rsi),
         "sma_20": s20,
         "sma_50": s50,
+        "sma_200": s200,
         "sma_spread": sma_spread,
         "bb_upper": bb_upper,
         "bb_middle": bb_mid,
         "bb_lower": bb_lower,
         "bb_width": bb_width,
+        "drawdown_from_ath": drawdown_from_ath,
     }
 
 
@@ -1180,6 +1583,161 @@ def apply_hysteresis_signal(
         return "HOLD", f"pending_{consecutive + 1}_of_{sell_days}d"
 
 
+# =============================================================================
+# FASE 1 — PROBABILISTIC EXPOSURE MANAGEMENT
+# =============================================================================
+
+def detect_market_regime(
+    sma50: Optional[float],
+    sma200: Optional[float],
+    vix: Optional[float],
+    drawdown_from_ath: Optional[float],
+) -> str:
+    """
+    Clasifica el régimen estructural de mercado en 4 estados:
+      BULL     → tendencia alcista confirmada (SMA50 > SMA200, sin caída > 20%)
+      NEUTRAL  → sin tendencia clara o datos insuficientes
+      HIGH_VOL → volatilidad elevada (VIX > 25), mercado nervioso pero no en crash
+      BEAR     → caída técnica ≥ 20% desde máximos (bear market)
+
+    El régimen condiciona el floor y ceiling de exposición en prob_to_exposure().
+    El orden de prioridad: BEAR > HIGH_VOL > BULL > NEUTRAL.
+    """
+    # Bear market técnico tiene máxima prioridad (capital preservation)
+    if drawdown_from_ath is not None and drawdown_from_ath < -0.20:
+        return "BEAR"
+
+    # Alta volatilidad: entorno de riesgo elevado aunque no sea bear market
+    if vix is not None and vix > 25:
+        return "HIGH_VOL"
+
+    # Tendencia alcista estructural: golden cross SMA50 > SMA200
+    if sma50 is not None and sma200 is not None and sma50 > sma200:
+        return "BULL"
+
+    # Sin señal clara: régimen neutral por defecto
+    return "NEUTRAL"
+
+
+def prob_to_exposure(prob_up: float, regime: str) -> float:
+    """
+    Mapea prob_up bayesiana (0–1) a una exposición continua de mercado (0–1)
+    condicionada por el régimen estructural.
+
+    Parámetros de régimen (floor / ceiling):
+      BULL     → [0.60, 1.00]  Siempre estamos invertidos, máx inversión posible
+      NEUTRAL  → [0.35, 0.80]  Rango moderado; la probabilidad mueve el needle
+      HIGH_VOL → [0.20, 0.60]  Reducción defensiva; máx 60% en períodos volátiles
+      BEAR     → [0.10, 0.45]  Capital preservation; mínima exposición estructural
+
+    La interpolación lineal usa como rango de referencia [0.30, 0.75] de prob_up:
+      - prob_up ≤ 0.30 → floor del régimen
+      - prob_up ≥ 0.75 → ceiling del régimen
+      - valores intermedios → interpolación lineal dentro de [floor, ceiling]
+    """
+    FLOORS   = {"BULL": 0.60, "NEUTRAL": 0.35, "HIGH_VOL": 0.20, "BEAR": 0.10}
+    CEILINGS = {"BULL": 1.00, "NEUTRAL": 0.80, "HIGH_VOL": 0.60, "BEAR": 0.45}
+    floor   = FLOORS.get(regime, 0.35)
+    ceiling = CEILINGS.get(regime, 0.80)
+    # Normalizar prob_up al intervalo [0,1] dentro de [0.30, 0.75]
+    t = (prob_up - 0.30) / (0.75 - 0.30)
+    t = max(0.0, min(1.0, t))
+    return round(floor + t * (ceiling - floor), 3)
+
+
+def smooth_exposure(target: float, previous: float, alpha: float = 0.25) -> float:
+    """
+    EWM (Exponential Weighted Moving Average) de la exposición objetivo.
+
+    exposure_smooth_t = α × target_t + (1−α) × smooth_{t-1}
+
+    alpha=0.25 → ventana efectiva ~4 días. Evita cambios bruscos de posición
+    ante noticias puntuales manteniendo la dirección estratégica del régimen.
+    """
+    return round(alpha * target + (1.0 - alpha) * previous, 4)
+
+
+def _calc_exposure_backtesting(signals_list: List[Dict]) -> Tuple[Dict, Dict]:
+    """
+    Backtesting de exposición continua (Probabilistic Exposure Management).
+
+    Fórmula: portfolio_return_t = market_return_t × smoothed_exposure_t
+
+    A diferencia del sistema binario (Long/Cash), aquí siempre tenemos cierta
+    exposición estructural. El floor del régimen garantiza que nunca estamos
+    100% en cash salvo en un bear market extremo.
+
+    Requiere que cada elemento de signals_list tenga:
+      - batch_date, ticker, close_price, smoothed_exposure, market_regime
+    """
+    exp_metrics: Dict = {}
+    exp_diagnostics: Dict = {}
+
+    tickers = list(set(r["ticker"] for r in signals_list))
+    for ticker in tickers:
+        ts = sorted(
+            [r for r in signals_list if r["ticker"] == ticker],
+            key=lambda x: x["batch_date"],
+        )
+        if len(ts) < 2:
+            continue
+
+        capital = INITIAL_CAP
+        equity = [capital]
+        daily_rets: List[float] = []
+        daily_exposures: List[float] = []
+        regime_days: Dict[str, int] = {"BULL": 0, "NEUTRAL": 0, "HIGH_VOL": 0, "BEAR": 0}
+
+        for i in range(1, len(ts)):
+            p0 = float(ts[i - 1].get("close_price") or 0)
+            p1 = float(ts[i].get("close_price") or 0)
+            if p0 == 0 or p1 == 0:
+                equity.append(equity[-1])
+                continue
+
+            market_ret = (p1 - p0) / p0
+            exposure = float(ts[i].get("smoothed_exposure", 0.5))
+            daily_exposures.append(exposure)
+
+            regime = ts[i].get("market_regime", "NEUTRAL")
+            if regime in regime_days:
+                regime_days[regime] += 1
+
+            portfolio_ret = market_ret * exposure
+            capital *= 1.0 + portfolio_ret
+            equity.append(capital)
+            daily_rets.append(portfolio_ret)
+
+        final_eq = capital
+        cum_ret = (final_eq - INITIAL_CAP) / INITIAL_CAP
+
+        if len(equity) > 2:
+            eq_arr = np.array(equity)
+            dr = np.diff(eq_arr) / eq_arr[:-1]
+            excess = dr - (RISK_FREE_RATE / 252)
+            std = np.std(excess)
+            sharpe = float(np.mean(excess) / std * np.sqrt(252)) if std > 1e-6 else 0.0
+            peak = np.maximum.accumulate(eq_arr)
+            max_dd = float(np.min((eq_arr - peak) / peak))
+        else:
+            sharpe = max_dd = 0.0
+
+        exp_metrics[ticker] = {
+            "cumulative_return": round(float(cum_ret), 4),
+            "sharpe_ratio": round(float(sharpe), 4),
+            "max_drawdown": round(float(max_dd), 4),
+            "final_equity": round(float(final_eq), 2),
+        }
+        exp_diagnostics[ticker] = {
+            "avg_exposure": round(float(np.mean(daily_exposures)), 4) if daily_exposures else 0.5,
+            "min_exposure": round(float(np.min(daily_exposures)), 4) if daily_exposures else 0.0,
+            "max_exposure": round(float(np.max(daily_exposures)), 4) if daily_exposures else 1.0,
+            "regime_distribution": regime_days,
+        }
+
+    return exp_metrics, exp_diagnostics
+
+
 def _calc_backtesting(signals_df: pd.DataFrame) -> Tuple[Dict, Dict]:
     metrics, diagnostics = {}, {}
     if signals_df.empty:
@@ -1287,7 +1845,7 @@ def get_close_price(ticker: str, date_str: str) -> Optional[float]:
             return None
         start = target - timedelta(days=1)
         end = target + timedelta(days=6)
-        df = yf.download(ticker, start=start, end=end, progress=False)
+        df = yf.download(ticker, start=start, end=end, progress=False, repair=False)
         if df.empty:
             return None
         if isinstance(df.columns, pd.MultiIndex):
@@ -1496,11 +2054,14 @@ def _process_ticker_day(
     run_id: str,
     ohlcv_all: Dict,
     news_all: Dict,
+    alphavantage_news: Dict,
     gdelt_ticker_news: Dict,
     macro_adj: float,
     macro_sentiment: str,
     risk_regime: str,
-    signal_history: List[str],  # copia del historial del ticker (no compartida)
+    signal_history: List[str],       # copia del historial del ticker (no compartida)
+    previous_exposure: float = 0.5,  # exposición suavizada del día anterior
+    vix: Optional[float] = None,     # VIX del día (para detect_market_regime)
 ) -> Optional[Dict]:
     """
     Procesa un ticker para un día concreto en un hilo independiente.
@@ -1566,16 +2127,40 @@ def _process_ticker_day(
 
         # ── Ingesta multi-fuente ─────────────────────────────────────────────
         finnhub_arts = news_all.get(ticker, {}).get(date_str, [])
+        alphavantage_arts = alphavantage_news.get(ticker, {}).get(date_str, [])
         gdelt_arts = gdelt_ticker_news.get(ticker, {}).get(date_str, [])
         yfinance_arts = fetch_yfinance_ticker_news(ticker, date_str)
-        articles = merge_ticker_articles(finnhub_arts, gdelt_arts, yfinance_arts)
+        articles = merge_ticker_articles(
+            finnhub_arts, alphavantage_arts, gdelt_arts, yfinance_arts
+        )
+
+        _news_debug(
+            f"[news-day] {date_str} {ticker}: "
+            f"Finnhub={len(finnhub_arts)} AlphaVantage={len(alphavantage_arts)} "
+            f"GDELT={len(gdelt_arts)} "
+            f"YFinance={len(yfinance_arts)} merged={len(articles)}"
+        )
+        if DEBUG_NEWS:
+            for source_name, source_articles in (
+                ("Finnhub", finnhub_arts),
+                ("AlphaVantage", alphavantage_arts),
+                ("GDELT", gdelt_arts),
+                ("YFinance", yfinance_arts),
+                ("Merged", articles),
+            ):
+                samples = _headline_samples(source_articles)
+                if samples:
+                    logger.info(
+                        f"[news-headlines] {date_str} {ticker} {source_name}: {samples}"
+                    )
 
         if articles:
             upsert_raw_news(date_str, ticker, articles)
-            logger.debug(
-                f"[ingesta] {ticker} {date_str}: "
-                f"Finnhub={len(finnhub_arts)} GDELT={len(gdelt_arts)} "
-                f"YF={len(yfinance_arts)} → merged={len(articles)}"
+        else:
+            logger.warning(
+                f"[news-gap] {date_str} {ticker}: 0 noticias tras merge "
+                f"(Finnhub={len(finnhub_arts)}, AlphaVantage={len(alphavantage_arts)}, "
+                f"GDELT={len(gdelt_arts)}, YFinance={len(yfinance_arts)})"
             )
 
         # ── Groq (LLM) + FinBERT por artículo ───────────────────────────────
@@ -1626,6 +2211,10 @@ def _process_ticker_day(
             upsert_filtered_news(
                 date_str, ticker, processed_headlines, "Backtest local"
             )
+        _news_debug(
+            f"[news-sentiment] {date_str} {ticker}: procesadas={len(processed_headlines)}/"
+            f"{len(articles[:20])} con FinBERT/Groq={'on' if GROQ_API_KEY else 'off'}"
+        )
 
         # ── Agregación de sentimiento y evidencias ───────────────────────────
         dom_sent, best_conf, sentiment_detail = aggregate_sentiment_local(
@@ -1686,6 +2275,35 @@ def _process_ticker_day(
         signal = confirmed_signal
         reasoning = build_reasoning_local(evidence, prob_up, signal)
 
+        # ── Exposure Management (Fase 1) ─────────────────────────────────────
+        # El régimen usa SMA200 (estructural) + VIX + drawdown_from_ath.
+        # Difiere de risk_regime (que sólo usa VIX y modula macro_adj)
+        # porque mira la tendencia de largo plazo del propio activo.
+        market_regime_exp = detect_market_regime(
+            sma50=ind.get("sma_50"),
+            sma200=ind.get("sma_200"),
+            vix=vix,
+            drawdown_from_ath=ind.get("drawdown_from_ath"),
+        )
+        target_exposure   = prob_to_exposure(prob_up, market_regime_exp)
+        smoothed_exposure = smooth_exposure(target_exposure, previous_exposure)
+        exposure_delta    = round(smoothed_exposure - previous_exposure, 4)
+
+        logger.debug(
+            f"[EXPOSURE] {ticker} {date_str}: regime={market_regime_exp} "
+            f"prob_up={prob_up:.3f} target={target_exposure:.3f} "
+            f"smooth={smoothed_exposure:.3f} Δ={exposure_delta:+.3f}"
+        )
+
+        # Persistir en position_state (conexión del hilo)
+        try:
+            pg_upsert_position_state(
+                thread_conn, date_str, ticker, prob_up,
+                market_regime_exp, target_exposure, smoothed_exposure, exposure_delta,
+            )
+        except Exception as exc:
+            logger.warning(f"[EXPOSURE] position_state upsert falló {ticker} {date_str}: {exc}")
+
         # ── Trace + persistencia ─────────────────────────────────────────────
         trace_data = {
             "raw_values": {
@@ -1725,6 +2343,13 @@ def _process_ticker_day(
             },
             "contribution_analysis": contribution_analysis,
             "reasoning": reasoning,
+            "exposure_management": {
+                "market_regime": market_regime_exp,
+                "target_exposure": target_exposure,
+                "smoothed_exposure": smoothed_exposure,
+                "exposure_delta": exposure_delta,
+                "previous_exposure": previous_exposure,
+            },
         }
         upsert_bayesian_report(date_str, ticker, trace_data, MODEL_CONFIG["version"])
 
@@ -1769,6 +2394,10 @@ def _process_ticker_day(
             "macro_sentiment": macro_sentiment,
             "risk_regime": risk_regime,
             "macro_adjustment": macro_adj,
+            # Fase 1: exposición continua
+            "market_regime": market_regime_exp,
+            "target_exposure": target_exposure,
+            "smoothed_exposure": smoothed_exposure,
         }
 
         return {
@@ -1777,6 +2406,8 @@ def _process_ticker_day(
             "signal_record": signal_record,
             "new_history": new_history,
             "kpis": kpis,
+            "smoothed_exposure": smoothed_exposure,   # para actualizar exposure_history_per_ticker
+            "market_regime": market_regime_exp,
         }
 
     except Exception as e:
@@ -1810,36 +2441,66 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
     logger.info(
         f"🚀 Iniciando Bootstrap Local TFM | Rango: {start_d} a {end_d} | Tickers: {active_tickers}"
     )
+    if DEBUG_NEWS:
+        logger.info(
+            f"🔎 Debug noticias activo | headlines={DEBUG_NEWS_HEADLINES} | "
+            f"refresh_cache={REFRESH_NEWS_CACHE}"
+        )
 
     # ── 1. DESCARGA INICIAL DE DATOS ──
     # Para poder calcular indicadores en start_d, la lambda descarga días extra.
     ohlcv_all = fetch_ohlcv_all(active_tickers, start_d, end_d)
     vix_series = fetch_vix_historical(start_d, end_d)
 
-    # ── Prefetch paralelo de noticias (Finnhub + GDELT) ──────────────────────
+    # ── Prefetch paralelo de noticias (Finnhub + AlphaVantage + GDELT) ────────
     # Ambas fuentes son independientes por ticker y usan caché en disco.
     # max_workers=2 para respetar rate limits de GDELT (API pública compartida).
     def _prefetch_ticker_news(ticker: str):
         f = fetch_news_historical(ticker, start_d, end_d)
+        a = fetch_alpha_vantage_news_historical(ticker, start_d, end_d)
         g = fetch_gdelt_ticker_news_historical(ticker, start_d, end_d)
-        return ticker, f, g
+        return ticker, f, a, g
 
     logger.info(f"⬇ Prefetching noticias en paralelo para {active_tickers}…")
     news_all: Dict[str, Dict] = {}
+    alphavantage_news: Dict[str, Dict] = {}
     gdelt_ticker_news: Dict[str, Dict] = {}
     with ThreadPoolExecutor(max_workers=min(2, len(active_tickers))) as exe:
         prefetch_futs = {
             exe.submit(_prefetch_ticker_news, t): t for t in active_tickers
         }
         for fut in as_completed(prefetch_futs):
-            t, finnhub_data, gdelt_data = fut.result()
+            t, finnhub_data, alphavantage_data, gdelt_data = fut.result()
             news_all[t] = finnhub_data
+            alphavantage_news[t] = alphavantage_data
             gdelt_ticker_news[t] = gdelt_data
     logger.info("✅ Prefetch completado")
 
     conn = get_db_connection()
     get_bn_model()
     get_finbert()
+
+    # ── DDL: crear position_state si no existe ────────────────────────────────
+    try:
+        with conn.cursor() as c:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS position_state (
+                    batch_date        DATE         NOT NULL,
+                    ticker            VARCHAR(10)  NOT NULL,
+                    prob_up           FLOAT,
+                    market_regime     VARCHAR(20),
+                    target_exposure   FLOAT,
+                    smoothed_exposure FLOAT,
+                    exposure_delta    FLOAT,
+                    created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (batch_date, ticker)
+                )
+            """)
+        conn.commit()
+        logger.info("✅ Tabla position_state lista")
+    except Exception as exc:
+        conn.rollback()
+        logger.warning(f"DDL position_state: {exc}")
 
     business_days = pd.bdate_range(start=str(start_d), end=str(end_d))
 
@@ -1850,6 +2511,14 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
     # ── Hysteresis: historial de señales CONFIRMADAS por ticker (ventana deslizante) ──
     # Se mantiene entre días para detectar N SELLs consecutivos antes de salir.
     signal_history_per_ticker: dict = {t: [] for t in active_tickers}
+
+    # ── Fase 1 — Exposure tracking ────────────────────────────────────────────
+    # Exposición suavizada del día anterior por ticker (EWM).
+    # Valor inicial 0.5 = exposición neutral (equivalente al prior de mercado).
+    exposure_history_per_ticker: dict = {t: 0.5 for t in active_tickers}
+    # Acumulado de todos los signal_records (incluye smoothed_exposure) para
+    # calcular el backtesting de exposición en cada iteración del reporte.
+    all_signal_records: List[Dict] = []
 
     # ── ThreadPoolExecutor para procesamiento paralelo por ticker ─────────────
     # Se crea UNA SOLA VEZ fuera del loop y se reutiliza en cada día.
@@ -1864,6 +2533,7 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
         date_str = bd.strftime("%Y-%m-%d")
         run_id = f"backtest-{date_str}"
         global_kpis = {"total_headlines": 0, "processed_headlines": 0}
+        _news_debug(f"[day-start] {date_str}: iniciando simulacion diaria")
 
         if conn:
             pg_upsert_batch_log(conn, date_str, run_id, active_tickers, "STARTED")
@@ -1871,6 +2541,10 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
         # --- A) Ingesta y Macro (Clon lambda_macro_ingestion / lambda_macro_context) ---
         ingest_macro_news(date_str)
         macro_articles = read_macro_news(date_str)
+        _news_debug(
+            f"[macro-news] {date_str}: articulos_macro={len(macro_articles or [])} "
+            f"samples={_headline_samples(macro_articles or [])}"
+        )
         macro_sentiment_data = run_finbert_macro_local(macro_articles)
 
         macro_sentiment = macro_sentiment_data["state"]
@@ -1952,11 +2626,14 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
                 run_id,
                 ohlcv_all,
                 news_all,
+                alphavantage_news,
                 gdelt_ticker_news,
                 macro_adj,
                 macro_sentiment,
                 risk_regime,
-                list(signal_history_per_ticker[ticker]),  # copia — evita race condition
+                list(signal_history_per_ticker[ticker]),    # copia — evita race condition
+                exposure_history_per_ticker[ticker],        # Fase 1: exposición previa
+                vix,                                        # Fase 1: VIX para detect_regime
             ): ticker
             for ticker in active_tickers
         }
@@ -1969,7 +2646,9 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
             # Actualizar estado compartido desde el hilo principal (sin races)
             tickers_trace[t] = result["trace_data"]
             daily_signals_for_outcomes.append(result["signal_record"])
+            all_signal_records.append(result["signal_record"])          # Fase 1
             signal_history_per_ticker[t] = result["new_history"]
+            exposure_history_per_ticker[t] = result["smoothed_exposure"]  # Fase 1
             global_kpis["total_headlines"] += result["kpis"]["total_headlines"]
             global_kpis["processed_headlines"] += result["kpis"]["processed_headlines"]
 
@@ -1982,6 +2661,8 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
             # 1. Obtenemos señales del último año desde la BBDD (Esto da memoria al sistema)
             hist_signals_df = get_trading_data(conn, date_str, days_back=DAYS_BACK)
             metrics, diagnostics = _calc_backtesting(hist_signals_df)
+            # Fase 1: backtesting de exposición continua usando datos in-memory
+            exp_metrics, exp_diagnostics = _calc_exposure_backtesting(all_signal_records)
             benchmark = (
                 compute_benchmark(hist_signals_df) if not hist_signals_df.empty else {}
             )
@@ -2050,6 +2731,23 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
                     "sharpe_annualized": True,
                     "limitation": "El backtesting asume ejecucion al cierre. Estrategia Long/Cash: BUY entra al mercado, SELL cierra posicion, HOLD mantiene posicion abierta.",
                 },
+                # ── Fase 1: Probabilistic Exposure Management ─────────────────
+                "exposure_backtesting_metrics": exp_metrics,
+                "exposure_backtesting_diagnostics": exp_diagnostics,
+                "exposure_vs_binary_comparison": {
+                    t: {
+                        "binary_cumulative_return":   metrics.get(t, {}).get("cumulative_return", 0.0),
+                        "exposure_cumulative_return":  exp_metrics.get(t, {}).get("cumulative_return", 0.0),
+                        "exposure_alpha": round(
+                            exp_metrics.get(t, {}).get("cumulative_return", 0.0)
+                            - metrics.get(t, {}).get("cumulative_return", 0.0),
+                            4,
+                        ),
+                        "avg_exposure":   exp_diagnostics.get(t, {}).get("avg_exposure", 0.5),
+                        "regime_distribution": exp_diagnostics.get(t, {}).get("regime_distribution", {}),
+                    }
+                    for t in set(list(metrics.keys()) + list(exp_metrics.keys()))
+                },
                 "trace_artifact": f"mongo:bayesian_traces/{date_str}",
                 "quant_audit_artifact": f"mongo:quant_audit_reports/{date_str}",
             }
@@ -2071,6 +2769,14 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
 
 if __name__ == "__main__":
     args = get_args()
+    if args.debug_news:
+        DEBUG_NEWS = True
+    if args.debug_news_headlines is not None:
+        DEBUG_NEWS_HEADLINES = max(0, args.debug_news_headlines)
+    if args.refresh_news_cache:
+        REFRESH_NEWS_CACHE = True
+    if args.disable_gdelt:
+        DISABLE_GDELT = True
     tickers_list = (
         [t.strip().upper() for t in args.tickers.split(",")] if args.tickers else None
     )

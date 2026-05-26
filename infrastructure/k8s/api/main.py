@@ -2224,3 +2224,153 @@ def get_macro_history(
         .limit(limit)
     )
     return {"total": len(docs), "history": [_serialize_doc(d) for d in docs]}
+
+
+# =============================================================================
+# EXPOSURE MANAGEMENT — Fase 1 (Probabilistic Exposure Management)
+# =============================================================================
+
+@app.get("/exposure/history", tags=["Exposure"])
+def get_exposure_history(
+    ticker: Optional[str] = Query(default=None, description="Ticker concreto o todos si se omite"),
+    limit:  int           = Query(default=90,   ge=1, le=500, description="Nº de días a devolver"),
+    x_api_key: str = Header(default=""),
+):
+    """
+    Histórico de exposición continua (Fase 1 — Probabilistic Exposure Management).
+
+    Lee el campo `exposure_vs_binary_comparison` de los reportes diarios (MongoDB)
+    y devuelve una serie temporal con:
+      - smoothed_exposure (EWM α=0.25)
+      - market_regime (BULL / NEUTRAL / HIGH_VOL / BEAR)
+      - binary_cumulative_return vs exposure_cumulative_return
+      - avg_exposure del día
+
+    El campo está disponible en reportes generados a partir de la Fase 1 del bootstrap.
+    Reportes anteriores a la Fase 1 devolverán null en los campos de exposición.
+    """
+    check_api_key(x_api_key)
+    db = _require_mongo()
+
+    ticker_upper = ticker.upper() if ticker else None
+
+    # Traemos los N últimos reportes con los campos de exposición
+    projection = {
+        "report_date": 1,
+        "exposure_vs_binary_comparison": 1,
+        "exposure_backtesting_metrics": 1,
+        "exposure_backtesting_diagnostics": 1,
+    }
+    docs = list(
+        db["reports"]
+        .find({}, projection)
+        .sort("report_date", -1)
+        .limit(limit)
+    )
+    docs.sort(key=lambda d: str(d.get("report_date", "")))  # orden cronológico
+
+    timeline = []
+    for doc in docs:
+        date_str  = str(doc.get("report_date", ""))[:10]
+        comp      = doc.get("exposure_vs_binary_comparison") or {}
+        exp_diag  = doc.get("exposure_backtesting_diagnostics") or {}
+
+        if ticker_upper:
+            # Un solo ticker
+            entry = comp.get(ticker_upper) or {}
+            diag  = exp_diag.get(ticker_upper) or {}
+            if entry:
+                timeline.append({
+                    "date":                      date_str,
+                    "ticker":                    ticker_upper,
+                    "avg_exposure":              entry.get("avg_exposure"),
+                    "binary_cumulative_return":  entry.get("binary_cumulative_return"),
+                    "exposure_cumulative_return":entry.get("exposure_cumulative_return"),
+                    "exposure_alpha":            entry.get("exposure_alpha"),
+                    "regime_distribution":       entry.get("regime_distribution"),
+                    "min_exposure":              diag.get("min_exposure"),
+                    "max_exposure":              diag.get("max_exposure"),
+                })
+        else:
+            # Todos los tickers del día
+            for t, entry in comp.items():
+                diag = exp_diag.get(t) or {}
+                timeline.append({
+                    "date":                      date_str,
+                    "ticker":                    t,
+                    "avg_exposure":              entry.get("avg_exposure"),
+                    "binary_cumulative_return":  entry.get("binary_cumulative_return"),
+                    "exposure_cumulative_return":entry.get("exposure_cumulative_return"),
+                    "exposure_alpha":            entry.get("exposure_alpha"),
+                    "regime_distribution":       entry.get("regime_distribution"),
+                    "min_exposure":              diag.get("min_exposure"),
+                    "max_exposure":              diag.get("max_exposure"),
+                })
+
+    tickers_found = sorted(set(r["ticker"] for r in timeline))
+    return {
+        "total":           len(timeline),
+        "tickers":         tickers_found,
+        "ticker_filter":   ticker_upper,
+        "days_requested":  limit,
+        "timeline":        timeline,
+    }
+
+
+@app.get("/exposure/summary/{date}", tags=["Exposure"])
+def get_exposure_summary(date: str, x_api_key: str = Header(default="")):
+    """
+    Resumen de exposición para una fecha concreta:
+      - Comparativa binario vs exposición por ticker
+      - Breakdown de régimen (% días en cada estado)
+      - Métricas de backtesting de ambos sistemas
+    """
+    check_api_key(x_api_key)
+    db = _require_mongo()
+
+    doc = db["reports"].find_one({"report_date": date})
+    if not doc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No hay reporte para {date}. Ejecuta el bootstrap o el pipeline primero."
+        )
+
+    exp_comp  = doc.get("exposure_vs_binary_comparison") or {}
+    exp_mets  = doc.get("exposure_backtesting_metrics") or {}
+    exp_diags = doc.get("exposure_backtesting_diagnostics") or {}
+    bin_mets  = doc.get("backtesting_metrics") or {}
+
+    if not exp_comp:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"El reporte de {date} no contiene datos de exposición (Fase 1). "
+                "Regenera el bootstrap con la versión actualizada de bootstrap_365_days.py."
+            )
+        )
+
+    summary = {}
+    for ticker, entry in exp_comp.items():
+        summary[ticker] = {
+            # Retornos comparados
+            "binary_cumulative_return":   entry.get("binary_cumulative_return"),
+            "exposure_cumulative_return":  entry.get("exposure_cumulative_return"),
+            "exposure_alpha":              entry.get("exposure_alpha"),
+            # Métricas de riesgo del sistema de exposición
+            "exposure_sharpe":  (exp_mets.get(ticker) or {}).get("sharpe_ratio"),
+            "exposure_drawdown":(exp_mets.get(ticker) or {}).get("max_drawdown"),
+            # Métricas de riesgo del sistema binario
+            "binary_sharpe":    (bin_mets.get(ticker) or {}).get("sharpe_ratio"),
+            "binary_drawdown":  (bin_mets.get(ticker) or {}).get("max_drawdown"),
+            # Exposición
+            "avg_exposure":     entry.get("avg_exposure"),
+            "min_exposure":     (exp_diags.get(ticker) or {}).get("min_exposure"),
+            "max_exposure":     (exp_diags.get(ticker) or {}).get("max_exposure"),
+            "regime_distribution": entry.get("regime_distribution"),
+        }
+
+    return {
+        "date":    date,
+        "tickers": sorted(summary.keys()),
+        "summary": summary,
+    }

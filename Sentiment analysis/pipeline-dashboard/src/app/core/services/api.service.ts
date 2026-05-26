@@ -294,6 +294,22 @@ export class ApiService {
       { headers: this.authHeaders, params });
   }
 
+  // ─── Exposure Management (Fase 1) ────────────────────────────────
+  /** Histórico de exposición continua por ticker (lee reports MongoDB) */
+  getExposureHistory(ticker?: string, limit = 90): Observable<ExposureHistoryResponse> {
+    let params = new HttpParams().set('limit', limit.toString());
+    if (ticker) params = params.set('ticker', ticker.toUpperCase());
+    return this.http.get<ExposureHistoryResponse>(`${this.baseUrl}/exposure/history`,
+      { headers: this.authHeaders, params });
+  }
+
+  /** Resumen de exposición para una fecha: comparativa binario vs continua */
+  getExposureSummary(date: string): Observable<ExposureSummaryResponse> {
+    return this.http.get<ExposureSummaryResponse>(
+      `${this.baseUrl}/exposure/summary/${date}`,
+      { headers: this.authHeaders });
+  }
+
   // ─── Búsqueda de instrumentos financieros ─────────────────────────
   /** Busca ETFs, fondos y acciones usando Finnhub */
   searchInstruments(q: string, filterType = '', limit = 20): Observable<{
@@ -390,6 +406,50 @@ export interface MacroContext {
     };
     regime_reasoning: Record<string, any>;
   };
+}
+
+// ─── DTOs de Exposure Management (Fase 1) ────────────────────────────────────
+
+export type MarketRegime = 'BULL' | 'NEUTRAL' | 'HIGH_VOL' | 'BEAR';
+
+export interface ExposureTimelinePoint {
+  date:                       string;
+  ticker:                     string;
+  avg_exposure:               number | null;
+  binary_cumulative_return:   number | null;
+  exposure_cumulative_return: number | null;
+  exposure_alpha:             number | null;
+  regime_distribution:        Record<MarketRegime, number> | null;
+  min_exposure:               number | null;
+  max_exposure:               number | null;
+}
+
+export interface ExposureHistoryResponse {
+  total:          number;
+  tickers:        string[];
+  ticker_filter:  string | null;
+  days_requested: number;
+  timeline:       ExposureTimelinePoint[];
+}
+
+export interface ExposureTickerSummary {
+  binary_cumulative_return:   number | null;
+  exposure_cumulative_return: number | null;
+  exposure_alpha:             number | null;
+  exposure_sharpe:            number | null;
+  exposure_drawdown:          number | null;
+  binary_sharpe:              number | null;
+  binary_drawdown:            number | null;
+  avg_exposure:               number | null;
+  min_exposure:               number | null;
+  max_exposure:               number | null;
+  regime_distribution:        Record<MarketRegime, number> | null;
+}
+
+export interface ExposureSummaryResponse {
+  date:    string;
+  tickers: string[];
+  summary: Record<string, ExposureTickerSummary>;
 }
 
 export interface MacroArticle {

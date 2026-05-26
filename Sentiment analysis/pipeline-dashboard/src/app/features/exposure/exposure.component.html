@@ -1,0 +1,278 @@
+<div class="page">
+
+  <header class="page-head">
+    <div class="page-head-text">
+      <div class="page-eyebrow">
+        <mat-icon>show_chart</mat-icon>
+        <span>Gestión de Exposición · Fase 1</span>
+      </div>
+      <h1 class="page-title">Exposición Probabilística de Mercado</h1>
+      <p class="page-sub">
+        El sistema modula la <strong>exposición continua</strong> al mercado según la probabilidad bayesiana y el régimen estructural del activo, eliminando el todo-o-nada del sistema binario.
+      </p>
+    </div>
+
+    <div class="page-actions">
+      <div class="filter-group">
+        <label>Activo</label>
+        <select class="aurora-select" [(ngModel)]="selectedTicker" (change)="onTickerChange()">
+          @for (t of availableTickers; track t) {
+            <option [value]="t">{{ t }}</option>
+          }
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Ventana</label>
+        <select class="aurora-select" [(ngModel)]="limitDays" (change)="onLimitChange()">
+          <option [value]="30">30 días</option>
+          <option [value]="90">90 días</option>
+          <option [value]="180">6 meses</option>
+          <option [value]="365">1 año</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Fecha informe</label>
+        <select class="aurora-select" [(ngModel)]="selectedDate" (change)="onDateChange()">
+          @for (d of availableDates; track d.date) {
+            <option [value]="d.date">{{ d.date }}</option>
+          }
+        </select>
+      </div>
+    </div>
+  </header>
+
+  <!-- Glosario -->
+  <mat-accordion class="glossary-accordion">
+    <mat-expansion-panel class="glossary-panel">
+      <mat-expansion-panel-header>
+        <mat-panel-title>
+          <mat-icon>lightbulb</mat-icon>
+          <span>¿Cómo funciona la Gestión de Exposición Probabilística?</span>
+        </mat-panel-title>
+      </mat-expansion-panel-header>
+      <div class="glossary-content">
+        <div class="g-col">
+          <strong>Sistema Binario (anterior):</strong> El modelo decidía entre 100% invertido (BUY) o 0% en cash (SELL). Esto magnifica los errores puntuales y provoca salidas innecesarias en mercados alcistas.
+        </div>
+        <div class="g-col">
+          <strong>Exposición Continua (Fase 1):</strong> En lugar de BUY/SELL, la probabilidad bayesiana <code>prob_up</code> se mapea a un porcentaje de exposición entre el floor y el ceiling del régimen actual.
+        </div>
+        <div class="g-col">
+          <strong>Régimen de Mercado:</strong> El sistema detecta 4 estados usando SMA50/SMA200, VIX y drawdown desde ATH: <strong>BULL</strong> (SMA50&gt;SMA200, floor 60%), <strong>NEUTRAL</strong> (floor 35%), <strong>HIGH_VOL</strong> (VIX&gt;25, floor 20%), <strong>BEAR</strong> (caída &gt;20%, floor 10%).
+        </div>
+        <div class="g-col">
+          <strong>Suavizado EWM (α=0.25):</strong> La exposición objetivo se filtra con un promedio exponencial (ventana efectiva ~4 días) para evitar cambios bruscos ante noticias puntuales.
+        </div>
+      </div>
+    </mat-expansion-panel>
+  </mat-accordion>
+
+  <!-- Loading / Error -->
+  @if (loading) {
+    <div class="state-panel">
+      <mat-spinner diameter="48"></mat-spinner>
+      <p>Cargando datos de exposición…</p>
+    </div>
+  }
+
+  @if (!loading && error) {
+    <div class="state-panel error">
+      <mat-icon>error_outline</mat-icon>
+      <p>{{ error }}</p>
+    </div>
+  }
+
+  @if (!loading && !error) {
+
+    <!-- KPI cards -->
+    <div class="kpi-grid">
+
+      <div class="kpi-card">
+        <div class="kpi-label">Exposición actual</div>
+        <div class="kpi-value accent-green">
+          {{ fmtPct(currentLatestExposure) }}
+        </div>
+        <div class="kpi-sub">Suavizado EWM α=0.25</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">Alpha Exposición vs Binario</div>
+        <div class="kpi-value" [class]="alphaColor(exposureAlpha)">
+          {{ fmtPctRaw(exposureAlpha) }}
+        </div>
+        <div class="kpi-sub">Retorno extra sobre sistema binario</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">Régimen dominante</div>
+        <div class="kpi-value">{{ dominantRegime }}</div>
+        <div class="kpi-sub">Último período analizado</div>
+      </div>
+
+      @if (summaryData?.summary?.[selectedTicker]) {
+        <div class="kpi-card">
+          <div class="kpi-label">Sharpe — Exposición</div>
+          <div class="kpi-value accent-purple">
+            {{ summaryData.summary[selectedTicker].exposure_sharpe?.toFixed(3) ?? '—' }}
+          </div>
+          <div class="kpi-sub">vs Binario: {{ summaryData.summary[selectedTicker].binary_sharpe?.toFixed(3) ?? '—' }}</div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-label">Max Drawdown — Exposición</div>
+          <div class="kpi-value text-red">
+            {{ fmtPct(summaryData.summary[selectedTicker].exposure_drawdown) }}
+          </div>
+          <div class="kpi-sub">vs Binario: {{ fmtPct(summaryData.summary[selectedTicker].binary_drawdown) }}</div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-label">Exposición media</div>
+          <div class="kpi-value accent-cyan">
+            {{ fmtPct(summaryData.summary[selectedTicker].avg_exposure) }}
+          </div>
+          <div class="kpi-sub">
+            Rango: {{ fmtPct(summaryData.summary[selectedTicker].min_exposure) }}
+            — {{ fmtPct(summaryData.summary[selectedTicker].max_exposure) }}
+          </div>
+        </div>
+      }
+    </div>
+
+    <!-- Gráfico exposición -->
+    <section class="chart-section">
+      <div class="section-header">
+        <mat-icon>area_chart</mat-icon>
+        <h2>Exposición Continua — {{ selectedTicker }}</h2>
+        <span class="section-badge">EWM α=0.25</span>
+      </div>
+      <p class="section-desc">
+        La línea verde muestra el porcentaje de capital expuesto al mercado cada día, modulado por el régimen estructural.
+        Las líneas discontinuas marcan los floors de cada régimen.
+      </p>
+      @if (filteredTimeline.length) {
+        <highcharts-chart
+          [Highcharts]="Highcharts"
+          [options]="exposureChartOpts"
+          [update]="exposureChartUpdate"
+          style="width:100%;display:block">
+        </highcharts-chart>
+      } @else {
+        <div class="no-data">Sin datos de exposición para {{ selectedTicker }} en el período seleccionado.</div>
+      }
+    </section>
+
+    <!-- Gráfico retorno comparado -->
+    <section class="chart-section">
+      <div class="section-header">
+        <mat-icon>compare_arrows</mat-icon>
+        <h2>Retorno Acumulado — Binario vs Exposición Continua</h2>
+      </div>
+      <p class="section-desc">
+        Comparativa directa del rendimiento acumulado entre el sistema Long/Cash clásico (gris) y el nuevo sistema de exposición continua (morado).
+      </p>
+      @if (filteredTimeline.length) {
+        <highcharts-chart
+          [Highcharts]="Highcharts"
+          [options]="returnCompareOpts"
+          [update]="returnCompareUpdate"
+          style="width:100%;display:block">
+        </highcharts-chart>
+      } @else {
+        <div class="no-data">Sin datos de retorno comparado disponibles.</div>
+      }
+    </section>
+
+    <!-- Breakdown de régimen -->
+    <section class="regime-section">
+      <div class="section-header">
+        <mat-icon>pie_chart</mat-icon>
+        <h2>Distribución de Régimen de Mercado</h2>
+      </div>
+      <p class="section-desc">
+        Días en cada régimen estructural. El régimen condiciona el floor y ceiling de exposición, determinando el rango en que opera la probabilidad bayesiana.
+      </p>
+      <div class="regime-grid">
+        @for (stat of regimeStats; track stat.regime) {
+          <div class="regime-card" [style.border-color]="stat.color">
+            <div class="regime-header">
+              <span class="regime-dot" [style.background]="stat.color"></span>
+              <span class="regime-label">{{ stat.label }}</span>
+              <span class="regime-pct" [style.color]="stat.color">{{ stat.pct }}%</span>
+            </div>
+            <div class="regime-days">{{ stat.days }} días</div>
+            <div class="regime-bar-wrap">
+              <div class="regime-bar" [style.width.%]="stat.pct" [style.background]="stat.color"></div>
+            </div>
+            <div class="regime-params">
+              <span>Floor <strong>{{ (stat.floor * 100).toFixed(0) }}%</strong></span>
+              <span>Ceiling <strong>{{ (stat.ceiling * 100).toFixed(0) }}%</strong></span>
+            </div>
+          </div>
+        }
+        @if (!regimeStats.length) {
+          <p class="no-data">No hay datos de régimen disponibles. Ejecuta el bootstrap con Fase 1 activa.</p>
+        }
+      </div>
+    </section>
+
+    <!-- Tabla comparativa por ticker (si hay summary) -->
+    @if (summaryData?.summary) {
+      <section class="table-section">
+        <div class="section-header">
+          <mat-icon>table_chart</mat-icon>
+          <h2>Comparativa Completa por Activo — {{ summaryData.date }}</h2>
+        </div>
+        <div class="compare-table-wrap">
+          <table class="compare-table">
+            <thead>
+              <tr>
+                <th>Activo</th>
+                <th>Exp. Media</th>
+                <th>Ret. Binario</th>
+                <th>Ret. Exposición</th>
+                <th>Alpha</th>
+                <th>Sharpe Bin.</th>
+                <th>Sharpe Exp.</th>
+                <th>DD Bin.</th>
+                <th>DD Exp.</th>
+                <th>Régimen dominante</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (entry of (summaryData.tickers); track entry) {
+                <ng-container *ngIf="summaryData.summary[entry] as s">
+                  <tr>
+                    <td><strong>{{ entry }}</strong></td>
+                    <td class="accent-cyan">{{ fmtPct(s.avg_exposure) }}</td>
+                    <td>{{ fmtPctRaw(s.binary_cumulative_return) }}</td>
+                    <td class="accent-purple">{{ fmtPctRaw(s.exposure_cumulative_return) }}</td>
+                    <td [class]="alphaColor(s.exposure_alpha)">{{ fmtPctRaw(s.exposure_alpha) }}</td>
+                    <td>{{ s.binary_sharpe?.toFixed(3) ?? '—' }}</td>
+                    <td class="accent-purple">{{ s.exposure_sharpe?.toFixed(3) ?? '—' }}</td>
+                    <td class="text-red">{{ fmtPct(s.binary_drawdown) }}</td>
+                    <td class="text-red">{{ fmtPct(s.exposure_drawdown) }}</td>
+                    <td>
+                      @if (s.regime_distribution) {
+                        <span
+                          class="regime-badge"
+                          [style.background]="getRegimeColor(getDominantRegime(s.regime_distribution))"
+                        >
+                          {{ getDominantRegime(s.regime_distribution) }}
+                        </span>
+                      } @else {
+                        <span>—</span>
+                      }
+                    </td>
+                  </tr>
+                </ng-container>
+              }
+            </tbody>
+          </table>
+        </div>
+      </section>
+    }
+
+  }<!-- /!loading && !error -->
+
+</div>
