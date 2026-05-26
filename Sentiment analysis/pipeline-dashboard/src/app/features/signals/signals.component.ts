@@ -606,10 +606,33 @@ export class SignalsComponent implements OnInit, AfterViewInit {
         return of(null);
       })
     ).subscribe(data => {
-      this.macroContext = data;
+      this.macroContext = data ? this.normalizeMacroContext(data) : null;
       this.macroLoading = false;
       if (data) this.loadMacroNews(date);
     });
+  }
+
+  private normalizeMacroContext(data: MacroContext): MacroContext {
+    const raw = data as any;
+    const detail = raw.detail ?? {};
+    const events = detail.events ?? {};
+
+    return {
+      ...data,
+      detail: {
+        macro_score: detail.macro_score ?? 0,
+        n_articles: detail.n_articles ?? 0,
+        distribution: detail.distribution ?? {},
+        vix: detail.vix ?? null,
+        events: {
+          geopolitical: Boolean(events.geopolitical),
+          hawkish_fed: Boolean(events.hawkish_fed),
+          dovish_fed: Boolean(events.dovish_fed),
+          inflation_shock: Boolean(events.inflation_shock),
+        },
+        regime_reasoning: detail.regime_reasoning ?? {},
+      },
+    };
   }
 
   loadMacroNews(date: string) {

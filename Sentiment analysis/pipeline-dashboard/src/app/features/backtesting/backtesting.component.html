@@ -119,6 +119,64 @@
       </article>
     </section>
 
+    <section class="card history-card">
+      <div class="card-head history-head">
+        <div>
+          <div class="card-title">
+            <mat-icon>timeline</mat-icon>
+            <span>Evolución Histórica del Backtesting</span>
+          </div>
+          <span class="card-sub">
+            Vista global por fecha de informe. Permite comparar todos los periodos disponibles, no solo el snapshot seleccionado.
+          </span>
+        </div>
+        <div class="history-controls">
+          <div class="filter-group">
+            <label>Métrica</label>
+            <select class="aurora-select" [(ngModel)]="historyMetric" (ngModelChange)="onHistoryControlChange()">
+              @for (metric of historyMetricOptions; track metric.value) {
+                <option [value]="metric.value">{{ metric.label }}</option>
+              }
+            </select>
+          </div>
+          <div class="filter-group">
+            <label>Activo</label>
+            <select class="aurora-select" [(ngModel)]="historyTicker" (ngModelChange)="onHistoryControlChange()">
+              <option value="__portfolio__">Media cartera</option>
+              @for (ticker of historyTickerOptions; track ticker) {
+                <option [value]="ticker">{{ ticker }}</option>
+              }
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="history-context">
+        <mat-icon>query_stats</mat-icon>
+        <span>{{ selectedHistoryMetric.description }}</span>
+      </div>
+
+      @if (historyLoading) {
+        <div class="history-loading">
+          <mat-spinner diameter="30"></mat-spinner>
+          <span>Cargando histórico completo de reports...</span>
+        </div>
+      } @else if (historyError) {
+        <div class="history-error">
+          <mat-icon>info_outline</mat-icon>
+          <span>{{ historyError }}</span>
+        </div>
+      } @else if (historyChartOptions.series?.length) {
+        <highcharts-chart
+          [Highcharts]="Highcharts"
+          [constructorType]="'stockChart'"
+          [options]="historyChartOptions"
+          [(update)]="historyChartUpdate"
+          class="history-chart">
+        </highcharts-chart>
+      }
+    </section>
+
     <section class="card chart-card">
       <div class="card-head">
         <div class="card-title">
