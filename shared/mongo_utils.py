@@ -14,6 +14,7 @@ Colecciones en la BD 'tfm':
   bayesian_reports  → traza por ticker: raw values, discretizacion, inferencia
   bayesian_traces   → JSON completo de traza bayesiana por batch_date (API /trace)
   reports           → reporte diario completo (backtesting, metricas, senales)
+  quant_audit_reports → observabilidad cuantitativa agregada por report_date
   macro_news        → noticias macro globales (FED, inflacion, geopolitica…)
   macro_context     → MacroSentiment + RiskRegime calculados por batch_date
 
@@ -25,6 +26,7 @@ Indices recomendados (ejecutar via POST /mongo/setup-indexes):
   bayesian_reports: {batch_date:1, ticker:1} unico, {ticker:1, batch_date:-1}
   bayesian_traces:  {batch_date:1} unico
   reports:     {report_date:1} unico
+  quant_audit_reports: {report_date:1} unico
   macro_news:  {batch_date:1}, {category:1}
   macro_context: {batch_date:1} unico
 """
@@ -484,16 +486,18 @@ def read_bayesian_trace(batch_date: str) -> Optional[Dict[str, Any]]:
 
 def _bayesian_report_doc_to_ticker_trace(doc: Dict[str, Any]) -> Dict[str, Any]:
     """Reconstruye el subdocumento de traza por ticker desde bayesian_reports."""
+    inference = doc.get("inference") or {
+        "signal": doc.get("signal"),
+        "prob_up": doc.get("prob_up"),
+        "prob_down": doc.get("prob_down"),
+        "threshold_used": doc.get("threshold_used"),
+    }
     return {
         "raw_values": doc.get("raw_values", {}),
         "discretization": doc.get("discretization", {}),
         "sentiment_detail": doc.get("sentiment_detail", {}),
-        "inference": {
-            "signal": doc.get("signal"),
-            "prob_up": doc.get("prob_up"),
-            "prob_down": doc.get("prob_down"),
-            "threshold_used": doc.get("threshold_used"),
-        },
+        "inference": inference,
+        "contribution_analysis": doc.get("contribution_analysis", {}),
         "reasoning": doc.get("reasoning"),
     }
 
@@ -634,6 +638,8 @@ def upsert_bayesian_report(batch_date: str, ticker: str, ticker_trace: dict, mod
             "raw_values":       ticker_trace.get("raw_values", {}),
             "discretization":   ticker_trace.get("discretization", {}),
             "sentiment_detail": ticker_trace.get("sentiment_detail", {}),
+            "inference":        inference,
+            "contribution_analysis": ticker_trace.get("contribution_analysis", {}),
             "reasoning":        ticker_trace.get("reasoning"),
             "model_version":    model_version,
             "updated_at":       now,
@@ -676,6 +682,38 @@ def upsert_report(report_data: dict):
         )
     except Exception as exc:
         logger.warning(f"MongoDB upsert_report failed ({report_date}): {exc}")
+
+
+def upsert_quant_audit_report(report_date: str, audit_report: dict):
+    """Persiste el reporte agregado de observabilidad cuantitativa."""
+    try:
+        db = _get_db()
+        if db is None:
+            return
+        now = datetime.now(timezone.utc)
+        doc = dict(audit_report or {})
+        doc["report_date"] = report_date
+        doc["updated_at"] = now
+        db["quant_audit_reports"].update_one(
+            {"report_date": report_date},
+            {"$set": doc, "$setOnInsert": {"created_at": now}},
+            upsert=True,
+        )
+    except Exception as exc:
+        logger.warning(f"MongoDB upsert_quant_audit_report failed ({report_date}): {exc}")
+
+
+def read_quant_audit_report(report_date: str) -> Optional[Dict[str, Any]]:
+    """Lee el reporte agregado de observabilidad cuantitativa."""
+    db = _get_db()
+    if db is None:
+        return None
+    try:
+        doc = db["quant_audit_reports"].find_one({"report_date": report_date}, {"_id": 0})
+        return doc if doc else None
+    except Exception as exc:
+        logger.warning(f"MongoDB read_quant_audit_report failed ({report_date}): {exc}")
+        return None
 
 
 # ─── macro_news: noticias macroeconómicas globales ────────────────────────────

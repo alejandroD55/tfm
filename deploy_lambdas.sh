@@ -153,6 +153,7 @@ deploy_lambda() {
     --label "lambda-name=${LAMBDA_NAME}" \
     --label "build-date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     . > "${BUILD_LOG}" 2>&1; then
+    tail -80 "${BUILD_LOG}" >&2 || true
     error "Falló docker build para ${LAMBDA_NAME}. Revisa el log: ${BUILD_LOG}"
   fi
   tail -5 "${BUILD_LOG}"

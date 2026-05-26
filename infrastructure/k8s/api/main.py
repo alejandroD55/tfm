@@ -24,6 +24,13 @@ Endpoints:
   GET /instrument/{symbol}/profile  - Perfil detallado de un instrumento (nuevo)
   GET /sentiment/{date}/{ticker}    - Sentimiento detallado
   GET /indicators/{date}/{ticker}   - Indicadores tecnicos
+  GET /analytics/calibration/{date} - Calibracion y reliability table
+  GET /analytics/transitions/{date} - Exposicion y transiciones de senal
+  GET /analytics/regimes/{date}     - Rendimiento por regimen de mercado
+  GET /analytics/stability/{date}   - Estabilidad de senales
+  GET /analytics/probabilities/{date} - Distribucion de prob_up
+  GET /analytics/contributions/{date}/{ticker} - Contribuciones por evidencia
+  GET /audit/replay                 - Replay/auditoria por ventana historica
   GET /files                        - 410 (reemplazado por Mongo)
   GET /files/presign                - 410
   GET /stats                        - 410 (usar GET /mongo/stats)
@@ -96,6 +103,11 @@ except ImportError:
     list_bayesian_report_tickers = None  # type: ignore[misc, assignment]
     read_raw_news_ticker = None  # type: ignore[misc, assignment]
     read_ohlcv_ticker = None  # type: ignore[misc, assignment]
+
+try:
+    from quant_observability import compute_quant_audit_report
+except ImportError:
+    compute_quant_audit_report = None  # type: ignore[misc, assignment]
 
 sfn = boto3.client("stepfunctions", region_name=AWS_REGION)
 lmb = boto3.client("lambda", region_name=AWS_REGION)
@@ -315,6 +327,88 @@ def _bayesian_trace_for_date(date: str) -> dict:
             detail=f"No hay traza en MongoDB (coleccion bayesian_traces) para {date}",
         )
     return trace
+
+
+def _validate_date(value: str, label: str = "date") -> None:
+    if not value or len(value) != 10:
+        raise HTTPException(status_code=400, detail=f"{label}: formato YYYY-MM-DD")
+
+
+def _start_for_days(date: str, days_back: int) -> str:
+    target = datetime.strptime(date, "%Y-%m-%d").date()
+    return (target - timedelta(days=days_back)).strftime("%Y-%m-%d")
+
+
+def _load_bayesian_report_rows(
+    db,
+    date: str,
+    days_back: int = 365,
+    ticker: str | None = None,
+) -> list[dict]:
+    start = _start_for_days(date, days_back)
+    query: dict = {"batch_date": {"$gte": start, "$lte": date}}
+    if ticker:
+        query["ticker"] = ticker.upper()
+    docs = list(
+        db["bayesian_reports"]
+        .find(query, {"_id": 0})
+        .sort([("ticker", 1), ("batch_date", 1)])
+    )
+    return [_serialize_doc(d) for d in docs]
+
+
+def _quant_audit_for_date(
+    db,
+    date: str,
+    days_back: int = 365,
+    ticker: str | None = None,
+) -> dict:
+    if ticker is None and days_back == 365:
+        persisted = db["quant_audit_reports"].find_one({"report_date": date}, {"_id": 0})
+        if persisted:
+            doc = _serialize_doc(persisted)
+            doc["source"] = doc.get("source") or "mongo:quant_audit_reports"
+            return doc
+
+    if compute_quant_audit_report is None:
+        raise HTTPException(status_code=503, detail="quant_observability no disponible")
+
+    rows = _load_bayesian_report_rows(db, date, days_back=days_back, ticker=ticker)
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No hay bayesian_reports para {ticker or 'tickers'} hasta {date}",
+        )
+    report = compute_quant_audit_report(date, rows, outcome_rows=[], model_config=None)
+    report["source"] = "computed_from_bayesian_reports"
+    report["ticker_filter"] = ticker.upper() if ticker else None
+    report["days_back"] = days_back
+    if not report.get("calibration_report", {}).get("sample_size"):
+        report["calibration_report"]["note"] = (
+            "Calibration requires persisted signal_outcomes; this fallback was "
+            "computed from bayesian_reports only."
+        )
+    return report
+
+
+def _audit_section(
+    date: str,
+    section: str,
+    days_back: int,
+    ticker: str | None,
+    x_api_key: str,
+) -> dict:
+    check_api_key(x_api_key)
+    _validate_date(date)
+    db = _require_mongo()
+    report = _quant_audit_for_date(db, date, days_back=days_back, ticker=ticker)
+    return {
+        "report_date": date,
+        "days_back": days_back,
+        "ticker": ticker.upper() if ticker else None,
+        "source": report.get("source"),
+        section: report.get(section, {}),
+    }
 
 
 # ─── Sistema ──────────────────────────────────────────────────────────────────
@@ -671,6 +765,228 @@ def get_indicators_detail(date: str, ticker: str, x_api_key: str = Header(defaul
     except Exception as e:
         logger.exception("get_indicators_detail error")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Observabilidad cuantitativa ──────────────────────────────────────────────
+
+
+@app.get("/analytics/calibration/{date}", tags=["Quant Audit"])
+def get_calibration_report(
+    date: str,
+    days_back: int = Query(default=365, ge=30, le=1500),
+    x_api_key: str = Header(default=""),
+):
+    """Reliability table, Brier Score y Expected Calibration Error."""
+    return _audit_section(
+        date, "calibration_report", days_back, ticker=None, x_api_key=x_api_key
+    )
+
+
+@app.get("/analytics/transitions/{date}", tags=["Quant Audit"])
+def get_transition_report(
+    date: str,
+    ticker: Optional[str] = Query(default=None),
+    days_back: int = Query(default=365, ge=30, le=1500),
+    x_api_key: str = Header(default=""),
+):
+    """Exposicion, turnover, transiciones BUY->SELL y persistencia HOLD."""
+    return _audit_section(
+        date, "transition_report", days_back, ticker=ticker, x_api_key=x_api_key
+    )
+
+
+@app.get("/analytics/regimes/{date}", tags=["Quant Audit"])
+def get_regime_report(
+    date: str,
+    ticker: Optional[str] = Query(default=None),
+    days_back: int = Query(default=365, ge=50, le=1500),
+    x_api_key: str = Header(default=""),
+):
+    """Clasificacion historica BULL/BEAR/SIDEWAYS/HIGH_VOLATILITY y rendimiento."""
+    return _audit_section(
+        date, "market_regime_report", days_back, ticker=ticker, x_api_key=x_api_key
+    )
+
+
+@app.get("/analytics/stability/{date}", tags=["Quant Audit"])
+def get_signal_stability_report(
+    date: str,
+    ticker: Optional[str] = Query(default=None),
+    days_back: int = Query(default=365, ge=30, le=1500),
+    x_api_key: str = Header(default=""),
+):
+    """Cambios mensuales, duraciones, whipsaws y distancia a umbrales."""
+    return _audit_section(
+        date, "signal_stability_report", days_back, ticker=ticker, x_api_key=x_api_key
+    )
+
+
+@app.get("/analytics/probabilities/{date}", tags=["Quant Audit"])
+def get_probability_distribution_report(
+    date: str,
+    ticker: Optional[str] = Query(default=None),
+    days_back: int = Query(default=365, ge=30, le=1500),
+    x_api_key: str = Header(default=""),
+):
+    """Histograma de prob_up, concentracion cerca de 0.5, extremos y entropia."""
+    return _audit_section(
+        date,
+        "probability_distribution_report",
+        days_back,
+        ticker=ticker,
+        x_api_key=x_api_key,
+    )
+
+
+@app.get("/analytics/contributions/{date}", tags=["Quant Audit"])
+def get_contributions_for_date(
+    date: str,
+    ticker: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    x_api_key: str = Header(default=""),
+):
+    """Contribution analysis por ticker para una fecha."""
+    check_api_key(x_api_key)
+    _validate_date(date)
+    db = _require_mongo()
+    query: dict = {"batch_date": date}
+    if ticker:
+        query["ticker"] = ticker.upper()
+    docs = list(
+        db["bayesian_reports"]
+        .find(
+            query,
+            {
+                "_id": 0,
+                "batch_date": 1,
+                "ticker": 1,
+                "signal": 1,
+                "prob_up": 1,
+                "contribution_analysis": 1,
+            },
+        )
+        .sort("ticker", 1)
+        .limit(limit)
+    )
+    results = [_serialize_doc(d) for d in docs]
+    return {
+        "date": date,
+        "ticker": ticker.upper() if ticker else None,
+        "total": len(results),
+        "results": results,
+    }
+
+
+@app.get("/analytics/contributions/{date}/{ticker}", tags=["Quant Audit"])
+def get_contribution_for_ticker(
+    date: str,
+    ticker: str,
+    x_api_key: str = Header(default=""),
+):
+    """Contribution analysis de un ticker en una fecha concreta."""
+    check_api_key(x_api_key)
+    _validate_date(date)
+    db = _require_mongo()
+    ticker_u = ticker.upper()
+    doc = db["bayesian_reports"].find_one(
+        {"batch_date": date, "ticker": ticker_u},
+        {
+            "_id": 0,
+            "batch_date": 1,
+            "ticker": 1,
+            "signal": 1,
+            "prob_up": 1,
+            "inference": 1,
+            "contribution_analysis": 1,
+        },
+    )
+    if not doc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No hay contribution_analysis para {ticker_u} en {date}",
+        )
+    return _serialize_doc(doc)
+
+
+@app.get("/audit/replay", tags=["Quant Audit"])
+def get_audit_replay(
+    ticker: str = Query(default="NVDA"),
+    start: str = Query(default="2025-01-24", description="YYYY-MM-DD"),
+    end: str = Query(default="2025-01-31", description="YYYY-MM-DD"),
+    event: str = Query(default=None, description="Ej: nvidia_deepseek_2025_01_27"),
+    x_api_key: str = Header(default=""),
+):
+    """
+    Replay/auditoria day-by-day desde trazas persistidas.
+
+    Devuelve prob_up, cambios de senal, contribution_analysis, macro adjustment
+    e hysteresis cuando esos campos estan disponibles en bayesian_reports.
+    """
+    check_api_key(x_api_key)
+    if event == "nvidia_deepseek_2025_01_27":
+        ticker = "NVDA"
+        start = "2025-01-24"
+        end = "2025-01-31"
+    _validate_date(start, "start")
+    _validate_date(end, "end")
+    ticker_u = ticker.upper()
+    db = _require_mongo()
+
+    docs = list(
+        db["bayesian_reports"]
+        .find(
+            {"ticker": ticker_u, "batch_date": {"$gte": start, "$lte": end}},
+            {"_id": 0},
+        )
+        .sort("batch_date", 1)
+    )
+    if not docs:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No hay bayesian_reports para {ticker_u} entre {start} y {end}",
+        )
+
+    macro_docs = {
+        d.get("batch_date"): _serialize_doc(d)
+        for d in db["macro_context"].find(
+            {"batch_date": {"$gte": start, "$lte": end}}, {"_id": 0}
+        )
+    }
+    days = []
+    previous_signal = None
+    for doc in docs:
+        doc_s = _serialize_doc(doc)
+        inference = doc_s.get("inference") or {}
+        macro_context = inference.get("macro_context") or macro_docs.get(doc_s.get("batch_date"), {})
+        signal = doc_s.get("signal") or inference.get("signal")
+        days.append(
+            {
+                "date": doc_s.get("batch_date"),
+                "ticker": ticker_u,
+                "prob_up": doc_s.get("prob_up") or inference.get("prob_up"),
+                "signal": signal,
+                "raw_signal": inference.get("raw_signal"),
+                "signal_changed": previous_signal is not None and signal != previous_signal,
+                "previous_signal": previous_signal,
+                "hysteresis_status": inference.get("hysteresis_status"),
+                "threshold_used": doc_s.get("threshold_used") or inference.get("threshold_used"),
+                "macro_context": macro_context,
+                "contribution_analysis": doc_s.get("contribution_analysis", {}),
+                "reasoning": doc_s.get("reasoning"),
+            }
+        )
+        previous_signal = signal
+
+    return {
+        "event": event or "custom_window",
+        "ticker": ticker_u,
+        "start": start,
+        "end": end,
+        "source": "mongo:bayesian_reports",
+        "days": days,
+        "total": len(days),
+        "notes": "Replay is observational only and does not rerun or alter trading logic.",
+    }
 
 
 # ─── Files ────────────────────────────────────────────────────────────────────
@@ -1810,6 +2126,7 @@ def mongo_stats(x_api_key: str = Header(default="")):
             "bayesian_reports": db["bayesian_reports"].count_documents({}),
             "bayesian_traces": db["bayesian_traces"].count_documents({}),
             "reports": db["reports"].count_documents({}),
+            "quant_audit_reports": db["quant_audit_reports"].count_documents({}),
         },
         "bayesian_traces_by_date": trace_dates,
     }
@@ -1835,6 +2152,8 @@ def mongo_setup_indexes(x_api_key: str = Header(default="")):
     created.append("reports: 1 indice unico")
     db["bayesian_traces"].create_index([("batch_date", ASCENDING)], unique=True)
     created.append("bayesian_traces: indice unico batch_date")
+    db["quant_audit_reports"].create_index([("report_date", ASCENDING)], unique=True)
+    created.append("quant_audit_reports: indice unico report_date")
     db["raw_news"].create_index([("batch_date", ASCENDING), ("ticker", ASCENDING)])
     created.append("raw_news: batch_date+ticker")
     db["ohlcv"].create_index([("batch_date", ASCENDING), ("ticker", ASCENDING)])

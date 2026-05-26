@@ -51,6 +51,12 @@ except ImportError:
     _mongo_distinct_raw_news_tickers = None
     logger.warning("mongo_utils no disponible en lambda_bayesian")
 
+try:
+    from quant_observability import compute_contribution_analysis
+except ImportError:
+    compute_contribution_analysis = None
+    logger.warning("quant_observability no disponible en lambda_bayesian")
+
 MODEL_CONFIG = {
     "version": "1.2.0",
     "description": (
@@ -326,6 +332,51 @@ def get_macro_context(batch_date: str) -> dict:
         return _mongo_read_macro_context(batch_date) or {}
     except Exception as exc:
         logger.warning(f"No se pudo leer macro_context: {exc}")
+        return {}
+
+
+def _prob_up_for_evidence(model, evidence_states: dict, macro_context: dict = None) -> float:
+    """Same probability path as infer_signal, isolated for audit attribution only."""
+    infer = VariableElimination(model)
+    result = infer.query(
+        variables=["MarketDirection"], evidence=evidence_states, show_progress=False
+    )
+    prob_up_raw = round(float(result.values[1]), 4)
+
+    macro_adjustment = 0.0
+    if macro_context:
+        macro_adjustment = float(macro_context.get("macro_adjustment", 0.0))
+
+    effective_macro_adj = macro_adjustment
+    if evidence_states.get("Trend") == "uptrend" and macro_adjustment < 0:
+        effective_macro_adj = macro_adjustment * 0.40
+
+    return round(max(0.0, min(1.0, prob_up_raw + effective_macro_adj)), 4)
+
+
+def build_contribution_analysis(model, evidence_states: dict, macro_context: dict = None) -> dict:
+    if compute_contribution_analysis is None:
+        return {}
+    try:
+        contribution = compute_contribution_analysis(
+            evidence_states,
+            probability_fn=lambda ev: _prob_up_for_evidence(model, ev, macro_context),
+            no_macro_probability_fn=lambda ev: _prob_up_for_evidence(model, ev, {}),
+        )
+        contribution["macro_context"] = {
+            "macro_adjustment": float((macro_context or {}).get("macro_adjustment", 0.0)),
+            "macro_sentiment": (macro_context or {}).get("macro_sentiment", "neutral"),
+            "risk_regime": (macro_context or {}).get("risk_regime", "NEUTRAL"),
+        }
+        deltas = {
+            key: value.get("delta_prob_up")
+            for key, value in contribution.get("effects", {}).items()
+            if isinstance(value, dict)
+        }
+        logger.info(f"contribution_analysis: deltas={deltas}")
+        return contribution
+    except Exception as exc:
+        logger.warning(f"contribution_analysis failed: {exc}")
         return {}
 
 
@@ -692,6 +743,9 @@ def handler(event, context):
                 raw_signal, prob_up, prob_down, macro_info = infer_signal(
                     model, evidence_states, macro_context
                 )
+                contribution_analysis = build_contribution_analysis(
+                    model, evidence_states, macro_context
+                )
 
                 # ── Hysteresis: consultar historial y confirmar señal ─────────
                 recent_sigs = get_recent_signals(
@@ -762,6 +816,7 @@ def handler(event, context):
                         ),
                         "macro_context": macro_info,
                     },
+                    "contribution_analysis": contribution_analysis,
                     "reasoning": reasoning,
                 }
                 if _mongo_upsert_bayesian_report:

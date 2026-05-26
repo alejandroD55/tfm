@@ -10,8 +10,10 @@ import os
 import sys
 import json
 import time
+import threading
 import logging
 import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone, date
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -90,6 +92,18 @@ MACRO_QUERIES = {
     "geopolitical": ["geopolitical tensions war conflict markets", "Russia Ukraine war sanctions economy"],
 }
 
+# Queries GDELT por ticker — misma lógica que ETF_SEARCH_TERMS en lambda_ingestion.
+# Se usan para enriquecer la ingesta histórica cuando Finnhub devuelve pocos artículos.
+TICKER_GDELT_QUERIES: Dict[str, List[str]] = {
+    "SPY":  ["SPY S&P 500 ETF stock market index", "S&P 500 index fund performance"],
+    "IWM":  ["IWM Russell 2000 small cap ETF", "Russell 2000 small cap stocks rally"],
+    "GLD":  ["GLD gold ETF price rally", "gold commodity price market hedge"],
+    "XLE":  ["XLE energy sector ETF oil stocks", "energy stocks oil gas price market"],
+    "NVDA": ["NVIDIA stock earnings AI semiconductor", "NVDA GPU artificial intelligence chips"],
+    "ARKK": ["ARK Innovation ETF Cathie Wood", "ARKK disruptive technology growth fund"],
+    "XBI":  ["XBI SPDR biotech ETF FDA approval", "biotech pharmaceutical drug approval stocks"],
+}
+
 RSS_FEEDS = {
     "reuters": "https://feeds.reuters.com/reuters/businessNews",
     "cnbc": "https://www.cnbc.com/id/20910258/device/rss/rss.html",
@@ -160,6 +174,30 @@ BUY_CONFIRMATION_DAYS:  int = MODEL_CONFIG["hysteresis"]["buy_confirmation_days"
 _finbert_pipeline = None
 _groq_client = None
 
+# =============================================================================
+# THREAD-SAFETY PRIMITIVES
+# =============================================================================
+# FinBERT (transformers pipeline) no es thread-safe para inferencia concurrente.
+# Todos los hilos deben adquirir este lock antes de llamar a FinBERT.
+_finbert_lock = threading.Lock()
+
+# Rate limiter preciso para Groq free tier (~30 rpm = 1 llamada cada 2s seguro).
+# _groq_last_ts guarda el timestamp de la última llamada completada.
+# _groq_ts_lock protege la lectura/escritura de ese timestamp.
+_GROQ_MIN_INTERVAL_S = 2.1          # segundos entre llamadas (margen sobre 30 rpm)
+_groq_last_ts: List[float] = [0.0]  # lista mutable para poder modificar desde closures
+_groq_ts_lock = threading.Lock()
+
+def _groq_rate_wait() -> None:
+    """Bloquea el hilo actual hasta que sea seguro lanzar otra llamada a Groq."""
+    with _groq_ts_lock:
+        now = time.time()
+        wait = _GROQ_MIN_INTERVAL_S - (now - _groq_last_ts[0])
+        if wait > 0:
+            time.sleep(wait)
+        _groq_last_ts[0] = time.time()
+
+
 def get_finbert():
     global _finbert_pipeline
     if _finbert_pipeline is None:
@@ -175,6 +213,13 @@ def get_groq_client():
     return _groq_client
 
 def extract_and_summarize(ticker: str, headline: str, url: str) -> str:
+    """
+    Descarga el artículo completo (trafilatura), lo resume con Groq/LLaMA y
+    devuelve el texto para que FinBERT clasifique sentimiento sobre contenido
+    real en lugar de solo el titular.
+
+    Thread-safe: usa _groq_rate_wait() en lugar de time.sleep() fijo.
+    """
     client = get_groq_client()
     try:
         resp = requests.get(url, timeout=5)
@@ -186,7 +231,7 @@ def extract_and_summarize(ticker: str, headline: str, url: str) -> str:
     if client:
         prompt = f"Ticker: {ticker}\nHeadline: {headline}\nContent:\n{content}\n\nSummarize this financial news objectively in 1 or 2 sentences, preserving its original tone. Do not invent information. Reply ONLY with the summary in plain text without markdown."
         try:
-            time.sleep(2) 
+            _groq_rate_wait()   # rate limiter preciso — reemplaza time.sleep fijo
             response = client.chat.completions.create(
                 model="llama-3.1-8b-instant",
                 messages=[{"role": "system", "content": "You are a financial analyst."}, {"role": "user", "content": prompt}],
@@ -198,9 +243,11 @@ def extract_and_summarize(ticker: str, headline: str, url: str) -> str:
     return headline
 
 def analyze_sentiment_local(headline: str) -> Optional[Dict]:
+    """Thread-safe: adquiere _finbert_lock antes de llamar al modelo."""
     if not headline or len(headline.strip()) < 20: return None
     try:
-        results = get_finbert()(headline)[0]
+        with _finbert_lock:
+            results = get_finbert()(headline)[0]
         label, score = results["label"].lower(), float(results["score"])
         if score < 0.55: return None
         lmap = {"positive": "bullish", "negative": "bearish", "neutral": "neutral"}
@@ -214,13 +261,13 @@ def run_finbert_macro_local(articles: list) -> dict:
     
     weighted_sum = 0.0; weight_total = 0.0; scored = 0
     distribution = {"bullish": 0, "neutral": 0, "bearish": 0}
-    finbert = get_finbert()
-    
+
     for art in articles[:50]:
         headline = art.get("headline", "")
         if len(headline) < 20: continue
         try:
-            res = finbert(headline)[0]
+            with _finbert_lock:
+                res = get_finbert()(headline)[0]
             score = float(res['score'])
             label = res['label'].lower()
             if score < 0.55: continue
@@ -289,8 +336,9 @@ def build_reasoning_local(evidence_states, prob_up, signal):
 from mongo_utils import (
     upsert_raw_news, upsert_ohlcv_bulk, upsert_news, upsert_filtered_news,
     upsert_bayesian_report, upsert_bayesian_trace, upsert_macro_context, 
-    upsert_report, upsert_macro_news, read_macro_news
+    upsert_report, upsert_macro_news, read_macro_news, upsert_quant_audit_report
 )
+from quant_observability import compute_contribution_analysis, compute_quant_audit_report
 
 def get_db_connection():
     return psycopg2.connect(
@@ -336,7 +384,9 @@ def get_trading_data(connection, report_date, days_back=DAYS_BACK):
         end_date = pd.to_datetime(report_date).date()
         start_date = end_date - timedelta(days=days_back)
         query = """
-            SELECT ts.batch_date, ts.ticker, ts.signal, ti.close_price
+            SELECT ts.batch_date, ts.ticker, ts.signal, ts.prob_up, ts.prob_down,
+                   ti.close_price, ti.rsi_14, ti.sma_20, ti.sma_50,
+                   ti.bb_upper, ti.bb_middle, ti.bb_lower
             FROM trading_signals ts
             JOIN technical_indicators ti ON ts.batch_date = ti.batch_date AND ts.ticker = ti.ticker
             WHERE ts.batch_date >= %s AND ts.batch_date <= %s 
@@ -344,12 +394,40 @@ def get_trading_data(connection, report_date, days_back=DAYS_BACK):
         """
         cursor.execute(query, (start_date, end_date))
         signals_df = pd.DataFrame(
-            cursor.fetchall(), columns=["batch_date", "ticker", "signal", "close_price"]
+            cursor.fetchall(),
+            columns=[
+                "batch_date", "ticker", "signal", "prob_up", "prob_down",
+                "close_price", "rsi_14", "sma_20", "sma_50",
+                "bb_upper", "bb_middle", "bb_lower"
+            ]
         )
         cursor.close()
         return signals_df
     except Exception:
         raise
+
+def get_signal_outcomes(connection, report_date, days_back=DAYS_BACK):
+    try:
+        cursor = connection.cursor()
+        end_date = pd.to_datetime(report_date).date()
+        start_date = end_date - timedelta(days=days_back)
+        cursor.execute("""
+            SELECT batch_date, ticker, signal, prob_up, outcome_d1, outcome_d3,
+                   outcome_d5, correct_d1, correct_d3, correct_d5
+            FROM signal_outcomes
+            WHERE batch_date >= %s AND batch_date <= %s
+            ORDER BY batch_date, ticker
+        """, (start_date, end_date))
+        cols = [
+            "batch_date", "ticker", "signal", "prob_up", "outcome_d1", "outcome_d3",
+            "outcome_d5", "correct_d1", "correct_d3", "correct_d5"
+        ]
+        rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
+        cursor.close()
+        return rows
+    except Exception as exc:
+        logger.warning(f"No se pudieron leer signal_outcomes para auditoria: {exc}")
+        return []
 
 # =============================================================================
 # DATOS Y LÓGICA DE BACKTESTING
@@ -392,6 +470,141 @@ def fetch_news_historical(ticker: str, start_d: date, end_d: date) -> Dict[str, 
         current = next_m
     with open(cache_file, "w", encoding="utf-8") as fh: json.dump(news_by_date, fh)
     return news_by_date
+
+def fetch_gdelt_ticker_news_historical(ticker: str, start_d: date, end_d: date) -> Dict[str, List]:
+    """
+    Pre-fetcha artículos de GDELT v2 para un ticker concreto sobre todo el rango del backtest.
+    Usa TICKER_GDELT_QUERIES para queries específicos por ticker.
+    Resultado cacheado en disco para no repetir llamadas en re-ejecuciones.
+
+    Retorna {date_str: [article_dict, ...]} en el mismo formato que fetch_news_historical().
+    """
+    cache_file = CACHE_DIR / "news" / f"gdelt_{ticker}_{start_d.strftime('%Y%m')}_{end_d.strftime('%Y%m')}.json"
+    if cache_file.exists():
+        with open(cache_file, encoding="utf-8") as fh:
+            return json.load(fh)
+
+    queries = TICKER_GDELT_QUERIES.get(ticker, [ticker])
+    news_by_date: Dict[str, List] = {}
+    business_days = pd.bdate_range(start=str(start_d), end=str(end_d))
+
+    logger.info(f"[GDELT ticker] Pre-fetching {ticker} ({len(business_days)} días, {len(queries)} queries)…")
+    for bd in business_days:
+        target_date = bd.date()
+        date_str = target_date.strftime("%Y-%m-%d")
+        seen: set = set()
+        day_articles: List = []
+
+        for query in queries:
+            for art in fetch_gdelt_news(query, target_date, n=5):
+                title = art.get("title", "").strip()
+                url   = art.get("url", "")
+                if not title:
+                    continue
+                fp = _fingerprint(url, title)
+                if fp in seen:
+                    continue
+                seen.add(fp)
+                raw_dt = art.get("seendate", "")
+                try:
+                    pub_dt = datetime.strptime(raw_dt, "%Y%m%dT%H%M%SZ").isoformat()
+                except Exception:
+                    pub_dt = date_str
+                day_articles.append({
+                    "headline": title,
+                    "url":      url,
+                    "source":   art.get("domain", "gdelt"),
+                    "datetime": pub_dt,
+                    "summary":  "",
+                })
+            time.sleep(0.3)   # cortesía con la API pública de GDELT
+
+        if day_articles:
+            news_by_date[date_str] = day_articles
+
+    with open(cache_file, "w", encoding="utf-8") as fh:
+        json.dump(news_by_date, fh)
+
+    total_arts = sum(len(v) for v in news_by_date.values())
+    logger.info(f"[GDELT ticker] {ticker}: {total_arts} artículos en {len(news_by_date)} días → cacheado")
+    return news_by_date
+
+
+def fetch_yfinance_ticker_news(ticker: str, target_date_str: str) -> List[Dict]:
+    """
+    Obtiene noticias recientes de Yahoo Finance para un ticker.
+    IMPORTANTE: yfinance solo devuelve noticias del feed actual (~últimos 7-14 días),
+    no tiene acceso histórico real. En backtesting solo aportará artículos cuando
+    target_date_str coincida con el período de ejecución (últimos días del rango).
+    En producción (pipeline diario) esta función es muy valiosa.
+    """
+    try:
+        raw = yf.Ticker(ticker).news or []
+        articles = []
+        for item in raw:
+            # yfinance ≥0.2.x anida el contenido en item["content"]
+            content  = item.get("content", item)
+            headline = (content.get("title") or item.get("title") or "").strip()
+            if not headline:
+                continue
+            url_data = content.get("canonicalUrl") or {}
+            url      = (url_data.get("url") if isinstance(url_data, dict) else "") or item.get("link", "")
+            provider = content.get("provider") or {}
+            source   = (provider.get("displayName") if isinstance(provider, dict) else "") or "yahoo_finance"
+            pub_date = content.get("pubDate") or item.get("providerPublishTime") or ""
+
+            # Normalizar fecha de publicación
+            pub_str = ""
+            if isinstance(pub_date, (int, float)):
+                pub_str = datetime.utcfromtimestamp(pub_date).strftime("%Y-%m-%d")
+            elif isinstance(pub_date, str) and pub_date:
+                pub_str = pub_date[:10]
+
+            # Solo incluir si la fecha coincide con el día objetivo
+            if pub_str and pub_str != target_date_str:
+                continue
+
+            articles.append({
+                "headline": headline,
+                "url":      url,
+                "source":   source,
+                "datetime": pub_date if isinstance(pub_date, str) else str(pub_date),
+                "summary":  "",
+            })
+        return articles
+    except Exception as e:
+        logger.debug(f"[YFinance news] {ticker}: {e}")
+        return []
+
+
+def merge_ticker_articles(
+    finnhub_arts: List[Dict],
+    gdelt_arts:   List[Dict],
+    yfinance_arts: List[Dict],
+) -> List[Dict]:
+    """
+    Combina artículos de las 3 fuentes con deduplicación por fingerprint.
+    Orden de prioridad: Finnhub → GDELT → YFinance.
+    """
+    seen_fps: set = set()
+    seen_titles: set = set()
+    merged: List[Dict] = []
+
+    for art in finnhub_arts + gdelt_arts + yfinance_arts:
+        headline = art.get("headline", "").strip()
+        url      = art.get("url", "")
+        if not headline:
+            continue
+        fp    = _fingerprint(url, headline)
+        title = headline.lower()
+        if fp in seen_fps or title in seen_titles:
+            continue
+        seen_fps.add(fp)
+        seen_titles.add(title)
+        merged.append(art)
+
+    return merged
+
 
 def fetch_vix_historical(start_d: date, end_d: date) -> pd.Series:
     df = yf.download("^VIX", start=str(start_d - timedelta(days=5)), end=str(end_d + timedelta(days=1)), progress=False)
@@ -793,6 +1006,229 @@ def compute_benchmark(signals_df):
     return benchmark
 
 # =============================================================================
+# 4b. WORKER POR TICKER (thread-safe, conexión PG propia)
+# =============================================================================
+def _process_ticker_day(
+    ticker: str,
+    date_str: str,
+    run_id: str,
+    ohlcv_all: Dict,
+    news_all: Dict,
+    gdelt_ticker_news: Dict,
+    macro_adj: float,
+    macro_sentiment: str,
+    risk_regime: str,
+    signal_history: List[str],   # copia del historial del ticker (no compartida)
+) -> Optional[Dict]:
+    """
+    Procesa un ticker para un día concreto en un hilo independiente.
+
+    - Crea su propia conexión PostgreSQL (psycopg2 no es thread-safe).
+    - Usa _finbert_lock para inferencia FinBERT y _groq_rate_wait() para Groq.
+    - Devuelve un dict con trace_data, signal_record, new_history y kpis_delta,
+      o None si el ticker no tiene datos OHLCV para esa fecha.
+    """
+    thread_conn = None
+    try:
+        thread_conn = get_db_connection()
+
+        ohlcv_df = ohlcv_all.get(ticker)
+        ind = calculate_indicators_for_date(ohlcv_df, date_str) if ohlcv_df is not None else None
+        if not ind:
+            return None
+
+        # ── OHLCV → MongoDB + Aurora ────────────────────────────────────────
+        target_dt = pd.to_datetime(date_str)
+        if target_dt in ohlcv_df.index:
+            row_data = ohlcv_df.loc[target_dt]
+            upsert_ohlcv_bulk(date_str, ticker, [{
+                "date": date_str, "close": ind["close"],
+                "open":   float(row_data.get("Open",   0) or 0),
+                "high":   float(row_data.get("High",   0) or 0),
+                "low":    float(row_data.get("Low",    0) or 0),
+                "volume": float(row_data.get("Volume", 0) or 0),
+            }])
+
+        with thread_conn.cursor() as c:
+            c.execute("""
+                INSERT INTO technical_indicators
+                    (batch_date, ticker, close_price, rsi_14, sma_20, sma_50, bb_upper, bb_middle, bb_lower)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (batch_date, ticker) DO NOTHING
+            """, (date_str, ticker, ind["close"], ind["rsi_14"], ind["sma_20"],
+                  ind["sma_50"], ind["bb_upper"], ind["bb_middle"], ind["bb_lower"]))
+        thread_conn.commit()
+
+        # ── Ingesta multi-fuente ─────────────────────────────────────────────
+        finnhub_arts  = news_all.get(ticker, {}).get(date_str, [])
+        gdelt_arts    = gdelt_ticker_news.get(ticker, {}).get(date_str, [])
+        yfinance_arts = fetch_yfinance_ticker_news(ticker, date_str)
+        articles      = merge_ticker_articles(finnhub_arts, gdelt_arts, yfinance_arts)
+
+        if articles:
+            upsert_raw_news(date_str, ticker, articles)
+            logger.debug(
+                f"[ingesta] {ticker} {date_str}: "
+                f"Finnhub={len(finnhub_arts)} GDELT={len(gdelt_arts)} "
+                f"YF={len(yfinance_arts)} → merged={len(articles)}"
+            )
+
+        # ── Groq (LLM) + FinBERT por artículo ───────────────────────────────
+        processed_headlines: List[str] = []
+        sentiment_samples:   List[Dict] = []
+        kpis = {"total_headlines": 0, "processed_headlines": 0}
+
+        for art in articles[:20]:
+            kpis["total_headlines"] += 1
+            # extract_and_summarize usa _groq_rate_wait() → thread-safe
+            summary = extract_and_summarize(ticker, art.get("headline", ""), art.get("url", ""))
+            # analyze_sentiment_local usa _finbert_lock → thread-safe
+            sdata = analyze_sentiment_local(summary)
+
+            if sdata:
+                kpis["processed_headlines"] += 1
+                upsert_news(date_str, ticker, art, sdata)
+                sentiment_samples.append({
+                    "headline": summary,
+                    "sentiment": sdata["sentiment"],
+                    "confidence": sdata["confidence"],
+                })
+                with thread_conn.cursor() as c:
+                    c.execute("""
+                        INSERT INTO sentiment_scores
+                            (batch_date, ticker, headline, sentiment, confidence, justification)
+                        VALUES (%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT (batch_date, ticker, headline) DO NOTHING
+                    """, (date_str, ticker, art.get("headline", "")[:250],
+                          sdata["sentiment"], sdata["confidence"], sdata["justification"]))
+                thread_conn.commit()
+                processed_headlines.append(summary)
+
+        if processed_headlines:
+            upsert_filtered_news(date_str, ticker, processed_headlines, "Backtest local")
+
+        # ── Agregación de sentimiento y evidencias ───────────────────────────
+        dom_sent, best_conf, sentiment_detail = aggregate_sentiment_local(sentiment_samples)
+
+        evidence = {
+            "Sentiment": dom_sent,
+            "RSI":        "oversold" if ind["rsi_14"] < 30 else ("overbought" if ind["rsi_14"] > 70 else "neutral"),
+            "Trend":      "uptrend"  if (ind["sma_20"] and ind["sma_50"] and ind["sma_20"] > ind["sma_50"]) else "downtrend",
+            "Volatility": "high"     if (ind["bb_width"] and ind["bb_width"] > 0.05) else "low",
+        }
+
+        # ── Inferencia bayesiana ─────────────────────────────────────────────
+        raw_signal, prob_up = run_bayesian_inference(evidence, macro_adj)
+
+        try:
+            contribution_analysis = compute_contribution_analysis(
+                evidence,
+                probability_fn=lambda ev, adj=macro_adj: run_bayesian_inference(ev, adj)[1],
+                no_macro_probability_fn=lambda ev: run_bayesian_inference(ev, 0.0)[1],
+            )
+            contribution_analysis["macro_context"] = {
+                "macro_sentiment": macro_sentiment,
+                "risk_regime":     risk_regime,
+                "macro_adjustment": macro_adj,
+            }
+        except Exception as exc:
+            logger.warning(f"contribution_analysis fallo para {ticker} {date_str}: {exc}")
+            contribution_analysis = {}
+
+        # ── Hysteresis (sobre la copia local del historial) ──────────────────
+        confirmed_signal, hysteresis_status = apply_hysteresis_signal(raw_signal, signal_history)
+        new_history = (signal_history + [confirmed_signal])[-SELL_CONFIRMATION_DAYS:]
+
+        if raw_signal != confirmed_signal:
+            logger.debug(
+                f"[HYSTERESIS] {ticker} {date_str}: raw={raw_signal} "
+                f"→ confirmed={confirmed_signal} ({hysteresis_status})"
+            )
+
+        signal   = confirmed_signal
+        reasoning = build_reasoning_local(evidence, prob_up, signal)
+
+        # ── Trace + persistencia ─────────────────────────────────────────────
+        trace_data = {
+            "raw_values": {
+                "close_price": ind["close"], "rsi_14": ind["rsi_14"],
+                "sma_20": ind["sma_20"], "sma_50": ind["sma_50"],
+                "bb_upper": ind["bb_upper"], "bb_lower": ind["bb_lower"],
+                "bb_width_ratio": ind["bb_width"],
+            },
+            "discretization": {
+                "sentiment_raw": dom_sent, "sentiment_conf": best_conf,
+                "sentiment_state": evidence["Sentiment"], "rsi_state": evidence["RSI"],
+                "trend_state": evidence["Trend"], "volatility_state": evidence["Volatility"],
+            },
+            "sentiment_detail": sentiment_detail,
+            "inference": {
+                "signal":            signal,
+                "raw_signal":        raw_signal,
+                "hysteresis_status": hysteresis_status,
+                "prob_up":           prob_up,
+                "prob_down":         round(1 - prob_up, 4),
+                "threshold_used": (
+                    MODEL_CONFIG["signal_thresholds"]["BUY"]["prob_up_above"]
+                    if signal == "BUY"
+                    else MODEL_CONFIG["signal_thresholds"]["SELL"]["prob_up_below"]
+                ),
+                "macro_context": {
+                    "macro_sentiment":  macro_sentiment,
+                    "risk_regime":      risk_regime,
+                    "macro_adjustment": macro_adj,
+                },
+            },
+            "contribution_analysis": contribution_analysis,
+            "reasoning": reasoning,
+        }
+        upsert_bayesian_report(date_str, ticker, trace_data, MODEL_CONFIG["version"])
+
+        pg_upsert_signal(thread_conn, date_str, ticker, signal, prob_up, round(1 - prob_up, 4))
+        with thread_conn.cursor() as c:
+            c.execute("""
+                INSERT INTO signal_explanations
+                    (batch_date, ticker, sentiment_state, rsi_state, trend_state, volatility_state)
+                VALUES (%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (batch_date, ticker) DO UPDATE SET
+                    sentiment_state=EXCLUDED.sentiment_state,
+                    rsi_state=EXCLUDED.rsi_state,
+                    trend_state=EXCLUDED.trend_state,
+                    volatility_state=EXCLUDED.volatility_state
+            """, (date_str, ticker, evidence["Sentiment"], evidence["RSI"],
+                  evidence["Trend"], evidence["Volatility"]))
+        thread_conn.commit()
+
+        signal_record = {
+            "batch_date": date_str, "ticker": ticker, "run_id": run_id,
+            "signal": signal, "prob_up": prob_up, "prob_down": round(1 - prob_up, 4),
+            "close_price": ind["close"],
+            "sentiment_state": evidence["Sentiment"], "rsi_state": evidence["RSI"],
+            "trend_state": evidence["Trend"],         "volatility_state": evidence["Volatility"],
+            "macro_sentiment": macro_sentiment, "risk_regime": risk_regime,
+            "macro_adjustment": macro_adj,
+        }
+
+        return {
+            "ticker":        ticker,
+            "trace_data":    trace_data,
+            "signal_record": signal_record,
+            "new_history":   new_history,
+            "kpis":          kpis,
+        }
+
+    except Exception as e:
+        logger.error(f"[thread] Error procesando {ticker} {date_str}: {e}", exc_info=True)
+        return None
+    finally:
+        if thread_conn:
+            try:
+                thread_conn.close()
+            except Exception:
+                pass
+
+
+# =============================================================================
 # 5. LOOP MAESTRO
 # =============================================================================
 def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
@@ -805,9 +1241,27 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
 
     # ── 1. DESCARGA INICIAL DE DATOS ──
     # Para poder calcular indicadores en start_d, la lambda descarga días extra.
-    ohlcv_all = fetch_ohlcv_all(active_tickers, start_d, end_d)
+    ohlcv_all  = fetch_ohlcv_all(active_tickers, start_d, end_d)
     vix_series = fetch_vix_historical(start_d, end_d)
-    news_all = {t: fetch_news_historical(t, start_d, end_d) for t in active_tickers}
+
+    # ── Prefetch paralelo de noticias (Finnhub + GDELT) ──────────────────────
+    # Ambas fuentes son independientes por ticker y usan caché en disco.
+    # max_workers=2 para respetar rate limits de GDELT (API pública compartida).
+    def _prefetch_ticker_news(ticker: str):
+        f = fetch_news_historical(ticker, start_d, end_d)
+        g = fetch_gdelt_ticker_news_historical(ticker, start_d, end_d)
+        return ticker, f, g
+
+    logger.info(f"⬇ Prefetching noticias en paralelo para {active_tickers}…")
+    news_all: Dict[str, Dict] = {}
+    gdelt_ticker_news: Dict[str, Dict] = {}
+    with ThreadPoolExecutor(max_workers=min(2, len(active_tickers))) as exe:
+        prefetch_futs = {exe.submit(_prefetch_ticker_news, t): t for t in active_tickers}
+        for fut in as_completed(prefetch_futs):
+            t, finnhub_data, gdelt_data = fut.result()
+            news_all[t]           = finnhub_data
+            gdelt_ticker_news[t]  = gdelt_data
+    logger.info("✅ Prefetch completado")
 
     conn = get_db_connection()
     get_bn_model()
@@ -822,6 +1276,14 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
     # ── Hysteresis: historial de señales CONFIRMADAS por ticker (ventana deslizante) ──
     # Se mantiene entre días para detectar N SELLs consecutivos antes de salir.
     signal_history_per_ticker: dict = {t: [] for t in active_tickers}
+
+    # ── ThreadPoolExecutor para procesamiento paralelo por ticker ─────────────
+    # Se crea UNA SOLA VEZ fuera del loop y se reutiliza en cada día.
+    # max_workers = nº de tickers activos → paralelismo exacto como Step Functions.
+    ticker_executor = ThreadPoolExecutor(
+        max_workers=len(active_tickers),
+        thread_name_prefix="ticker-worker",
+    )
 
     # ── 2. BUCLE DIARIO ──
     for bd in tqdm(business_days, desc="Simulando días", unit="día"):
@@ -865,148 +1327,34 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
                 conn.rollback()
                 logger.error(f"Error insertando tablas macro: {e}")
 
-        # --- B) Procesamiento por Ticker (Clon lambda_sentiment / lambda_indicators / lambda_bayesian) ---
-        tickers_trace = {}
-        daily_signals_for_outcomes = []
+        # --- B) Procesamiento por Ticker — PARALELO (Clon Map State de Step Functions) ---
+        # Cada ticker corre en su propio hilo con su propia conexión PG.
+        # max_workers = número de tickers activos (≤5); todos son independientes entre sí.
+        tickers_trace: Dict = {}
+        daily_signals_for_outcomes: List = []
 
-        for ticker in active_tickers:
-            ohlcv_df = ohlcv_all.get(ticker)
-            ind = calculate_indicators_for_date(ohlcv_df, date_str) if ohlcv_df is not None else None
-            if not ind: continue
-            
-            # Guardar OHLCV en BD
-            target_dt = pd.to_datetime(date_str)
-            if target_dt in ohlcv_df.index:
-                row_data = ohlcv_df.loc[target_dt]
-                upsert_ohlcv_bulk(date_str, ticker, [{
-                    "date": date_str, "close": ind["close"], 
-                    "open": float(row_data.get("Open", 0) or 0), 
-                    "high": float(row_data.get("High", 0) or 0), 
-                    "low": float(row_data.get("Low", 0) or 0), 
-                    "volume": float(row_data.get("Volume", 0) or 0)
-                }])
+        ticker_futures = {
+            ticker_executor.submit(
+                _process_ticker_day,
+                ticker, date_str, run_id,
+                ohlcv_all, news_all, gdelt_ticker_news,
+                macro_adj, macro_sentiment, risk_regime,
+                list(signal_history_per_ticker[ticker]),  # copia — evita race condition
+            ): ticker
+            for ticker in active_tickers
+        }
 
-            if conn:
-                with conn.cursor() as c:
-                    c.execute("""
-                        INSERT INTO technical_indicators (batch_date, ticker, close_price, rsi_14, sma_20, sma_50, bb_upper, bb_middle, bb_lower)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                        ON CONFLICT (batch_date, ticker) DO NOTHING
-                    """, (date_str, ticker, ind["close"], ind["rsi_14"], ind["sma_20"], ind["sma_50"], ind["bb_upper"], ind["bb_middle"], ind["bb_lower"]))
-                conn.commit()
-
-            # Noticias y Sentiment
-            articles = news_all.get(ticker, {}).get(date_str, [])
-            if articles: upsert_raw_news(date_str, ticker, articles)
-
-            processed_headlines_ticker = []
-            sentiment_samples = []
-            
-            for art in articles[:5]:
-                global_kpis["total_headlines"] += 1
-                summary = extract_and_summarize(ticker, art.get("headline", ""), art.get("url", ""))
-                sdata = analyze_sentiment_local(summary)
-                
-                if sdata:
-                    global_kpis["processed_headlines"] += 1
-                    upsert_news(date_str, ticker, art, sdata)
-                    sentiment_samples.append({"headline": summary, "sentiment": sdata["sentiment"], "confidence": sdata["confidence"]})
-                    
-                    if conn:
-                        with conn.cursor() as c:
-                            c.execute("""
-                                INSERT INTO sentiment_scores (batch_date, ticker, headline, sentiment, confidence, justification)
-                                VALUES (%s,%s,%s,%s,%s,%s)
-                                ON CONFLICT (batch_date, ticker, headline) DO NOTHING
-                            """, (date_str, ticker, art.get("headline", "")[:250], sdata["sentiment"], sdata["confidence"], sdata["justification"]))
-                        conn.commit()
-                    processed_headlines_ticker.append(summary)
-            
-            if processed_headlines_ticker:
-                upsert_filtered_news(date_str, ticker, processed_headlines_ticker, "Backtest local")
-            
-            dom_sent, best_conf, sentiment_detail = aggregate_sentiment_local(sentiment_samples)
-
-            evidence = {
-                "Sentiment": dom_sent,
-                "RSI": "oversold" if ind["rsi_14"] < 30 else ("overbought" if ind["rsi_14"] > 70 else "neutral"),
-                "Trend": "uptrend" if (ind["sma_20"] and ind["sma_50"] and ind["sma_20"] > ind["sma_50"]) else "downtrend",
-                "Volatility": "high" if (ind["bb_width"] and ind["bb_width"] > 0.05) else "low"
-            }
-            
-            raw_signal, prob_up = run_bayesian_inference(evidence, macro_adj)
-
-            # ── Hysteresis: filtro de persistencia ────────────────────────────
-            confirmed_signal, hysteresis_status = apply_hysteresis_signal(
-                raw_signal, signal_history_per_ticker[ticker]
-            )
-            # Actualizar ventana deslizante (guardamos la señal CONFIRMADA)
-            signal_history_per_ticker[ticker] = (
-                signal_history_per_ticker[ticker] + [confirmed_signal]
-            )[-SELL_CONFIRMATION_DAYS:]
-
-            signal = confirmed_signal  # downstream usa siempre la señal confirmada
-
-            if raw_signal != confirmed_signal:
-                logger.debug(
-                    f"[HYSTERESIS] {ticker} {date_str}: raw={raw_signal} "
-                    f"→ confirmed={confirmed_signal} ({hysteresis_status})"
-                )
-
-            reasoning = build_reasoning_local(evidence, prob_up, signal)
-
-            # Recolectamos la señal para outcomes
-            daily_signals_for_outcomes.append({
-                "batch_date": date_str, "ticker": ticker, "run_id": run_id, "signal": signal,
-                "prob_up": prob_up, "prob_down": round(1 - prob_up, 4), "close_price": ind["close"],
-                "sentiment_state": evidence["Sentiment"], "rsi_state": evidence["RSI"],
-                "trend_state": evidence["Trend"], "volatility_state": evidence["Volatility"],
-                "macro_sentiment": macro_sentiment, "risk_regime": risk_regime, "macro_adjustment": macro_adj
-            })
-
-            trace_data = {
-                "raw_values": {
-                    "close_price": ind["close"], "rsi_14": ind["rsi_14"],
-                    "sma_20": ind["sma_20"], "sma_50": ind["sma_50"],
-                    "bb_upper": ind["bb_upper"], "bb_lower": ind["bb_lower"], "bb_width_ratio": ind["bb_width"]
-                },
-                "discretization": {
-                    "sentiment_raw": dom_sent, "sentiment_conf": best_conf,
-                    "sentiment_state": evidence["Sentiment"], "rsi_state": evidence["RSI"],
-                    "trend_state": evidence["Trend"], "volatility_state": evidence["Volatility"]
-                },
-                "sentiment_detail": sentiment_detail,
-                "inference": {
-                    "signal":            signal,
-                    "raw_signal":        raw_signal,
-                    "hysteresis_status": hysteresis_status,
-                    "prob_up":  prob_up,
-                    "prob_down": round(1 - prob_up, 4),
-                    "threshold_used": (
-                        MODEL_CONFIG["signal_thresholds"]["BUY"]["prob_up_above"]
-                        if signal == "BUY"
-                        else MODEL_CONFIG["signal_thresholds"]["SELL"]["prob_up_below"]
-                    ),
-                    "macro_context": {
-                        "macro_sentiment": macro_sentiment,
-                        "risk_regime":     risk_regime,
-                        "macro_adjustment": macro_adj,
-                    },
-                },
-                "reasoning": reasoning,
-            }
-            upsert_bayesian_report(date_str, ticker, trace_data, MODEL_CONFIG["version"])
-            tickers_trace[ticker] = trace_data
-
-            if conn:
-                pg_upsert_signal(conn, date_str, ticker, signal, prob_up, round(1-prob_up, 4))
-                with conn.cursor() as c:
-                    c.execute("""
-                        INSERT INTO signal_explanations (batch_date, ticker, sentiment_state, rsi_state, trend_state, volatility_state)
-                        VALUES (%s,%s,%s,%s,%s,%s)
-                        ON CONFLICT (batch_date, ticker) DO UPDATE SET sentiment_state=EXCLUDED.sentiment_state, rsi_state=EXCLUDED.rsi_state, trend_state=EXCLUDED.trend_state, volatility_state=EXCLUDED.volatility_state
-                    """, (date_str, ticker, evidence["Sentiment"], evidence["RSI"], evidence["Trend"], evidence["Volatility"]))
-                conn.commit()
+        for fut in as_completed(ticker_futures):
+            result = fut.result()
+            if result is None:
+                continue
+            t = result["ticker"]
+            # Actualizar estado compartido desde el hilo principal (sin races)
+            tickers_trace[t]                  = result["trace_data"]
+            daily_signals_for_outcomes.append(result["signal_record"])
+            signal_history_per_ticker[t]      = result["new_history"]
+            global_kpis["total_headlines"]    += result["kpis"]["total_headlines"]
+            global_kpis["processed_headlines"] += result["kpis"]["processed_headlines"]
 
         upsert_bayesian_trace(date_str, {"tickers": tickers_trace, "model_config": MODEL_CONFIG})
         
@@ -1018,6 +1366,13 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
             benchmark = compute_benchmark(hist_signals_df) if not hist_signals_df.empty else {}
             health = get_pipeline_health(conn, date_str, run_id) if run_id else {}
             explanations = get_explanations_sample(conn, date_str, limit=10)
+            quant_audit_report = compute_quant_audit_report(
+                date_str,
+                hist_signals_df.to_dict("records") if not hist_signals_df.empty else [],
+                outcome_rows=get_signal_outcomes(conn, date_str, days_back=DAYS_BACK),
+                model_config=MODEL_CONFIG,
+            )
+            upsert_quant_audit_report(date_str, quant_audit_report)
             
             report_data = {
                 "report_date": date_str,
@@ -1042,7 +1397,8 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
                     "total_closed_trades": sum(item.get("trades_closed", 0) for item in diagnostics.values()) if diagnostics else 0,
                 },
                 "backtesting_config": {"initial_capital": INITIAL_CAP, "risk_free_rate": RISK_FREE_RATE, "period_days": DAYS_BACK, "strategy_type": "Long/Cash", "sharpe_annualized": True, "limitation": "El backtesting asume ejecucion al cierre. Estrategia Long/Cash: BUY entra al mercado, SELL cierra posicion, HOLD mantiene posicion abierta."},
-                "trace_artifact": f"mongo:bayesian_traces/{date_str}"
+                "trace_artifact": f"mongo:bayesian_traces/{date_str}",
+                "quant_audit_artifact": f"mongo:quant_audit_reports/{date_str}",
             }
             upsert_report(report_data)
         
@@ -1052,6 +1408,7 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
         if conn and daily_signals_for_outcomes:
             update_signal_outcomes_historical(conn, daily_signals_for_outcomes)
 
+    ticker_executor.shutdown(wait=True)
     if conn: conn.close()
     logger.info("✅ BACKTESTING COMPLETADO")
 

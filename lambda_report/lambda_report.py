@@ -23,8 +23,25 @@ except ImportError:
     _mongo_upsert_report = None
     logger.warning("mongo_utils no disponible en lambda_report")
 
+try:
+    from mongo_utils import upsert_quant_audit_report as _mongo_upsert_quant_audit_report
+except ImportError:
+    _mongo_upsert_quant_audit_report = None
+    logger.warning("mongo_utils quant_audit no disponible en lambda_report")
+
+try:
+    from quant_observability import compute_quant_audit_report
+except ImportError:
+    compute_quant_audit_report = None
+
 # --- CONFIGURACIÓN GLOBAL ---
 DAYS_BACK = 365
+MODEL_AUDIT_CONFIG = {
+    "signal_thresholds": {
+        "BUY": {"prob_up_above": 0.52},
+        "SELL": {"prob_up_below": 0.28},
+    }
+}
 
 
 def resolve_batch_date(event):
@@ -105,7 +122,9 @@ def get_trading_data(connection, report_date, days_back=DAYS_BACK):
         end_date = pd.to_datetime(report_date).date()
         start_date = end_date - timedelta(days=days_back)
         query = """
-            SELECT ts.batch_date, ts.ticker, ts.signal, ti.close_price
+            SELECT ts.batch_date, ts.ticker, ts.signal, ts.prob_up, ts.prob_down,
+                   ti.close_price, ti.rsi_14, ti.sma_20, ti.sma_50,
+                   ti.bb_upper, ti.bb_middle, ti.bb_lower
             FROM trading_signals ts
             JOIN technical_indicators ti ON ts.batch_date = ti.batch_date AND ts.ticker = ti.ticker
             WHERE ts.batch_date >= %s AND ts.batch_date <= %s 
@@ -113,12 +132,44 @@ def get_trading_data(connection, report_date, days_back=DAYS_BACK):
         """
         cursor.execute(query, (start_date, end_date))
         signals_df = pd.DataFrame(
-            cursor.fetchall(), columns=["batch_date", "ticker", "signal", "close_price"]
+            cursor.fetchall(),
+            columns=[
+                "batch_date", "ticker", "signal", "prob_up", "prob_down",
+                "close_price", "rsi_14", "sma_20", "sma_50",
+                "bb_upper", "bb_middle", "bb_lower"
+            ],
         )
         cursor.close()
         return signals_df
     except Exception:
         raise
+
+
+def get_signal_outcomes(connection, report_date, days_back=DAYS_BACK):
+    try:
+        cursor = connection.cursor()
+        end_date = pd.to_datetime(report_date).date()
+        start_date = end_date - timedelta(days=days_back)
+        cursor.execute(
+            """
+            SELECT batch_date, ticker, signal, prob_up, outcome_d1, outcome_d3,
+                   outcome_d5, correct_d1, correct_d3, correct_d5
+            FROM signal_outcomes
+            WHERE batch_date >= %s AND batch_date <= %s
+            ORDER BY batch_date, ticker
+            """,
+            (start_date, end_date),
+        )
+        cols = [
+            "batch_date", "ticker", "signal", "prob_up", "outcome_d1",
+            "outcome_d3", "outcome_d5", "correct_d1", "correct_d3", "correct_d5",
+        ]
+        rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
+        cursor.close()
+        return rows
+    except Exception as exc:
+        logger.warning(f"No se pudieron leer signal_outcomes para auditoria: {exc}")
+        return []
 
 
 def calculate_backtesting_metrics(signals_df):
@@ -516,6 +567,18 @@ def handler(event, context):
         pipeline_health = get_pipeline_health(connection, today, ctx["run_id"])
         explanations = get_explanations_sample(connection, today, limit=10)
         benchmark = compute_benchmark(signals_df) if not signals_df.empty else {}
+        quant_audit_report = None
+        if compute_quant_audit_report and _mongo_upsert_quant_audit_report:
+            try:
+                quant_audit_report = compute_quant_audit_report(
+                    today,
+                    signals_df.to_dict("records") if not signals_df.empty else [],
+                    outcome_rows=get_signal_outcomes(connection, today, days_back=DAYS_BACK),
+                    model_config=MODEL_AUDIT_CONFIG,
+                )
+                _mongo_upsert_quant_audit_report(today, quant_audit_report)
+            except Exception as exc:
+                logger.warning(f"quant_audit_report no actualizado: {exc}")
 
         report_data = {
             "report_date": today,
@@ -582,6 +645,7 @@ def handler(event, context):
                 "limitation": "El backtesting asume ejecucion al cierre. Estrategia Long/Cash: BUY entra al mercado, SELL cierra posicion y HOLD mantiene el estado actual.",
             },
             "trace_artifact": f"mongo:bayesian_traces/{today}",
+            "quant_audit_artifact": f"mongo:quant_audit_reports/{today}",
         }
         if not _mongo_upsert_report:
             raise RuntimeError(
