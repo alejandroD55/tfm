@@ -218,6 +218,93 @@
 .large-donut .cl-item { font-size: 14px; }
 .large-donut .cl-color { width: 14px; height: 14px; }
 
+/* Highcharts performance panel */
+.performance-card {
+  padding: 18px 20px 20px;
+  margin-bottom: 24px;
+  overflow: hidden;
+}
+
+.perf-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.perf-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--slate-900);
+  font-size: 15px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+
+  mat-icon {
+    color: var(--brand-600);
+    font-size: 19px;
+    height: 19px;
+    width: 19px;
+  }
+}
+
+.perf-sub {
+  margin: 6px 0 0;
+  color: var(--slate-500);
+  font-size: 12px;
+  line-height: 1.5;
+  max-width: 780px;
+}
+
+.perf-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  color: var(--slate-600);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.perf-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.leg-box { width: 16px; height: 9px; border-radius: 3px; display: inline-block; }
+.leg-box.long { background: rgba(34,197,94,.18); border: 1px solid rgba(34,197,94,.35); }
+.leg-box.cash { background: rgba(124,58,237,.18); border: 1px solid rgba(124,58,237,.35); }
+.leg-line { width: 18px; height: 0; display: inline-block; border-top: 2px dashed #f59e0b; }
+.leg-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; background: #ef4444; }
+
+.performance-chart {
+  display: block;
+  width: 100%;
+  min-height: 540px;
+}
+
+.perf-loading,
+.perf-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 220px;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-sm);
+  background: var(--slate-50);
+  color: var(--slate-500);
+  font-size: 13px;
+}
+
+.perf-error mat-icon {
+  color: var(--warn-600);
+  font-size: 18px;
+  height: 18px;
+  width: 18px;
+}
+
 /* ─── Table ─── */
 .card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-sm); }
 .table-card { overflow: hidden; }

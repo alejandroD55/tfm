@@ -46,6 +46,10 @@ def get_args():
     parser = argparse.ArgumentParser(description="TFM Backtester Local")
     parser.add_argument("--start", type=str, help="Fecha inicio YYYY-MM-DD", default=None)
     parser.add_argument("--end", type=str, help="Fecha fin YYYY-MM-DD", default=None)
+    parser.add_argument(
+        "--tickers", type=str, default=None,
+        help="Subset de tickers separados por coma, ej: ARKK,XBI. Si no se indica, usa TICKERS global."
+    )
     return parser.parse_args()
 
 # =============================================================================
@@ -104,34 +108,51 @@ def _normalize_macro(headline, url, source, dt, category, query_tag, summary="")
     }
 
 MODEL_CONFIG = {
-    "version": "1.1.0",
-    "description": "Red bayesiana con Momentum: Sentiment, RSI, Trend, Volatility -> MarketDirection",
+    "version": "1.2.0",
+    "description": "Red bayesiana v1.2: umbrales calibrados (SELL≤0.28, BUY≥0.52), priors con drift alcista historico, macro_adj amortiguado en uptrend",
     "discretization": {
         "rsi": {"oversold_below": 30, "overbought_above": 70, "neutral_range": [30, 70]},
         "trend": {"rule": "SMA20 > SMA50 = uptrend"},
         "volatility": {"high_if_band_width_ratio_above": 0.05}
     },
-    "signal_thresholds": {"BUY": {"prob_up_above": 0.58}, "SELL": {"prob_up_below": 0.42}, "HOLD": {"range": [0.42, 0.58]}},
+    "signal_thresholds": {"BUY": {"prob_up_above": 0.52}, "SELL": {"prob_up_below": 0.28}, "HOLD": {"range": [0.28, 0.52]}},
     "priors": {
-        "Sentiment": {"bullish": 0.30, "bearish": 0.30, "neutral": 0.40},
-        "RSI": {"oversold": 0.20, "neutral": 0.60, "overbought": 0.20},
-        "Trend": {"uptrend": 0.50, "downtrend": 0.50},
-        "Volatility": {"low": 0.60, "high": 0.40},
+        # Sesgo ligeramente alcista: mercados suben ~60% de los días históricamente
+        "Sentiment": {"bullish": 0.35, "bearish": 0.25, "neutral": 0.40},
+        "RSI": {"oversold": 0.15, "neutral": 0.60, "overbought": 0.25},
+        "Trend": {"uptrend": 0.58, "downtrend": 0.42},
+        "Volatility": {"low": 0.62, "high": 0.38},
     },
     "cpt_market_direction": {
         "variable": "MarketDirection", "states": ["down", "up"],
-        "values_P_down": [0.15,0.25,0.30,0.20,0.30,0.35,0.30,0.40,0.10,0.15,0.45,0.50,
+        # Orden: (Sentiment x RSI x Trend x Volatility)
+        # Corrección clave: P_up para overbought en uptrend sube ~+0.08
+        # porque en un mercado alcista, overbought tiende a continuar, no revertir
+        "values_P_down": [0.12,0.22,0.25,0.18,0.25,0.30,0.22,0.35,0.08,0.12,0.40,0.45,
                           0.70,0.75,0.80,0.75,0.80,0.85,0.80,0.85,0.50,0.55,0.90,0.95,
-                          0.45,0.50,0.55,0.50,0.55,0.60,0.55,0.60,0.25,0.30,0.65,0.70],
-        "values_P_up":   [0.85,0.75,0.70,0.80,0.70,0.65,0.70,0.60,0.90,0.85,0.55,0.50,
+                          0.42,0.48,0.52,0.47,0.52,0.58,0.52,0.58,0.22,0.28,0.62,0.68],
+        "values_P_up":   [0.88,0.78,0.75,0.82,0.75,0.70,0.78,0.65,0.92,0.88,0.60,0.55,
                           0.30,0.25,0.20,0.25,0.20,0.15,0.20,0.15,0.50,0.45,0.10,0.05,
-                          0.55,0.50,0.45,0.50,0.45,0.40,0.45,0.40,0.75,0.70,0.35,0.30],
+                          0.58,0.52,0.48,0.53,0.48,0.42,0.48,0.42,0.78,0.72,0.38,0.32],
     },
-    "known_limitations": ["El confidence score de FinBERT no entra en la inferencia", "Voto mayoritario"]
+    "known_limitations": ["El confidence score de FinBERT no entra en la inferencia", "Voto mayoritario"],
+    "hysteresis": {
+        "sell_confirmation_days": 2,
+        "buy_confirmation_days":  1,
+        "rationale": (
+            "Persistencia de señal: SELL solo actúa si se repite N días consecutivos. "
+            "Evita salidas falsas por una noticia bearish puntual en tendencia alcista."
+        ),
+    },
 }
 
 BUY_THRESHOLD  = MODEL_CONFIG["signal_thresholds"]["BUY"]["prob_up_above"]
 SELL_THRESHOLD = MODEL_CONFIG["signal_thresholds"]["SELL"]["prob_up_below"]
+
+# ── Hysteresis / Signal Persistence ──────────────────────────────────────────
+# SELL necesita N días consecutivos para confirmarse; BUY actúa inmediatamente.
+SELL_CONFIRMATION_DAYS: int = MODEL_CONFIG["hysteresis"]["sell_confirmation_days"]
+BUY_CONFIRMATION_DAYS:  int = MODEL_CONFIG["hysteresis"]["buy_confirmation_days"]
 
 # =============================================================================
 # IA LOCAL: FINBERT & GROQ
@@ -517,11 +538,56 @@ def run_bayesian_inference(evidence: Dict, macro_adj: float) -> Tuple[str, float
     infer = VariableElimination(get_bn_model())
     result = infer.query(variables=["MarketDirection"], evidence=evidence, show_progress=False)
     prob_up_raw = float(result.values[1])
-    prob_up_adj = round(max(0.0, min(1.0, prob_up_raw + macro_adj)), 4)
+
+    # En tendencia alcista confirmada, amortiguamos el macro_adj negativo al 40%
+    # para evitar que una noticia hawkish/macro saque al modelo de un uptrend válido.
+    # El macro_adj positivo se aplica completo (no penalizamos la info alcista).
+    effective_macro_adj = macro_adj
+    if evidence.get("Trend") == "uptrend" and macro_adj < 0:
+        effective_macro_adj = macro_adj * 0.40
+
+    prob_up_adj = round(max(0.0, min(1.0, prob_up_raw + effective_macro_adj)), 4)
     if prob_up_adj >= BUY_THRESHOLD: signal = "BUY"
     elif prob_up_adj <= SELL_THRESHOLD: signal = "SELL"
     else: signal = "HOLD"
     return signal, prob_up_adj
+
+def apply_hysteresis_signal(
+    raw_signal: str,
+    recent_confirmed: list,
+    sell_days: int = SELL_CONFIRMATION_DAYS,
+) -> Tuple[str, str]:
+    """
+    Filtro de persistencia (hysteresis).
+
+    Reglas:
+    - BUY  → siempre pasa directamente (entrada sin demora).
+    - HOLD → siempre pasa directamente (mantener posición).
+    - SELL → solo se confirma si los últimos (sell_days-1) signals confirmados
+             también fueron SELL. En caso contrario devuelve HOLD para que la
+             posición abierta no se cierre por un único día bajista puntual.
+
+    Returns
+    -------
+    (confirmed_signal, status_str)
+        status_str es útil para tracing/debug.
+    """
+    if raw_signal != "SELL":
+        return raw_signal, "pass_through"
+
+    # Cuenta cuántos SELLs consecutivos hay al final del historial (más reciente al final)
+    consecutive = 0
+    for s in reversed(recent_confirmed):
+        if s == "SELL":
+            consecutive += 1
+        else:
+            break
+
+    if consecutive >= sell_days - 1:
+        return "SELL", f"confirmed_{sell_days}d"
+    else:
+        return "HOLD", f"pending_{consecutive + 1}_of_{sell_days}d"
+
 
 def _calc_backtesting(signals_df: pd.DataFrame) -> Tuple[Dict, Dict]:
     metrics, diagnostics = {}, {}
@@ -729,28 +795,33 @@ def compute_benchmark(signals_df):
 # =============================================================================
 # 5. LOOP MAESTRO
 # =============================================================================
-def run_pipeline(start_date_str=None, end_date_str=None):
+def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
     # Fechas por argumento o por defecto
     end_d = pd.to_datetime(end_date_str).date() if end_date_str else datetime.now().date()
     start_d = pd.to_datetime(start_date_str).date() if start_date_str else (end_d - timedelta(days=DAYS_BACK))
 
-    logger.info(f"🚀 Iniciando Bootstrap Local TFM | Rango: {start_d} a {end_d}")
-    
+    active_tickers = tickers_override if tickers_override else TICKERS
+    logger.info(f"🚀 Iniciando Bootstrap Local TFM | Rango: {start_d} a {end_d} | Tickers: {active_tickers}")
+
     # ── 1. DESCARGA INICIAL DE DATOS ──
     # Para poder calcular indicadores en start_d, la lambda descarga días extra.
-    ohlcv_all = fetch_ohlcv_all(TICKERS, start_d, end_d)
+    ohlcv_all = fetch_ohlcv_all(active_tickers, start_d, end_d)
     vix_series = fetch_vix_historical(start_d, end_d)
-    news_all = {t: fetch_news_historical(t, start_d, end_d) for t in TICKERS}
+    news_all = {t: fetch_news_historical(t, start_d, end_d) for t in active_tickers}
 
     conn = get_db_connection()
     get_bn_model()
     get_finbert()
 
     business_days = pd.bdate_range(start=str(start_d), end=str(end_d))
-    
+
     # Prevenir simulación de fechas futuras
     today_date = datetime.now().date()
     business_days = [bd for bd in business_days if bd.date() <= today_date]
+
+    # ── Hysteresis: historial de señales CONFIRMADAS por ticker (ventana deslizante) ──
+    # Se mantiene entre días para detectar N SELLs consecutivos antes de salir.
+    signal_history_per_ticker: dict = {t: [] for t in active_tickers}
 
     # ── 2. BUCLE DIARIO ──
     for bd in tqdm(business_days, desc="Simulando días", unit="día"):
@@ -758,7 +829,7 @@ def run_pipeline(start_date_str=None, end_date_str=None):
         run_id = f"backtest-{date_str}"
         global_kpis = {"total_headlines": 0, "processed_headlines": 0}
 
-        if conn: pg_upsert_batch_log(conn, date_str, run_id, TICKERS, "STARTED")
+        if conn: pg_upsert_batch_log(conn, date_str, run_id, active_tickers, "STARTED")
 
         # --- A) Ingesta y Macro (Clon lambda_macro_ingestion / lambda_macro_context) ---
         ingest_macro_news(date_str)
@@ -798,7 +869,7 @@ def run_pipeline(start_date_str=None, end_date_str=None):
         tickers_trace = {}
         daily_signals_for_outcomes = []
 
-        for ticker in TICKERS:
+        for ticker in active_tickers:
             ohlcv_df = ohlcv_all.get(ticker)
             ind = calculate_indicators_for_date(ohlcv_df, date_str) if ohlcv_df is not None else None
             if not ind: continue
@@ -863,22 +934,40 @@ def run_pipeline(start_date_str=None, end_date_str=None):
                 "Volatility": "high" if (ind["bb_width"] and ind["bb_width"] > 0.05) else "low"
             }
             
-            signal, prob_up = run_bayesian_inference(evidence, macro_adj)
+            raw_signal, prob_up = run_bayesian_inference(evidence, macro_adj)
+
+            # ── Hysteresis: filtro de persistencia ────────────────────────────
+            confirmed_signal, hysteresis_status = apply_hysteresis_signal(
+                raw_signal, signal_history_per_ticker[ticker]
+            )
+            # Actualizar ventana deslizante (guardamos la señal CONFIRMADA)
+            signal_history_per_ticker[ticker] = (
+                signal_history_per_ticker[ticker] + [confirmed_signal]
+            )[-SELL_CONFIRMATION_DAYS:]
+
+            signal = confirmed_signal  # downstream usa siempre la señal confirmada
+
+            if raw_signal != confirmed_signal:
+                logger.debug(
+                    f"[HYSTERESIS] {ticker} {date_str}: raw={raw_signal} "
+                    f"→ confirmed={confirmed_signal} ({hysteresis_status})"
+                )
+
             reasoning = build_reasoning_local(evidence, prob_up, signal)
-            
+
             # Recolectamos la señal para outcomes
             daily_signals_for_outcomes.append({
-                "batch_date": date_str, "ticker": ticker, "run_id": run_id, "signal": signal, 
+                "batch_date": date_str, "ticker": ticker, "run_id": run_id, "signal": signal,
                 "prob_up": prob_up, "prob_down": round(1 - prob_up, 4), "close_price": ind["close"],
                 "sentiment_state": evidence["Sentiment"], "rsi_state": evidence["RSI"],
                 "trend_state": evidence["Trend"], "volatility_state": evidence["Volatility"],
                 "macro_sentiment": macro_sentiment, "risk_regime": risk_regime, "macro_adjustment": macro_adj
             })
-            
+
             trace_data = {
                 "raw_values": {
-                    "close_price": ind["close"], "rsi_14": ind["rsi_14"], 
-                    "sma_20": ind["sma_20"], "sma_50": ind["sma_50"], 
+                    "close_price": ind["close"], "rsi_14": ind["rsi_14"],
+                    "sma_20": ind["sma_20"], "sma_50": ind["sma_50"],
                     "bb_upper": ind["bb_upper"], "bb_lower": ind["bb_lower"], "bb_width_ratio": ind["bb_width"]
                 },
                 "discretization": {
@@ -888,11 +977,23 @@ def run_pipeline(start_date_str=None, end_date_str=None):
                 },
                 "sentiment_detail": sentiment_detail,
                 "inference": {
-                    "signal": signal, "prob_up": prob_up, "prob_down": round(1-prob_up, 4),
-                    "threshold_used": MODEL_CONFIG["signal_thresholds"]["BUY"]["prob_up_above"] if signal == "BUY" else MODEL_CONFIG["signal_thresholds"]["SELL"]["prob_up_below"],
-                    "macro_context": {"macro_sentiment": macro_sentiment, "risk_regime": risk_regime, "macro_adjustment": macro_adj}
+                    "signal":            signal,
+                    "raw_signal":        raw_signal,
+                    "hysteresis_status": hysteresis_status,
+                    "prob_up":  prob_up,
+                    "prob_down": round(1 - prob_up, 4),
+                    "threshold_used": (
+                        MODEL_CONFIG["signal_thresholds"]["BUY"]["prob_up_above"]
+                        if signal == "BUY"
+                        else MODEL_CONFIG["signal_thresholds"]["SELL"]["prob_up_below"]
+                    ),
+                    "macro_context": {
+                        "macro_sentiment": macro_sentiment,
+                        "risk_regime":     risk_regime,
+                        "macro_adjustment": macro_adj,
+                    },
                 },
-                "reasoning": reasoning
+                "reasoning": reasoning,
             }
             upsert_bayesian_report(date_str, ticker, trace_data, MODEL_CONFIG["version"])
             tickers_trace[ticker] = trace_data
@@ -946,7 +1047,7 @@ def run_pipeline(start_date_str=None, end_date_str=None):
             upsert_report(report_data)
         
         pg_upsert_pipeline_kpi(conn, date_str, run_id, "scheduled", "ingestion", global_kpis)
-        pg_upsert_batch_log(conn, date_str, run_id, TICKERS, "COMPLETED")
+        pg_upsert_batch_log(conn, date_str, run_id, active_tickers, "COMPLETED")
         
         if conn and daily_signals_for_outcomes:
             update_signal_outcomes_historical(conn, daily_signals_for_outcomes)
@@ -956,4 +1057,5 @@ def run_pipeline(start_date_str=None, end_date_str=None):
 
 if __name__ == "__main__":
     args = get_args()
-    run_pipeline(args.start, args.end)
+    tickers_list = [t.strip().upper() for t in args.tickers.split(",")] if args.tickers else None
+    run_pipeline(args.start, args.end, tickers_override=tickers_list)

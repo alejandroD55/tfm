@@ -168,7 +168,7 @@
                 <span class="macro-badge-value" [style.color]="macroSentimentColor(macroContext.macro_sentiment)">
                   {{ macroContext.macro_sentiment | uppercase }}
                 </span>
-                <span class="macro-badge-sub">score: {{ macroContext.detail?.macro_score | number:'1.2-2' }}</span>
+                <span class="macro-badge-sub">score: {{ macroContext.detail.macro_score | number:'1.2-2' }}</span>
               </div>
             </div>
 
@@ -185,7 +185,7 @@
                   {{ macroContext.risk_regime }}
                 </span>
                 <span class="macro-badge-sub">
-                  VIX: {{ macroContext.detail?.vix != null ? (macroContext.detail.vix | number:'1.1-1') : 'N/D' }}
+                  VIX: {{ macroContext.detail.vix != null ? (macroContext.detail.vix | number:'1.1-1') : 'N/D' }}
                 </span>
               </div>
             </div>
@@ -201,27 +201,27 @@
                 <span class="macro-badge-value">
                   {{ macroContext.macro_adjustment > 0 ? '+' : '' }}{{ macroContext.macro_adjustment | number:'1.2-2' }}
                 </span>
-                <span class="macro-badge-sub">{{ macroContext.detail?.n_articles ?? 0 }} artículos analizados</span>
+                <span class="macro-badge-sub">{{ macroContext.detail.n_articles }} artículos analizados</span>
               </div>
             </div>
           </div>
 
           <!-- Eventos detectados -->
           <div class="macro-events">
-            @if (macroContext.detail?.events?.geopolitical) {
+            @if (macroContext.detail.events.geopolitical) {
               <span class="macro-event-chip event-danger"><mat-icon>flag</mat-icon>Tensión Geopolítica</span>
             }
-            @if (macroContext.detail?.events?.hawkish_fed) {
+            @if (macroContext.detail.events.hawkish_fed) {
               <span class="macro-event-chip event-warn"><mat-icon>account_balance</mat-icon>FED Hawkish</span>
             }
-            @if (macroContext.detail?.events?.dovish_fed) {
+            @if (macroContext.detail.events.dovish_fed) {
               <span class="macro-event-chip event-ok"><mat-icon>account_balance</mat-icon>FED Dovish</span>
             }
-            @if (macroContext.detail?.events?.inflation_shock) {
+            @if (macroContext.detail.events.inflation_shock) {
               <span class="macro-event-chip event-danger"><mat-icon>price_change</mat-icon>Inflación Sorpresa</span>
             }
-            @if (!macroContext.detail?.events?.geopolitical && !macroContext.detail?.events?.hawkish_fed &&
-                 !macroContext.detail?.events?.dovish_fed && !macroContext.detail?.events?.inflation_shock) {
+            @if (!macroContext.detail.events.geopolitical && !macroContext.detail.events.hawkish_fed &&
+                 !macroContext.detail.events.dovish_fed && !macroContext.detail.events.inflation_shock) {
               <span class="macro-event-chip event-neutral"><mat-icon>check_circle</mat-icon>Sin eventos de alto impacto</span>
             }
           </div>
@@ -424,6 +424,56 @@
           </div>
         </div>
       </div>
+    </section>
+
+    <section class="card performance-card">
+      <div class="perf-head">
+        <div>
+          <div class="perf-title">
+            <mat-icon>monitoring</mat-icon>
+            <span>Evolución de Rendimiento por Etapas</span>
+          </div>
+          <p class="perf-sub">
+            Velas OHLC con Bandas de Bollinger, señales BUY/SELL y rendimiento Long/Cash hasta {{ selectedDate }}.
+            Usa el selector de rango, el navigator o arrastra sobre el gráfico para hacer zoom.
+          </p>
+        </div>
+        <div class="filter-group">
+          <label>Ticker del gráfico</label>
+          <select class="aurora-select" [(ngModel)]="performanceTicker" (ngModelChange)="onPerformanceTickerChange($event)">
+            @for (row of tickerViews; track row.ticker) {
+              <option [value]="row.ticker">{{ row.ticker }}</option>
+            }
+          </select>
+        </div>
+      </div>
+
+      <div class="perf-legend">
+        <span><i class="leg-box long"></i>Etapa LONG</span>
+        <span><i class="leg-box cash"></i>Etapa CASH</span>
+        <span><i class="leg-line bb"></i>Bandas Bollinger</span>
+        <span><i class="leg-dot dd"></i>Max drawdown</span>
+      </div>
+
+      @if (performanceLoading) {
+        <div class="perf-loading">
+          <mat-spinner diameter="30"></mat-spinner>
+          <span>Cargando histórico de {{ performanceTicker }}...</span>
+        </div>
+      } @else if (performanceError) {
+        <div class="perf-error">
+          <mat-icon>info_outline</mat-icon>
+          <span>{{ performanceError }}</span>
+        </div>
+      } @else if (performanceChartOptions.series?.length) {
+        <highcharts-chart
+          [Highcharts]="Highcharts"
+          [constructorType]="'stockChart'"
+          [options]="performanceChartOptions"
+          [(update)]="performanceChartUpdate"
+          class="performance-chart">
+        </highcharts-chart>
+      }
     </section>
     
     <div class="card table-card signals-table-desktop">

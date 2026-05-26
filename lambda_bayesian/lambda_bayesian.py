@@ -52,8 +52,12 @@ except ImportError:
     logger.warning("mongo_utils no disponible en lambda_bayesian")
 
 MODEL_CONFIG = {
-    "version": "1.1.0",
-    "description": "Red bayesiana naive con Momentum: Sentiment, RSI, Trend, Volatility -> MarketDirection",
+    "version": "1.2.0",
+    "description": (
+        "Red bayesiana v1.2: umbrales calibrados (SELL≤0.28, BUY≥0.52), "
+        "priors con drift alcista histórico, macro_adj amortiguado en uptrend, "
+        "hysteresis SELL 2 días consecutivos."
+    ),
     "discretization": {
         "rsi": {
             "oversold_below": 30,
@@ -72,38 +76,32 @@ MODEL_CONFIG = {
         },
     },
     "signal_thresholds": {
-        "BUY": {"prob_up_above": 0.58, "rationale": "Confianza alcista moderada-alta"},
-        "SELL": {
-            "prob_up_below": 0.42,
-            "rationale": "Confianza bajista moderada-alta / Salir a Cash",
-        },
-        "HOLD": {
-            "range": [0.42, 0.58],
-            "rationale": "Zona de incertidumbre — mantener posición",
-        },
+        "BUY":  {"prob_up_above": 0.52, "rationale": "Entrada con confianza alcista moderada"},
+        "SELL": {"prob_up_below": 0.28, "rationale": "Solo salida en condiciones genuinamente bajistas"},
+        "HOLD": {"range": [0.28, 0.52], "rationale": "Zona de incertidumbre — mantener posición actual"},
     },
     "priors": {
         "Sentiment": {
-            "bullish": 0.30,
-            "bearish": 0.30,
+            "bullish": 0.35,
+            "bearish": 0.25,
             "neutral": 0.40,
-            "rationale": "Prior levemente favorable a neutral en mercados eficientes",
+            "rationale": "Sesgo levemente alcista: mercados suben más días de los que bajan históricamente",
         },
         "RSI": {
-            "oversold": 0.20,
-            "neutral": 0.60,
-            "overbought": 0.20,
-            "rationale": "La mayoria del tiempo el RSI esta en zona neutral",
+            "oversold":   0.15,
+            "neutral":    0.60,
+            "overbought": 0.25,
+            "rationale": "En bull market el RSI pasa más tiempo en zona overbought que oversold",
         },
         "Trend": {
-            "uptrend": 0.50,
-            "downtrend": 0.50,
-            "rationale": "Prior uniforme: no hay sesgo a priori sobre la tendencia",
+            "uptrend":   0.58,
+            "downtrend": 0.42,
+            "rationale": "Drift alcista histórico: los índices están en uptrend ~60% del tiempo",
         },
         "Volatility": {
-            "low": 0.60,
-            "high": 0.40,
-            "rationale": "Los mercados suelen tener baja volatilidad mas frecuentemente",
+            "low":  0.62,
+            "high": 0.38,
+            "rationale": "Los mercados suelen tener baja volatilidad más frecuentemente",
         },
     },
     "cpt_market_direction": {
@@ -111,92 +109,44 @@ MODEL_CONFIG = {
         "states": ["down", "up"],
         "evidence_order": ["Sentiment", "RSI", "Trend", "Volatility"],
         "rationale": {
-            "momentum_logic": "RSI sobrecomprado + Tendencia alcista = Fuerte Momentum comprador",
-            "bearish+overbought+downtrend+high": "Maxima confluencia bajista -> P(up)=0.05",
+            "momentum_logic": "RSI overbought + uptrend = momentum comprador fuerte (no reversion en bull market)",
+            "v1.2_change": "P_up para overbought+uptrend aumentada ~+0.08: en bull market RSI alto no implica caída",
         },
+        # Corrección clave v1.2: P_up para overbought en uptrend sube ~+0.08
         "values_P_down": [
-            0.15,
-            0.25,
-            0.30,
-            0.20,
-            0.30,
-            0.35,
-            0.30,
-            0.40,
-            0.10,
-            0.15,
-            0.45,
-            0.50,
-            0.70,
-            0.75,
-            0.80,
-            0.75,
-            0.80,
-            0.85,
-            0.80,
-            0.85,
-            0.50,
-            0.55,
-            0.90,
-            0.95,
-            0.45,
-            0.50,
-            0.55,
-            0.50,
-            0.55,
-            0.60,
-            0.55,
-            0.60,
-            0.25,
-            0.30,
-            0.65,
-            0.70,
+            0.12, 0.22, 0.25, 0.18, 0.25, 0.30, 0.22, 0.35,
+            0.08, 0.12, 0.40, 0.45,
+            0.70, 0.75, 0.80, 0.75, 0.80, 0.85, 0.80, 0.85,
+            0.50, 0.55, 0.90, 0.95,
+            0.42, 0.48, 0.52, 0.47, 0.52, 0.58, 0.52, 0.58,
+            0.22, 0.28, 0.62, 0.68,
         ],
         "values_P_up": [
-            0.85,
-            0.75,
-            0.70,
-            0.80,
-            0.70,
-            0.65,
-            0.70,
-            0.60,
-            0.90,
-            0.85,
-            0.55,
-            0.50,
-            0.30,
-            0.25,
-            0.20,
-            0.25,
-            0.20,
-            0.15,
-            0.20,
-            0.15,
-            0.50,
-            0.45,
-            0.10,
-            0.05,
-            0.55,
-            0.50,
-            0.45,
-            0.50,
-            0.45,
-            0.40,
-            0.45,
-            0.40,
-            0.75,
-            0.70,
-            0.35,
-            0.30,
+            0.88, 0.78, 0.75, 0.82, 0.75, 0.70, 0.78, 0.65,
+            0.92, 0.88, 0.60, 0.55,
+            0.30, 0.25, 0.20, 0.25, 0.20, 0.15, 0.20, 0.15,
+            0.50, 0.45, 0.10, 0.05,
+            0.58, 0.52, 0.48, 0.53, 0.48, 0.42, 0.48, 0.42,
+            0.78, 0.72, 0.38, 0.32,
         ],
+    },
+    "hysteresis": {
+        "sell_confirmation_days": 2,
+        "buy_confirmation_days":  1,
+        "rationale": (
+            "Persistencia de señal: SELL solo actúa si se repite N días consecutivos. "
+            "Evita salidas falsas por una noticia bearish puntual en tendencia alcista."
+        ),
     },
     "known_limitations": [
         "El confidence score de FinBERT no entra en la inferencia (solo se guarda)",
         "Se usa voto mayoritario de los titulares",
-        "Estrategia Momentum ajustada para capturar subidas fuertes en sobrecompra",
+        "macro_adj amortiguado al 40% en uptrend para evitar salidas por noticias macro puntuales",
     ],
 }
+
+# ── Hysteresis: días consecutivos de SELL necesarios para confirmar salida ────
+SELL_CONFIRMATION_DAYS: int = MODEL_CONFIG["hysteresis"]["sell_confirmation_days"]
 
 
 def resolve_batch_date(event):
@@ -397,18 +347,27 @@ def infer_signal(model, evidence_states, macro_context: dict = None):
         macro_sentiment  = macro_context.get("macro_sentiment", "neutral")
         risk_regime      = macro_context.get("risk_regime", "NEUTRAL")
 
-    # prob_up ajustada: capada en [0, 1]; prob_down debe complementar (trigger Aurora)
+    # En tendencia alcista confirmada, amortiguamos el macro_adj negativo al 40%.
+    # Un dato macro hawkish no debe sola sacar al modelo de un uptrend válido.
+    # El macro_adj positivo se aplica completo (no penalizamos info alcista).
+    effective_macro_adj = macro_adjustment
+    if evidence_states.get("Trend") == "uptrend" and macro_adjustment < 0:
+        effective_macro_adj = macro_adjustment * 0.40
+        logger.info(
+            f"macro_adj amortiguado en uptrend: {macro_adjustment:+.3f} → {effective_macro_adj:+.3f}"
+        )
+
+    # prob_up ajustada: capada en [0, 1]
     prob_up_adjusted = round(
-        max(0.0, min(1.0, prob_up_raw + macro_adjustment)), 4
+        max(0.0, min(1.0, prob_up_raw + effective_macro_adj)), 4
     )
     prob_down_adjusted = round(1.0 - prob_up_adjusted, 4)
 
     if macro_adjustment != 0.0:
         logger.info(
-            f"macro_adjustment={macro_adjustment:+.3f} "
+            f"macro_adjustment={macro_adjustment:+.3f} effective={effective_macro_adj:+.3f} "
             f"({macro_sentiment}/{risk_regime}): "
-            f"prob_up {prob_up_raw} → {prob_up_adjusted}, "
-            f"prob_down {prob_down_raw} → {prob_down_adjusted}"
+            f"prob_up {prob_up_raw} → {prob_up_adjusted}"
         )
 
     cfg = MODEL_CONFIG["signal_thresholds"]
@@ -420,11 +379,12 @@ def infer_signal(model, evidence_states, macro_context: dict = None):
         signal = "HOLD"
 
     return signal, prob_up_adjusted, prob_down_adjusted, {
-        "prob_up_raw": prob_up_raw,
-        "prob_down_raw": prob_down_raw,
-        "macro_adjustment": macro_adjustment,
-        "macro_sentiment": macro_sentiment,
-        "risk_regime": risk_regime,
+        "prob_up_raw":         prob_up_raw,
+        "prob_down_raw":       prob_down_raw,
+        "macro_adjustment":    macro_adjustment,
+        "effective_macro_adj": effective_macro_adj,
+        "macro_sentiment":     macro_sentiment,
+        "risk_regime":         risk_regime,
     }
 
 
@@ -467,6 +427,67 @@ def build_reasoning(evidence_states, prob_up, signal):
         f"Evidencias: {', '.join(parts) if parts else 'mixtas'}. "
         f"P(subida)={prob_up:.2%} -> senal {signal} (umbral: {th})."
     )
+
+
+def get_recent_signals(connection, ticker: str, batch_date: str, n_days: int) -> list:
+    """
+    Devuelve las últimas n_days señales CONFIRMADAS de un ticker anteriores
+    a batch_date (más reciente primero).
+    Se usa para determinar si hay suficientes SELLs consecutivos (hysteresis).
+    """
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT signal FROM trading_signals
+            WHERE ticker = %s AND batch_date < %s
+            ORDER BY batch_date DESC
+            LIMIT %s
+            """,
+            (ticker, batch_date, n_days),
+        )
+        rows = cursor.fetchall()
+        cursor.close()
+        return [row[0] for row in rows]  # más reciente primero
+    except Exception as exc:
+        logger.warning(f"get_recent_signals {ticker}: {exc}")
+        return []
+
+
+def apply_signal_hysteresis(raw_signal: str, recent_signals: list) -> tuple:
+    """
+    Filtro de persistencia (hysteresis).
+
+    Reglas:
+    - BUY / HOLD → pasan directamente sin modificación.
+    - SELL → solo se confirma si alguno de los (SELL_CONFIRMATION_DAYS-1)
+              días previos también fue SELL. En caso contrario se emite HOLD
+              para no cerrar una posición por un único día bajista puntual.
+
+    Parameters
+    ----------
+    raw_signal     : señal calculada por la red bayesiana para hoy.
+    recent_signals : señales de días anteriores (más reciente primero).
+
+    Returns
+    -------
+    (confirmed_signal, status_str)
+    """
+    if raw_signal != "SELL":
+        return raw_signal, "pass_through"
+
+    # Cuenta SELLs consecutivos en el historial reciente (más reciente primero)
+    consecutive = 0
+    for s in recent_signals:
+        if s == "SELL":
+            consecutive += 1
+        else:
+            break  # se rompe la racha
+
+    if consecutive >= SELL_CONFIRMATION_DAYS - 1:
+        return "SELL", f"confirmed_{SELL_CONFIRMATION_DAYS}d"
+    else:
+        return "HOLD", f"pending_{consecutive + 1}_of_{SELL_CONFIRMATION_DAYS}d"
 
 
 def get_ticker_data(connection, target_date, ticker):
@@ -533,11 +554,13 @@ def save_bayesian_trace(batch_date, tickers_trace, execution_meta):
         "model_config": MODEL_CONFIG,
         "tickers": tickers_trace,
         "audit_notes": {
-            "cpt_source": "Parametros ajustados para capturar momentum alcista",
-            "threshold_rsi": "RSI <30 = oversold, >70 = overbought",
-            "threshold_vol": "BB width ratio >0.05 = high",
-            "threshold_signal": "P(up) >0.58 = BUY, <0.42 = SELL",
-            "known_issues": MODEL_CONFIG["known_limitations"],
+            "cpt_source":       "v1.2: CPT overbought+uptrend corregido, priors con drift alcista",
+            "threshold_rsi":    "RSI <30 = oversold, >70 = overbought",
+            "threshold_vol":    "BB width ratio >0.05 = high",
+            "threshold_signal": "P(up) ≥0.52 = BUY, ≤0.28 = SELL (v1.2)",
+            "hysteresis":       f"SELL requiere {SELL_CONFIRMATION_DAYS} días consecutivos para confirmar",
+            "macro_dampening":  "macro_adj negativo amortiguado al 40% en uptrend",
+            "known_issues":     MODEL_CONFIG["known_limitations"],
         },
     }
     if _mongo_upsert_bayesian_trace:
@@ -666,9 +689,24 @@ def handler(event, context):
                     "Trend": discretize_trend(float(sma_20), float(sma_50)),
                     "Volatility": vol_state,
                 }
-                signal, prob_up, prob_down, macro_info = infer_signal(
+                raw_signal, prob_up, prob_down, macro_info = infer_signal(
                     model, evidence_states, macro_context
                 )
+
+                # ── Hysteresis: consultar historial y confirmar señal ─────────
+                recent_sigs = get_recent_signals(
+                    connection, ticker, latest_date, SELL_CONFIRMATION_DAYS
+                )
+                confirmed_signal, hysteresis_status = apply_signal_hysteresis(
+                    raw_signal, recent_sigs
+                )
+                if confirmed_signal != raw_signal:
+                    logger.info(
+                        f"[HYSTERESIS] {ticker}: raw={raw_signal} "
+                        f"→ confirmed={confirmed_signal} ({hysteresis_status})"
+                    )
+                signal = confirmed_signal  # downstream usa siempre la señal confirmada
+
                 reasoning = build_reasoning(evidence_states, prob_up, signal)
 
                 upsert_signal_explanation(
@@ -708,16 +746,16 @@ def handler(event, context):
                     },
                     "sentiment_detail": sentiment_detail,
                     "inference": {
-                        "prob_up": prob_up,
-                        "prob_down": prob_down,
-                        "signal": signal,
+                        "prob_up":           prob_up,
+                        "prob_down":         prob_down,
+                        "signal":            signal,
+                        "raw_signal":        raw_signal,
+                        "hysteresis_status": hysteresis_status,
                         "threshold_used": (
                             MODEL_CONFIG["signal_thresholds"]["BUY"]["prob_up_above"]
                             if signal == "BUY"
                             else (
-                                MODEL_CONFIG["signal_thresholds"]["SELL"][
-                                    "prob_up_below"
-                                ]
+                                MODEL_CONFIG["signal_thresholds"]["SELL"]["prob_up_below"]
                                 if signal == "SELL"
                                 else MODEL_CONFIG["signal_thresholds"]["HOLD"]["range"]
                             )

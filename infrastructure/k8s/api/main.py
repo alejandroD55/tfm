@@ -34,7 +34,7 @@ import json
 import logging
 import urllib.request
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 
 import boto3
@@ -1147,6 +1147,179 @@ def get_ohlcv_week(
         raise
     except Exception as e:
         logger.exception("get_ohlcv_week error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/ohlcv/{ticker}/performance/{date}", tags=["Raw Data"])
+def get_ticker_performance_history(
+    ticker: str,
+    date: str,
+    limit: int = Query(default=365, ge=30, le=365, description="Max sesiones a devolver"),
+    x_api_key: str = Header(default=""),
+):
+    """
+    Serie historica para Highcharts: OHLC, Bandas de Bollinger, senales y
+    rendimiento Long/Cash hasta la fecha seleccionada.
+
+    Fuente: MongoDB (ohlcv + bayesian_reports). Se calcula sin depender de
+    Aurora para que funcione tambien con bootstraps locales volcados a Mongo.
+    """
+    check_api_key(x_api_key)
+    if not date or len(date) != 10:
+        raise HTTPException(status_code=400, detail="Formato: YYYY-MM-DD")
+
+    try:
+        db = _require_mongo()
+        ticker_u = ticker.upper()
+        target = datetime.strptime(date, "%Y-%m-%d").date()
+        # Buffer calendario amplio para cubrir fines de semana y festivos.
+        start = target - timedelta(days=int(limit * 1.8) + 30)
+        start_s, end_s = str(start), str(target)
+
+        ohlcv_docs = list(
+            db["ohlcv"]
+            .find(
+                {"ticker": ticker_u, "batch_date": {"$gte": start_s, "$lte": end_s}},
+                {"_id": 0, "batch_date": 1, "rows": 1},
+            )
+            .sort("batch_date", 1)
+        )
+
+        by_date: dict[str, dict] = {}
+        for doc in ohlcv_docs:
+            for row in (doc.get("rows") or []):
+                d = str(row.get("date") or doc.get("batch_date") or "")[:10]
+                if not d or d < start_s or d > end_s:
+                    continue
+                close = row.get("close")
+                if close in (None, "", 0):
+                    continue
+                by_date[d] = {
+                    "date": d,
+                    "open": float(row.get("open", close) or close),
+                    "high": float(row.get("high", close) or close),
+                    "low": float(row.get("low", close) or close),
+                    "close": float(close),
+                    "volume": float(row.get("volume", 0) or 0),
+                }
+
+        rows = [by_date[d] for d in sorted(by_date)]
+        rows = rows[-limit:]
+        if not rows:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No hay historico OHLCV para {ticker_u} hasta {date}",
+            )
+
+        first_date = rows[0]["date"]
+        signal_docs = list(
+            db["bayesian_reports"]
+            .find(
+                {"ticker": ticker_u, "batch_date": {"$gte": first_date, "$lte": end_s}},
+                {"_id": 0, "batch_date": 1, "signal": 1, "prob_up": 1},
+            )
+            .sort("batch_date", 1)
+        )
+        signals = {
+            str(doc.get("batch_date"))[:10]: {
+                "signal": doc.get("signal") or "HOLD",
+                "prob_up": float(doc.get("prob_up") or 0),
+            }
+            for doc in signal_docs
+        }
+
+        closes: list[float] = []
+        equity = 100.0
+        position = 1
+        first_close = rows[0]["close"]
+        peak = equity
+        max_drawdown = {
+            "date": rows[0]["date"],
+            "drawdown": 0.0,
+            "strategy_return": 0.0,
+            "close": first_close,
+        }
+        points: list[dict] = []
+        stages: list[dict] = []
+        current_stage = "LONG"
+        stage_start = rows[0]["date"]
+
+        for i, row in enumerate(rows):
+            d = row["date"]
+            sig = signals.get(d, {"signal": "HOLD", "prob_up": None})
+
+            if i > 0:
+                prev = rows[i - 1]
+                prev_sig = signals.get(prev["date"], {"signal": "HOLD"})
+                if prev_sig.get("signal") == "BUY":
+                    position = 1
+                elif prev_sig.get("signal") == "SELL":
+                    position = 0
+
+                stage_name = "LONG" if position else "CASH"
+                if stage_name != current_stage:
+                    stages.append({"from": stage_start, "to": prev["date"], "stage": current_stage})
+                    stage_start = d
+                    current_stage = stage_name
+
+                daily_ret = (row["close"] / prev["close"] - 1.0) if prev["close"] else 0.0
+                if position:
+                    equity *= (1.0 + daily_ret)
+
+            closes.append(row["close"])
+            bb_middle = bb_upper = bb_lower = None
+            if len(closes) >= 20:
+                window = closes[-20:]
+                mean = sum(window) / 20
+                variance = sum((x - mean) ** 2 for x in window) / 20
+                std = variance ** 0.5
+                bb_middle = mean
+                bb_upper = mean + 2 * std
+                bb_lower = mean - 2 * std
+
+            peak = max(peak, equity)
+            drawdown = (equity / peak - 1.0) if peak else 0.0
+            strategy_return = equity - 100.0
+            if drawdown < max_drawdown["drawdown"]:
+                max_drawdown = {
+                    "date": d,
+                    "drawdown": round(drawdown, 6),
+                    "strategy_return": round(strategy_return, 6),
+                    "close": row["close"],
+                }
+
+            points.append({
+                **row,
+                "bb_middle": round(bb_middle, 6) if bb_middle is not None else None,
+                "bb_upper": round(bb_upper, 6) if bb_upper is not None else None,
+                "bb_lower": round(bb_lower, 6) if bb_lower is not None else None,
+                "signal": sig.get("signal"),
+                "prob_up": sig.get("prob_up"),
+                "position": "LONG" if position else "CASH",
+                "strategy_return": round(strategy_return, 6),
+                "buy_hold_return": round((row["close"] / first_close - 1.0) * 100.0, 6) if first_close else 0.0,
+                "drawdown": round(drawdown * 100.0, 6),
+            })
+
+        stages.append({"from": stage_start, "to": rows[-1]["date"], "stage": current_stage})
+
+        return {
+            "ticker": ticker_u,
+            "target_date": date,
+            "points": points,
+            "signals": [
+                {"date": d, "signal": v["signal"], "prob_up": v["prob_up"]}
+                for d, v in sorted(signals.items())
+                if first_date <= d <= end_s
+            ],
+            "stages": stages,
+            "max_drawdown": max_drawdown,
+            "total": len(points),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("get_ticker_performance_history error")
         raise HTTPException(status_code=500, detail=str(e))
 
 

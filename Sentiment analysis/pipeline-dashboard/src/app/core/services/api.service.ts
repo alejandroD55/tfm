@@ -261,6 +261,14 @@ export class ApiService {
       { headers: this.authHeaders });
   }
 
+  /** Histórico para Highcharts: OHLC, Bollinger, señales y rendimiento hasta la fecha elegida */
+  getTickerPerformance(ticker: string, date: string, limit = 365): Observable<TickerPerformanceResponse> {
+    const params = new HttpParams().set('limit', limit.toString());
+    return this.http.get<TickerPerformanceResponse>(
+      `${this.baseUrl}/ohlcv/${ticker.toUpperCase()}/performance/${date}`,
+      { headers: this.authHeaders, params });
+  }
+
   // ─── Pipeline trigger ─────────────────────────────────────────────
   /** Lanza el pipeline (completo o para un ticker concreto) */
   runPipeline(body: { ticker?: string; tickers?: string[]; batch_date?: string }): Observable<{
@@ -416,4 +424,43 @@ export interface OhlcvWeekResponse {
   target_date: string;
   points:      OhlcvPoint[];
   total:       number;
+}
+
+export interface TickerPerformancePoint extends OhlcvPoint {
+  bb_middle:        number | null;
+  bb_upper:         number | null;
+  bb_lower:         number | null;
+  signal:           'BUY' | 'SELL' | 'HOLD' | null;
+  prob_up:          number | null;
+  position:         'LONG' | 'CASH';
+  strategy_return:  number;
+  buy_hold_return:  number;
+  drawdown:         number;
+}
+
+export interface TickerPerformanceSignal {
+  date:    string;
+  signal:  'BUY' | 'SELL' | 'HOLD';
+  prob_up: number | null;
+}
+
+export interface TickerPerformanceStage {
+  from:  string;
+  to:    string;
+  stage: 'LONG' | 'CASH';
+}
+
+export interface TickerPerformanceResponse {
+  ticker:       string;
+  target_date:  string;
+  points:       TickerPerformancePoint[];
+  signals:      TickerPerformanceSignal[];
+  stages:       TickerPerformanceStage[];
+  max_drawdown: {
+    date:            string;
+    drawdown:        number;
+    strategy_return: number;
+    close:           number;
+  };
+  total:        number;
 }

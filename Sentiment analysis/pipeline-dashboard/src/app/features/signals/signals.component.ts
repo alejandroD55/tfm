@@ -9,10 +9,15 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatExpansionModule } from '@angular/material/expansion';
 import { NgxChartsModule } from '@swimlane/ngx-charts';
+import Highcharts from 'highcharts/highstock';
+import { HighchartsChartModule } from 'highcharts-angular';
 import { switchMap, catchError, of } from 'rxjs';
 import { ReportService } from '../../core/services/report.service';
 import { TraceService } from '../../core/services/trace.service';
-import { ApiService, NewsDetailResponse, NewsArticleDetail, MacroContext, MacroArticle, OhlcvPoint } from '../../core/services/api.service';
+import {
+  ApiService, NewsDetailResponse, NewsArticleDetail, MacroContext, MacroArticle,
+  OhlcvPoint, TickerPerformanceResponse,
+} from '../../core/services/api.service';
 import {
   TickerView, ReportDateEntry, DailyReport,
   SentimentState, RsiState, TrendState, VolatilityState,
@@ -28,7 +33,7 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
     MatTableModule, MatSortModule,
     MatButtonModule, MatIconModule,
     MatProgressSpinnerModule, MatTooltipModule, MatExpansionModule,
-    NgxChartsModule
+    NgxChartsModule, HighchartsChartModule
   ],
   templateUrl: './signals.component.html',
   styleUrl: './signals.component.scss',
@@ -39,6 +44,8 @@ export class SignalsComponent implements OnInit, AfterViewInit {
   private apiSvc    = inject(ApiService);
 
   @ViewChild(MatSort) sort!: MatSort;
+
+  Highcharts: typeof Highcharts = Highcharts;
 
   loading = true;
   availableDates: ReportDateEntry[] = [];
@@ -72,6 +79,14 @@ export class SignalsComponent implements OnInit, AfterViewInit {
   // ── OHLCV Week chart ──────────────────────────────────────────────────────
   ohlcvWeekCache   = new Map<string, OhlcvPoint[]>();
   ohlcvWeekLoading = new Set<string>();
+
+  // ── Highcharts performance chart ──────────────────────────────────────────
+  performanceTicker = '';
+  performanceLoading = false;
+  performanceError = '';
+  performanceChartOptions: Highcharts.Options = {};
+  performanceChartUpdate = false;
+  performanceCache = new Map<string, TickerPerformanceResponse>();
 
   // Funciones de Coloreado Dinámico (Para NGX-Charts)
   customSignalColors = (name: string) => {
@@ -120,6 +135,9 @@ export class SignalsComponent implements OnInit, AfterViewInit {
     this.tickerTraceCache.clear();
     this.ohlcvWeekCache.clear();
     this.ohlcvWeekLoading.clear();
+    this.performanceCache.clear();
+    this.performanceChartOptions = {};
+    this.performanceError = '';
     this.expandedRows.clear();
     const entry = this.availableDates.find(d => d.date === date);
     this.hasTraceForDate = !!(entry as any)?.has_trace;
@@ -184,9 +202,181 @@ export class SignalsComponent implements OnInit, AfterViewInit {
     this.rsiChart = Object.entries(rsi).map(([name, value]) => ({ name, value })).filter(i => i.value > 0);
     this.trendChart = Object.entries(trend).map(([name, value]) => ({ name, value })).filter(i => i.value > 0);
     this.volatilityChart = Object.entries(vol).map(([name, value]) => ({ name, value })).filter(i => i.value > 0);
+
+    if (!views.some(v => v.ticker === this.performanceTicker)) {
+      this.performanceTicker = views[0]?.ticker ?? '';
+    }
+    if (this.performanceTicker) {
+      this.loadPerformanceChart(this.performanceTicker);
+    }
   }
 
   applyFilter() { this.dataSource.filter = this.filterSignal; }
+
+  onPerformanceTickerChange(ticker: string) {
+    this.performanceTicker = ticker;
+    this.loadPerformanceChart(ticker);
+  }
+
+  loadPerformanceChart(ticker: string) {
+    if (!ticker || !this.selectedDate) return;
+    const key = `${this.selectedDate}:${ticker}`;
+    const cached = this.performanceCache.get(key);
+    if (cached) {
+      this.performanceChartOptions = this.buildPerformanceChartOptions(cached);
+      this.performanceChartUpdate = true;
+      return;
+    }
+
+    this.performanceLoading = true;
+    this.performanceError = '';
+    this.apiSvc.getTickerPerformance(ticker, this.selectedDate, 365).pipe(
+      catchError(() => {
+        this.performanceError = `No se pudo cargar el histórico de ${ticker}. Ejecuta el bootstrap hasta ${this.selectedDate}.`;
+        this.performanceLoading = false;
+        return of(null);
+      })
+    ).subscribe(resp => {
+      this.performanceLoading = false;
+      if (!resp) return;
+      this.performanceCache.set(key, resp);
+      this.performanceChartOptions = this.buildPerformanceChartOptions(resp);
+      this.performanceChartUpdate = true;
+    });
+  }
+
+  private buildPerformanceChartOptions(resp: TickerPerformanceResponse): Highcharts.Options {
+    const toTs = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
+    const points = resp.points;
+    const targetTs = toTs(resp.target_date);
+    const visibleStart = targetTs - 1000 * 60 * 60 * 24 * 120;
+
+    const ohlc = points.map(p => [toTs(p.date), p.open, p.high, p.low, p.close]);
+    const bbUpper = points.map(p => [toTs(p.date), p.bb_upper]);
+    const bbMiddle = points.map(p => [toTs(p.date), p.bb_middle]);
+    const bbLower = points.map(p => [toTs(p.date), p.bb_lower]);
+    const strategy = points.map(p => [toTs(p.date), p.strategy_return]);
+    const buyHold = points.map(p => [toTs(p.date), p.buy_hold_return]);
+    const drawdownPoint = points.find(p => p.date === resp.max_drawdown.date);
+
+    const stageBands = resp.stages.map(stage => ({
+      from: toTs(stage.from),
+      to: toTs(stage.to) + 1000 * 60 * 60 * 24,
+      color: stage.stage === 'LONG' ? 'rgba(34,197,94,.055)' : 'rgba(124,58,237,.055)',
+      label: {
+        text: stage.stage,
+        style: { color: stage.stage === 'LONG' ? '#15803d' : '#6d28d9', fontSize: '10px', fontWeight: '600' },
+      },
+    }));
+
+    const flagColor = (signal: string) =>
+      signal === 'BUY' ? '#16a34a' : signal === 'SELL' ? '#7c3aed' : '#f59e0b';
+
+    const signalFlags = resp.signals
+      .filter(s => s.signal !== 'HOLD')
+      .map(s => ({
+        x: toTs(s.date),
+        title: s.signal,
+        text: `${s.signal} · P(up) ${s.prob_up != null ? (s.prob_up * 100).toFixed(1) : '?'}%`,
+        fillColor: flagColor(s.signal),
+      }));
+
+    return {
+      chart: {
+        height: 540,
+        backgroundColor: 'transparent',
+        zooming: { type: 'x' },
+      },
+      title: { text: undefined },
+      credits: { enabled: false },
+      rangeSelector: {
+        selected: 2,
+        inputEnabled: true,
+        buttons: [
+          { type: 'month', count: 1, text: '1M' },
+          { type: 'month', count: 3, text: '3M' },
+          { type: 'month', count: 6, text: '6M' },
+          { type: 'all', text: 'Todo' },
+        ],
+      },
+      navigator: { enabled: true },
+      scrollbar: { enabled: true },
+      legend: { enabled: true },
+      xAxis: {
+        type: 'datetime',
+        min: Math.max(points.length ? toTs(points[0].date) : visibleStart, visibleStart),
+        max: targetTs,
+        plotBands: stageBands as any,
+        plotLines: [{
+          value: targetTs,
+          color: '#2563eb',
+          width: 2,
+          dashStyle: 'Dash',
+          label: { text: `Fecha seleccionada: ${resp.target_date}`, rotation: 0, y: 14, style: { color: '#2563eb', fontWeight: '600' } },
+        }],
+      },
+      yAxis: [{
+        title: { text: 'Precio' },
+        height: '62%',
+        resize: { enabled: true },
+        gridLineColor: 'rgba(148,163,184,.18)',
+      }, {
+        title: { text: 'Rendimiento (%)' },
+        top: '68%',
+        height: '32%',
+        offset: 0,
+        opposite: false,
+        gridLineColor: 'rgba(148,163,184,.18)',
+        plotLines: [{ value: 0, color: '#94a3b8', width: 1 }],
+      }],
+      tooltip: {
+        split: true,
+        valueDecimals: 2,
+      },
+      plotOptions: {
+        series: {
+          dataGrouping: { enabled: false },
+          marker: { enabled: false },
+        } as any,
+        candlestick: {
+          color: '#ef4444',
+          upColor: '#22c55e',
+          lineColor: '#dc2626',
+          upLineColor: '#16a34a',
+        } as any,
+      },
+      series: [
+        { type: 'candlestick', id: 'ohlc', name: `${resp.ticker} OHLC`, data: ohlc, yAxis: 0 },
+        { type: 'line', name: 'Bollinger superior', data: bbUpper, yAxis: 0, color: '#f59e0b', dashStyle: 'ShortDash', lineWidth: 1.4 },
+        { type: 'line', name: 'Media Bollinger', data: bbMiddle, yAxis: 0, color: '#64748b', dashStyle: 'ShortDot', lineWidth: 1 },
+        { type: 'line', name: 'Bollinger inferior', data: bbLower, yAxis: 0, color: '#f59e0b', dashStyle: 'ShortDash', lineWidth: 1.4 },
+        { type: 'line', name: 'Rendimiento estrategia', data: strategy, yAxis: 1, color: '#2563eb', lineWidth: 2.2 },
+        { type: 'line', name: 'Buy & Hold', data: buyHold, yAxis: 1, color: '#94a3b8', lineWidth: 1.6 },
+        {
+          type: 'scatter',
+          name: 'Max drawdown',
+          data: drawdownPoint ? [[toTs(drawdownPoint.date), drawdownPoint.strategy_return]] : [],
+          yAxis: 1,
+          color: '#ef4444',
+          marker: { enabled: true, symbol: 'triangle-down', radius: 7 },
+          tooltip: {
+            pointFormatter: function () {
+              return `<span style="color:#ef4444">●</span> Max drawdown: <b>${(resp.max_drawdown.drawdown * 100).toFixed(2)}%</b><br/>`;
+            },
+          },
+        },
+        {
+          type: 'flags',
+          name: 'Señales',
+          data: signalFlags,
+          onSeries: 'ohlc',
+          shape: 'squarepin',
+          width: 18,
+          style: { color: '#fff', fontSize: '9px', fontWeight: '700' },
+        } as any,
+      ] as any,
+    };
+  }
 
   toggleRow(ticker: string) {
     if (this.expandedRows.has(ticker)) {

@@ -146,6 +146,7 @@ def calculate_backtesting_metrics(signals_df):
                 current_position = 0 # Si no hay precio el día 1, forzamos cash por seguridad
                 
             trades_returns = []
+            days_invested = 0
 
             signals_count = ticker_signals["signal"].value_counts().to_dict()
 
@@ -160,16 +161,18 @@ def calculate_backtesting_metrics(signals_df):
                     if current_position == 0:  # Entrar en el mercado (Comprar)
                         current_position = 1
                         entry_price = current_price
-                elif signal in ["SELL", "HOLD"]:
+                elif signal == "SELL":
                     if current_position == 1:  # Salir del mercado (Vender a liquidez)
                         trade_return = (current_price - entry_price) / entry_price
                         current_capital *= 1 + trade_return
                         trades_returns.append(float(trade_return))
                         current_position = 0
+                # HOLD: no opera. Mantiene la posición actual (LONG o CASH).
 
                 # Para dibujar la curva de capital diaria de forma realista, calculamos el valor 
                 # de mercado (Mark-to-Market) si estamos invertidos.
                 if current_position == 1 and entry_price > 0:
+                    days_invested += 1
                     unrealized_return = (current_price - entry_price) / entry_price
                     daily_equity = current_capital * (1 + unrealized_return)
                 else:
@@ -187,7 +190,8 @@ def calculate_backtesting_metrics(signals_df):
             cumulative_return = (final_equity - starting_capital) / starting_capital
 
             if len(equity_curve) > 2:
-                daily_returns = np.diff(equity_curve) / equity_curve[:-1]
+                equity_arr = np.array(equity_curve)
+                daily_returns = np.diff(equity_arr) / equity_arr[:-1]
                 excess_returns = daily_returns - (0.02 / 252)
                 std_dev = np.std(excess_returns)
                 sharpe_ratio = (
@@ -195,8 +199,8 @@ def calculate_backtesting_metrics(signals_df):
                     if std_dev > 1e-6
                     else 0.0
                 )
-                peak = np.maximum.accumulate(equity_curve)
-                drawdown = (equity_curve - peak) / peak
+                peak = np.maximum.accumulate(equity_arr)
+                drawdown = (equity_arr - peak) / peak
                 max_drawdown = np.min(drawdown)
             else:
                 sharpe_ratio = 0.0
@@ -235,7 +239,7 @@ def calculate_backtesting_metrics(signals_df):
                 ),
                 "profit_factor": round(float(profit_factor), 4),
                 "time_in_market_ratio": round(
-                    float(signals_count.get("BUY", 0) / max(len(ticker_signals), 1)), 4
+                    float(days_invested / max(len(ticker_signals), 1)), 4
                 ),
             }
 
@@ -575,7 +579,7 @@ def handler(event, context):
                 "period_days": DAYS_BACK,
                 "strategy_type": "Long/Cash",
                 "sharpe_annualized": True,
-                "limitation": "El backtesting asume ejecucion al cierre. Estrategia de conservacion de capital (Long/Cash).",
+                "limitation": "El backtesting asume ejecucion al cierre. Estrategia Long/Cash: BUY entra al mercado, SELL cierra posicion y HOLD mantiene el estado actual.",
             },
             "trace_artifact": f"mongo:bayesian_traces/{today}",
         }
