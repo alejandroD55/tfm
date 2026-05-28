@@ -28,7 +28,6 @@ import trafilatura
 from dotenv import load_dotenv
 from tqdm import tqdm
 
-# newsapi eliminado — se usa GDELT (gratuito, sin API key, acceso histórico completo)
 import feedparser
 import argparse
 
@@ -39,15 +38,24 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, "shared"))
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
-    level=logging.INFO,
+    # Por defecto, el bootstrap es "quiet": solo WARNING/ERROR + tqdm (loader de días).
+    # Usa --verbose si quieres ver INFO.
+    level=logging.ERROR,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("trafilatura").setLevel(logging.CRITICAL)
+logging.getLogger("pymongo").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 load_dotenv()
+
+def _configure_logging(verbose: bool) -> None:
+    level = logging.INFO if verbose else logging.ERROR
+    logging.getLogger().setLevel(level)
+    logger.setLevel(level)
 
 
 def get_args():
@@ -76,12 +84,12 @@ def get_args():
     parser.add_argument(
         "--refresh-news-cache",
         action="store_true",
-        help="Ignora y regenera caches de noticias historicas Finnhub/GDELT para el rango solicitado.",
+        help="Ignora y regenera caches de noticias historicas Finnhub/NewsAPI/AlphaVantage para el rango solicitado.",
     )
     parser.add_argument(
-        "--disable-gdelt",
+        "--verbose",
         action="store_true",
-        help="Desactiva GDELT para evitar rate limits de la API publica.",
+        help="Activa logs INFO (por defecto solo WARNING/ERROR + barra de progreso).",
     )
     return parser.parse_args()
 
@@ -98,16 +106,20 @@ FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
 MONGODB_URI = os.getenv("MONGODB_URI", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 ALPHAVANTAGE_API_KEY = os.getenv("ALPHAVANTAGE_API_KEY", "")
-
-DEBUG_NEWS = os.getenv("BOOTSTRAP_DEBUG_NEWS", "").lower() in ("1", "true", "yes", "on")
-DEBUG_NEWS_HEADLINES = int(os.getenv("BOOTSTRAP_DEBUG_NEWS_HEADLINES", "3"))
-REFRESH_NEWS_CACHE = os.getenv("BOOTSTRAP_REFRESH_NEWS_CACHE", "").lower() in (
+NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")
+# Plan Developer gratuito: búsqueda hasta ~30 días atrás (newsapi.org/pricing).
+# Plan de pago: histórico ampliado — define NEWSAPI_UNLIMITED_HISTORY=1 para no recortar.
+NEWSAPI_HISTORY_DAYS = int(os.getenv("NEWSAPI_HISTORY_DAYS", "30"))
+NEWSAPI_UNLIMITED_HISTORY = os.getenv("NEWSAPI_UNLIMITED_HISTORY", "").lower() in (
     "1",
     "true",
     "yes",
     "on",
 )
-DISABLE_GDELT = os.getenv("BOOTSTRAP_DISABLE_GDELT", "").lower() in (
+
+DEBUG_NEWS = os.getenv("BOOTSTRAP_DEBUG_NEWS", "").lower() in ("1", "true", "yes", "on")
+DEBUG_NEWS_HEADLINES = int(os.getenv("BOOTSTRAP_DEBUG_NEWS_HEADLINES", "3"))
+REFRESH_NEWS_CACHE = os.getenv("BOOTSTRAP_REFRESH_NEWS_CACHE", "").lower() in (
     "1",
     "true",
     "yes",
@@ -135,49 +147,24 @@ def _sf(v) -> Optional[float]:
         return None
 
 
-MACRO_QUERIES = {
-    "monetary_policy": [
-        "Federal Reserve interest rates decision",
-        "Fed hawkish dovish monetary policy",
-        "ECB interest rates inflation Europe",
-    ],
-    "inflation": [
-        "CPI inflation data consumer prices",
-        "PCE inflation Federal Reserve target",
-    ],
-    "macro_economy": [
-        "GDP growth recession economic outlook",
-        "unemployment jobs report nonfarm payrolls",
-    ],
-    "geopolitical": [
-        "geopolitical tensions war conflict markets",
-        "Russia Ukraine war sanctions economy",
-    ],
+# Queries NewsAPI por ticker — se usan para enriquecer la ingesta histórica
+# cuando Finnhub devuelve pocos artículos.
+TICKER_NEWSAPI_QUERIES: Dict[str, List[str]] = {
+    "SPY": ["S&P 500", "SPY ETF"],
+    "IWM": ["Russell 2000", "IWM ETF small cap"],
+    "GLD": ["gold price", "GLD ETF"],
+    "XLE": ["energy stocks", "XLE ETF oil"],
+    "NVDA": ["NVIDIA", "NVDA earnings", "DeepSeek NVIDIA"],
+    "ARKK": ["ARK Innovation", "Cathie Wood ARKK"],
+    "XBI": ["biotech stocks", "XBI ETF FDA"],
 }
 
-# Queries GDELT por ticker — misma lógica que ETF_SEARCH_TERMS en lambda_ingestion.
-# Se usan para enriquecer la ingesta histórica cuando Finnhub devuelve pocos artículos.
-TICKER_GDELT_QUERIES: Dict[str, List[str]] = {
-    "SPY": ["SPY S&P 500 ETF stock market index", "S&P 500 index fund performance"],
-    "IWM": ["IWM Russell 2000 small cap ETF", "Russell 2000 small cap stocks rally"],
-    "GLD": ["GLD gold ETF price rally", "gold commodity price market hedge"],
-    "XLE": ["XLE energy sector ETF oil stocks", "energy stocks oil gas price market"],
-    "NVDA": [
-        "NVIDIA stock earnings semiconductor",
-        "NVIDIA GPU artificial intelligence chips",
-        "DeepSeek NVIDIA chips competition",
-        "DeepSeek Nvidia shares plunge",
-        "DeepSeek Nvidia stock crash",
-        "DeepSeek Nvidia market selloff",
-    ],
-    "ARKK": [
-        "ARK Innovation ETF Cathie Wood",
-        "ARKK disruptive technology growth fund",
-    ],
-    "XBI": [
-        "XBI SPDR biotech ETF FDA approval",
-        "biotech pharmaceutical drug approval stocks",
-    ],
+# Términos de búsqueda macro para NewsAPI
+MACRO_NEWSAPI_QUERIES: Dict[str, List[str]] = {
+    "monetary_policy": ["Federal Reserve interest rates", "Fed monetary policy ECB"],
+    "inflation": ["CPI inflation consumer prices", "PCE inflation data"],
+    "macro_economy": ["GDP growth recession", "unemployment nonfarm payrolls"],
+    "geopolitical": ["geopolitical tensions war sanctions markets"],
 }
 
 RSS_FEEDS = {
@@ -192,6 +179,37 @@ def _fingerprint(url: str, headline: str) -> str:
 
     key = (url or headline or "").strip().lower()
     return hashlib.md5(key.encode()).hexdigest()
+
+
+def _newsapi_clamp_range(
+    start_d: date, end_d: date, label: str = "NewsAPI"
+) -> Optional[Tuple[date, date]]:
+    """
+    Ajusta from/to al ventana permitida por NewsAPI.
+    Free Developer: artículos hasta ~30 días atrás, 100 req/día.
+    Devuelve None si todo el rango queda fuera de ventana.
+    """
+    if NEWSAPI_UNLIMITED_HISTORY:
+        return start_d, end_d
+
+    today = datetime.now().date()
+    earliest = today - timedelta(days=NEWSAPI_HISTORY_DAYS)
+    eff_start = max(start_d, earliest)
+    eff_end = min(end_d, today)
+    if eff_end < eff_start:
+        logger.warning(
+            f"[{label}] rango {start_d}→{end_d} fuera de ventana "
+            f"(últimos {NEWSAPI_HISTORY_DAYS} días en plan free). "
+            f"NewsAPI no aportará para estas fechas."
+        )
+        return None
+    if eff_start != start_d or eff_end != end_d:
+        logger.warning(
+            f"[{label}] rango ajustado {start_d}→{end_d} → {eff_start}→{eff_end} "
+            f"(plan free: últimos {NEWSAPI_HISTORY_DAYS} días; "
+            f"Finnhub/AlphaVantage cubren fechas anteriores)"
+        )
+    return eff_start, eff_end
 
 
 def _normalize_macro(headline, url, source, dt, category, query_tag, summary=""):
@@ -383,23 +401,6 @@ def _groq_rate_wait() -> None:
             time.sleep(wait)
         _groq_last_ts[0] = time.time()
 
-
-# Rate limiter global para GDELT (API pública, límite blando y variable).
-# Un solo lock compartido entre todos los hilos evita los 429 incluso
-# cuando varios tickers se prefetchan en paralelo.
-_GDELT_MIN_INTERVAL_S = float(os.getenv("BOOTSTRAP_GDELT_INTERVAL_S", "10.0"))
-_gdelt_last_ts: List[float] = [0.0]
-_gdelt_ts_lock = threading.Lock()
-
-
-def _gdelt_rate_wait() -> None:
-    """Bloquea el hilo actual hasta que sea seguro lanzar otra llamada a GDELT."""
-    with _gdelt_ts_lock:
-        now = time.time()
-        wait = _GDELT_MIN_INTERVAL_S - (now - _gdelt_last_ts[0])
-        if wait > 0:
-            time.sleep(wait)
-        _gdelt_last_ts[0] = time.time()
 
 
 def get_finbert():
@@ -717,7 +718,9 @@ def pg_upsert_position_state(
 
 
 # NUEVO: EXTRAER HISTÓRICO DE AURORA (Para clonar AWS lambda_report.py)
-def get_trading_data(connection, report_date, days_back=DAYS_BACK):
+def get_trading_data(
+    connection, report_date, days_back=DAYS_BACK, tickers: Optional[List[str]] = None
+):
     try:
         cursor = connection.cursor()
         end_date = pd.to_datetime(report_date).date()
@@ -728,10 +731,14 @@ def get_trading_data(connection, report_date, days_back=DAYS_BACK):
                    ti.bb_upper, ti.bb_middle, ti.bb_lower
             FROM trading_signals ts
             JOIN technical_indicators ti ON ts.batch_date = ti.batch_date AND ts.ticker = ti.ticker
-            WHERE ts.batch_date >= %s AND ts.batch_date <= %s 
-            ORDER BY ts.batch_date, ts.ticker
+            WHERE ts.batch_date >= %s AND ts.batch_date <= %s
         """
-        cursor.execute(query, (start_date, end_date))
+        params = [start_date, end_date]
+        if tickers:
+            query += " AND ts.ticker = ANY(%s)"
+            params.append(tickers)
+        query += " ORDER BY ts.batch_date, ts.ticker"
+        cursor.execute(query, params)
         signals_df = pd.DataFrame(
             cursor.fetchall(),
             columns=[
@@ -755,21 +762,25 @@ def get_trading_data(connection, report_date, days_back=DAYS_BACK):
         raise
 
 
-def get_signal_outcomes(connection, report_date, days_back=DAYS_BACK):
+def get_signal_outcomes(
+    connection, report_date, days_back=DAYS_BACK, tickers: Optional[List[str]] = None
+):
     try:
         cursor = connection.cursor()
         end_date = pd.to_datetime(report_date).date()
         start_date = end_date - timedelta(days=days_back)
-        cursor.execute(
-            """
+        query = """
             SELECT batch_date, ticker, signal, prob_up, outcome_d1, outcome_d3,
                    outcome_d5, correct_d1, correct_d3, correct_d5
             FROM signal_outcomes
             WHERE batch_date >= %s AND batch_date <= %s
-            ORDER BY batch_date, ticker
-        """,
-            (start_date, end_date),
-        )
+        """
+        params = [start_date, end_date]
+        if tickers:
+            query += " AND ticker = ANY(%s)"
+            params.append(tickers)
+        query += " ORDER BY batch_date, ticker"
+        cursor.execute(query, params)
         cols = [
             "batch_date",
             "ticker",
@@ -796,8 +807,8 @@ def get_signal_outcomes(connection, report_date, days_back=DAYS_BACK):
 def fetch_ohlcv_all(
     tickers: List[str], start_date: date, end_date: date
 ) -> Dict[str, pd.DataFrame]:
-    # Descargamos con un "lookback" extra de 250 días para asegurar SMA50, SMA200 y ATH drawdown
-    download_start = start_date - timedelta(days=250)
+    # Lookback de 350 días calendario ≈ 245 días hábiles, garantiza SMA200 desde el primer día del rango
+    download_start = start_date - timedelta(days=350)
     result = {}
     for ticker in tickers:
         df = yf.download(
@@ -967,30 +978,34 @@ def fetch_alpha_vantage_news_historical(
     return news_by_date
 
 
-def fetch_alpha_vantage_macro_news(date_str: str) -> List[Dict]:
+def _fetch_alpha_vantage_macro_month(year: int, month: int) -> Dict[str, List[Dict]]:
     """
-    Fuente macro alternativa a GDELT para backtesting local.
-    Usa Alpha Vantage NEWS_SENTIMENT con topics macro/mercado en una sola llamada diaria.
+    Descarga noticias macro de Alpha Vantage para un mes completo y las indexa por día.
+    Una sola llamada mensual: 1 request/mes en lugar de 1 request/día.
+    Cache: alphavantage_macro_YYYY-MM.json  (formato {date_str: [articles]}).
     """
-    cache_file = CACHE_DIR / "news" / f"alphavantage_macro_{date_str}.json"
+    month_key = f"{year:04d}-{month:02d}"
+    cache_file = CACHE_DIR / "news" / f"alphavantage_macro_{month_key}.json"
+
     if cache_file.exists() and not REFRESH_NEWS_CACHE:
         with open(cache_file, encoding="utf-8") as fh:
             cached = json.load(fh)
+        total = sum(len(v) for v in cached.values())
         _news_debug(
-            f"[news-cache] AlphaVantage macro {date_str}: {len(cached)} articulos desde {cache_file}"
+            f"[news-cache] AlphaVantage macro {month_key}: {total} articulos desde cache"
         )
         return cached
     if cache_file.exists() and REFRESH_NEWS_CACHE:
-        _news_debug(
-            f"[news-cache] AlphaVantage macro {date_str}: ignorando cache por --refresh-news-cache"
-        )
+        _news_debug(f"[news-cache] AlphaVantage macro {month_key}: ignorando cache")
     if not ALPHAVANTAGE_API_KEY:
-        _news_debug(f"[AlphaVantage macro] {date_str}: sin ALPHAVANTAGE_API_KEY, fuente omitida")
-        return []
+        _news_debug(f"[AlphaVantage macro] {month_key}: sin ALPHAVANTAGE_API_KEY")
+        return {}
 
-    target_date = pd.to_datetime(date_str).date()
-    start_ts = (target_date - timedelta(days=1)).strftime("%Y%m%dT0000")
-    end_ts = (target_date + timedelta(days=1)).strftime("%Y%m%dT2359")
+    import calendar as _cal
+    last_day = _cal.monthrange(year, month)[1]
+    start_ts = f"{year:04d}{month:02d}01T0000"
+    end_ts = f"{year:04d}{month:02d}{last_day:02d}T2359"
+
     try:
         resp = requests.get(
             "https://www.alphavantage.co/query",
@@ -999,24 +1014,25 @@ def fetch_alpha_vantage_macro_news(date_str: str) -> List[Dict]:
                 "topics": "economy_macro,economy_monetary,financial_markets",
                 "time_from": start_ts,
                 "time_to": end_ts,
-                "sort": "RELEVANCE",
-                "limit": 200,
+                "sort": "LATEST",
+                "limit": 1000,
                 "apikey": ALPHAVANTAGE_API_KEY,
             },
             timeout=30,
         )
         data = resp.json() if resp.text.strip() else {}
     except Exception as exc:
-        logger.warning(f"[AlphaVantage macro] {date_str}: error consultando noticias: {exc}")
-        return []
+        logger.warning(f"[AlphaVantage macro] {month_key}: error: {exc}")
+        return {}
 
     if "Information" in data or "Note" in data:
         logger.warning(
-            f"[AlphaVantage macro] {date_str}: limite/API respuesta={data.get('Information') or data.get('Note')}"
+            f"[AlphaVantage macro] {month_key}: rate limit/API: "
+            f"{data.get('Information') or data.get('Note')}"
         )
-        return []
+        return {}
 
-    articles: List[Dict] = []
+    by_day: Dict[str, List[Dict]] = {}
     seen: set = set()
     for item in data.get("feed", []) or []:
         headline = (item.get("title") or "").strip()
@@ -1030,11 +1046,13 @@ def fetch_alpha_vantage_macro_news(date_str: str) -> List[Dict]:
         raw_time = item.get("time_published", "")
         try:
             dt = datetime.strptime(raw_time[:13], "%Y%m%dT%H%M")
+            date_str = dt.strftime("%Y-%m-%d")
             dt_str = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
         except Exception:
+            date_str = f"{year:04d}-{month:02d}-01"
             dt_str = raw_time or date_str
         source_name = item.get("source") or "alpha_vantage"
-        articles.append(
+        by_day.setdefault(date_str, []).append(
             _normalize_macro(
                 headline,
                 url,
@@ -1047,8 +1065,36 @@ def fetch_alpha_vantage_macro_news(date_str: str) -> List[Dict]:
         )
 
     with open(cache_file, "w", encoding="utf-8") as fh:
-        json.dump(articles, fh)
-    logger.info(f"[AlphaVantage macro] {date_str}: {len(articles)} articulos -> cacheado")
+        json.dump(by_day, fh)
+    total = sum(len(v) for v in by_day.values())
+    logger.info(
+        f"[AlphaVantage macro] {month_key}: {total} articulos en {len(by_day)} dias -> cacheado"
+    )
+    return by_day
+
+
+# Cache en memoria para el mes actual: evita re-leer disco en cada día del mismo mes.
+_av_macro_month_cache: Dict[str, Dict[str, List[Dict]]] = {}
+
+
+def fetch_alpha_vantage_macro_news(date_str: str) -> List[Dict]:
+    """
+    Devuelve noticias macro de Alpha Vantage para date_str.
+    Usa cache mensual en disco (1 request/mes) más cache en memoria para el loop diario.
+    """
+    global _av_macro_month_cache
+    target_date = pd.to_datetime(date_str).date()
+    month_key = f"{target_date.year:04d}-{target_date.month:02d}"
+
+    if month_key not in _av_macro_month_cache:
+        _av_macro_month_cache[month_key] = _fetch_alpha_vantage_macro_month(
+            target_date.year, target_date.month
+        )
+
+    articles = _av_macro_month_cache[month_key].get(date_str, [])
+    _news_debug(
+        f"[AlphaVantage macro] {date_str}: {len(articles)} articulos del cache mensual {month_key}"
+    )
     if DEBUG_NEWS and articles:
         logger.info(
             f"[AlphaVantage macro] {date_str}: samples={_headline_samples(articles)}"
@@ -1056,91 +1102,124 @@ def fetch_alpha_vantage_macro_news(date_str: str) -> List[Dict]:
     return articles
 
 
-def fetch_gdelt_ticker_news_historical(
+def fetch_newsapi_ticker_news_historical(
     ticker: str, start_d: date, end_d: date
 ) -> Dict[str, List]:
     """
-    Pre-fetcha artículos de GDELT v2 para un ticker concreto sobre todo el rango del backtest.
-    Usa TICKER_GDELT_QUERIES para queries específicos por ticker.
-    Resultado cacheado en disco para no repetir llamadas en re-ejecuciones.
+    Pre-fetcha artículos de NewsAPI para un ticker concreto sobre todo el rango del backtest.
+    Usa una sola llamada por query (con from/to del rango completo) y distribuye por fecha.
+    Cacheado en disco por rango para evitar re-llamadas.
+
+    Plan Developer gratuito: 100 req/día, búsqueda hasta ~30 días atrás.
+    Plan de pago: histórico ampliado (NEWSAPI_UNLIMITED_HISTORY=1).
 
     Retorna {date_str: [article_dict, ...]} en el mismo formato que fetch_news_historical().
     """
-    if DISABLE_GDELT:
-        logger.info(f"[GDELT ticker] {ticker}: fuente desactivada")
+    if not NEWSAPI_KEY:
+        _news_debug(f"[NewsAPI ticker] {ticker}: NEWSAPI_KEY no configurada — omitiendo")
         return {}
+
+    clamped = _newsapi_clamp_range(start_d, end_d, label=f"NewsAPI ticker {ticker}")
+    if clamped is None:
+        return {}
+    eff_start, eff_end = clamped
 
     cache_file = (
         CACHE_DIR
         / "news"
-        / f"gdelt_{ticker}_{start_d.strftime('%Y%m')}_{end_d.strftime('%Y%m')}.json"
+        / f"newsapi_{ticker}_{start_d.strftime('%Y%m')}_{end_d.strftime('%Y%m')}.json"
     )
     if cache_file.exists() and not REFRESH_NEWS_CACHE:
         with open(cache_file, encoding="utf-8") as fh:
             cached = json.load(fh)
         total, days = _count_news(cached)
         _news_debug(
-            f"[news-cache] GDELT {ticker}: {total} articulos en {days} dias desde {cache_file}"
+            f"[news-cache] NewsAPI {ticker}: {total} articulos en {days} dias desde {cache_file}"
         )
         return cached
     if cache_file.exists() and REFRESH_NEWS_CACHE:
-        _news_debug(f"[news-cache] GDELT {ticker}: ignorando cache por --refresh-news-cache")
+        _news_debug(f"[news-cache] NewsAPI {ticker}: ignorando cache por --refresh-news-cache")
 
-    queries = TICKER_GDELT_QUERIES.get(ticker, [ticker])
+    queries = TICKER_NEWSAPI_QUERIES.get(ticker, [ticker])
     news_by_date: Dict[str, List] = {}
-    business_days = pd.bdate_range(start=str(start_d), end=str(end_d))
+    seen_global: set = set()
 
     logger.info(
-        f"[GDELT ticker] Pre-fetching {ticker} ({len(business_days)} días, {len(queries)} queries)…"
+        f"[NewsAPI ticker] Pre-fetching {ticker} ({len(queries)} queries, rango {eff_start}→{eff_end})…"
     )
-    for bd in business_days:
-        target_date = bd.date()
-        date_str = target_date.strftime("%Y-%m-%d")
-        seen: set = set()
-        day_articles: List = []
-        query_counts: Dict[str, int] = {}
 
-        for query in queries:
-            raw_articles = fetch_gdelt_news(query, target_date, n=8)
-            query_counts[query] = len(raw_articles)
-            for art in raw_articles:
-                title = art.get("title", "").strip()
+    for query in queries:
+        try:
+            resp = requests.get(
+                "https://newsapi.org/v2/everything",
+                params={
+                    "q": query,
+                    "from": eff_start.isoformat(),
+                    "to": eff_end.isoformat(),
+                    "language": "en",
+                    "sortBy": "publishedAt",
+                    "pageSize": 100,
+                    "apiKey": NEWSAPI_KEY,
+                },
+                timeout=20,
+            )
+            if resp.status_code == 426:
+                logger.warning(
+                    f"[NewsAPI ticker] {ticker} query='{query}': fecha fuera de ventana del plan "
+                    f"(free ≈{NEWSAPI_HISTORY_DAYS} días). Usa Finnhub/AV o plan de pago NewsAPI."
+                )
+                continue
+            if resp.status_code == 429:
+                logger.warning(f"[NewsAPI ticker] {ticker}: rate limit (100 req/día en free tier)")
+                break
+            if resp.status_code != 200:
+                logger.warning(
+                    f"[NewsAPI ticker] {ticker}: HTTP {resp.status_code} query='{query}'"
+                )
+                continue
+
+            data = resp.json()
+            if data.get("status") != "ok":
+                msg = data.get("message", "")
+                if "maximumResultsReached" not in msg:
+                    logger.warning(f"[NewsAPI ticker] {ticker} query='{query}': {msg}")
+                continue
+
+            for art in data.get("articles", []):
+                title = (art.get("title") or "").strip()
                 url = art.get("url", "")
-                if not title:
+                if not title or title == "[Removed]":
                     continue
                 fp = _fingerprint(url, title)
-                if fp in seen:
+                if fp in seen_global:
                     continue
-                seen.add(fp)
-                raw_dt = art.get("seendate", "")
-                try:
-                    pub_dt = datetime.strptime(raw_dt, "%Y%m%dT%H%M%SZ").isoformat()
-                except Exception:
-                    pub_dt = date_str
-                day_articles.append(
-                    {
-                        "headline": title,
-                        "url": url,
-                        "source": art.get("domain", "gdelt"),
-                        "datetime": pub_dt,
-                        "summary": "",
-                    }
-                )
-            # No sleep aquí: _gdelt_rate_wait() dentro de fetch_gdelt_news() ya gestiona el límite global.
+                seen_global.add(fp)
 
-        if day_articles:
-            news_by_date[date_str] = day_articles
-        _news_debug(
-            f"[GDELT ticker] {ticker} {date_str}: raw_por_query={query_counts} "
-            f"dedup={len(day_articles)} samples={_headline_samples(day_articles)}"
-        )
+                pub_raw = art.get("publishedAt", "")
+                try:
+                    pub_dt = datetime.fromisoformat(pub_raw.replace("Z", "+00:00"))
+                    date_str = pub_dt.strftime("%Y-%m-%d")
+                except Exception:
+                    date_str = start_d.isoformat()
+
+                entry = {
+                    "headline": title,
+                    "url": url,
+                    "source": (art.get("source") or {}).get("name", "newsapi"),
+                    "datetime": pub_raw,
+                    "summary": (art.get("description") or "")[:300],
+                }
+                news_by_date.setdefault(date_str, []).append(entry)
+
+        except Exception as e:
+            logger.warning(f"[NewsAPI ticker] {ticker} query='{query}': {e}")
 
     with open(cache_file, "w", encoding="utf-8") as fh:
         json.dump(news_by_date, fh)
 
     total_arts = sum(len(v) for v in news_by_date.values())
     logger.info(
-        f"[GDELT ticker] {ticker}: {total_arts} artículos en {len(news_by_date)} días → cacheado"
+        f"[NewsAPI ticker] {ticker}: {total_arts} artículos en {len(news_by_date)} días → cacheado"
     )
     return news_by_date
 
@@ -1203,18 +1282,18 @@ def fetch_yfinance_ticker_news(ticker: str, target_date_str: str) -> List[Dict]:
 def merge_ticker_articles(
     finnhub_arts: List[Dict],
     alphavantage_arts: List[Dict],
-    gdelt_arts: List[Dict],
+    newsapi_arts: List[Dict],
     yfinance_arts: List[Dict],
 ) -> List[Dict]:
     """
     Combina artículos de las 3 fuentes con deduplicación por fingerprint.
-    Orden de prioridad: Finnhub → AlphaVantage → GDELT → YFinance.
+    Orden de prioridad: Finnhub → AlphaVantage → NewsAPI → YFinance.
     """
     seen_fps: set = set()
     seen_titles: set = set()
     merged: List[Dict] = []
 
-    for art in finnhub_arts + alphavantage_arts + gdelt_arts + yfinance_arts:
+    for art in finnhub_arts + alphavantage_arts + newsapi_arts + yfinance_arts:
         headline = art.get("headline", "").strip()
         url = art.get("url", "")
         if not headline:
@@ -1246,82 +1325,167 @@ def fetch_vix_historical(start_d: date, end_d: date) -> pd.Series:
     return pd.Series(dtype=float)
 
 
-def fetch_gdelt_news(query: str, target_date, n: int = 5, _retries: int = 3) -> list:
+def fetch_newsapi_macro_articles(query: str, target_date: date, n: int = 10) -> List[Dict]:
     """
-    Obtiene artículos de GDELT v2 para un query y fecha histórica (±1 día).
-    GDELT es gratuito, no requiere API key y cubre noticias desde 2013.
-
-    Rate limit: 1 req / 5 s (enforced por _gdelt_rate_wait).
-    Retry automático con backoff exponencial en 429 y timeouts.
+    Obtiene artículos macro de NewsAPI para un query y fecha concreta (±1 día).
+    Usado por ingest_macro_news; sin caché propia (la caché mensual va en _fetch_newsapi_macro_month).
     """
-    start_dt = (target_date - timedelta(days=1)).strftime("%Y%m%d%H%M%S")
-    end_dt   = (target_date + timedelta(days=1)).strftime("%Y%m%d%H%M%S")
-    params   = {
-        "query":         query,
-        "mode":          "artlist",
-        "maxrecords":    n,
-        "startdatetime": start_dt,
-        "enddatetime":   end_dt,
-        "format":        "json",
-        "sourcelang":    "english",
-    }
-
-    for attempt in range(_retries):
-        _gdelt_rate_wait()   # ← respeta el límite de 1 req / 5 s globalmente
-        try:
-            resp = requests.get(
-                "https://api.gdeltproject.org/api/v2/doc/doc",
-                params=params,
-                timeout=20,
+    if not NEWSAPI_KEY:
+        return []
+    from_dt = (target_date - timedelta(days=1)).isoformat()
+    to_dt   = (target_date + timedelta(days=1)).isoformat()
+    try:
+        resp = requests.get(
+            "https://newsapi.org/v2/everything",
+            params={
+                "q": query,
+                "from": from_dt,
+                "to": to_dt,
+                "language": "en",
+                "sortBy": "publishedAt",
+                "pageSize": n,
+                "apiKey": NEWSAPI_KEY,
+            },
+            timeout=20,
+        )
+        if resp.status_code == 426:
+            _news_debug(
+                f"[NewsAPI macro] fecha fuera de ventana free (≈{NEWSAPI_HISTORY_DAYS}d) q='{query}'"
             )
-            if resp.status_code == 200:
-                try:
-                    data = resp.json() if resp.text.strip() else {}
-                except ValueError:
-                    body = resp.text[:160]
-                    if "keyword that was too short" in resp.text.lower():
-                        logger.warning(
-                            f"[GDELT] query invalida por keyword corta query='{query}' "
-                            f"fecha={target_date}: {body!r}"
-                        )
-                        return []
-                    wait = _GDELT_MIN_INTERVAL_S * (attempt + 1)
-                    logger.warning(
-                        f"[GDELT] respuesta no JSON query='{query}' fecha={target_date} "
-                        f"status=200 body={body!r} "
-                        f"→ reintento {attempt + 1}/{_retries} en {wait:.0f}s"
-                    )
-                    time.sleep(wait)
-                    continue
-                return (data or {}).get("articles", [])
-            if resp.status_code == 429:
-                wait = _GDELT_MIN_INTERVAL_S * (2 ** attempt)   # backoff exponencial
-                logger.warning(
-                    f"[GDELT] 429 query='{query}' fecha={target_date} "
-                    f"→ reintento {attempt + 1}/{_retries} en {wait:.0f}s"
-                )
-                time.sleep(wait)
+            return []
+        if resp.status_code != 200:
+            _news_debug(f"[NewsAPI macro] HTTP {resp.status_code} query='{query}'")
+            return []
+        data = resp.json()
+        if data.get("status") != "ok":
+            return []
+        results = []
+        for art in data.get("articles", []):
+            title = (art.get("title") or "").strip()
+            if not title or title == "[Removed]":
                 continue
-            # Otro código HTTP no recuperable
-            if DEBUG_NEWS:
-                logger.warning(
-                    f"[GDELT] HTTP {resp.status_code} query='{query}' fecha={target_date} "
-                    f"body={resp.text[:120]}"
-                )
-            return []
-        except requests.exceptions.Timeout:
-            wait = _GDELT_MIN_INTERVAL_S * (attempt + 1)
-            logger.warning(
-                f"[GDELT] timeout query='{query}' fecha={target_date} "
-                f"→ reintento {attempt + 1}/{_retries} en {wait:.0f}s"
-            )
-            time.sleep(wait)
-        except Exception as e:
-            logger.warning(f"[GDELT] error query='{query}' fecha={target_date}: {e}")
-            return []
+            results.append({
+                "title": title,
+                "url": art.get("url", ""),
+                "domain": (art.get("source") or {}).get("name", "newsapi"),
+                "seendate": art.get("publishedAt", ""),
+                "summary": (art.get("description") or "")[:300],
+            })
+        return results
+    except Exception as e:
+        _news_debug(f"[NewsAPI macro] error query='{query}': {e}")
+        return []
 
-    logger.warning(f"[GDELT] todos los reintentos agotados query='{query}' fecha={target_date}")
-    return []
+
+# ── Caché mensual NewsAPI macro (misma lógica que AV para respetar rate limits) ─
+_newsapi_macro_month_cache: Dict[str, Dict[str, List[Dict]]] = {}
+
+
+def _fetch_newsapi_macro_month(year: int, month: int) -> Dict[str, List[Dict]]:
+    """
+    Descarga un mes completo de noticias macro de NewsAPI en una sola llamada por query.
+    Cachea el resultado en disco como newsapi_macro_YYYY-MM.json.
+    """
+    import calendar
+    month_key = f"{year:04d}-{month:02d}"
+    cache_file = CACHE_DIR / "news" / f"newsapi_macro_{month_key}.json"
+
+    if cache_file.exists() and not REFRESH_NEWS_CACHE:
+        with open(cache_file, encoding="utf-8") as fh:
+            cached = json.load(fh)
+        _news_debug(f"[news-cache] NewsAPI macro {month_key}: cargado desde {cache_file}")
+        return cached
+
+    if not NEWSAPI_KEY:
+        _news_debug(f"[NewsAPI macro] {month_key}: NEWSAPI_KEY no configurada")
+        return {}
+
+    first_day = date(year, month, 1)
+    last_day  = date(year, month, calendar.monthrange(year, month)[1])
+    clamped = _newsapi_clamp_range(first_day, last_day, label=f"NewsAPI macro {month_key}")
+    if clamped is None:
+        return {}
+    first_day, last_day = clamped
+
+    by_date: Dict[str, List[Dict]] = {}
+
+    for cat, queries in MACRO_NEWSAPI_QUERIES.items():
+        for query in queries:
+            try:
+                resp = requests.get(
+                    "https://newsapi.org/v2/everything",
+                    params={
+                        "q": query,
+                        "from": first_day.isoformat(),
+                        "to": last_day.isoformat(),
+                        "language": "en",
+                        "sortBy": "publishedAt",
+                        "pageSize": 100,
+                        "apiKey": NEWSAPI_KEY,
+                    },
+                    timeout=25,
+                )
+                if resp.status_code == 426:
+                    logger.warning(
+                        f"[NewsAPI macro] {month_key}: fuera de ventana del plan free "
+                        f"(≈{NEWSAPI_HISTORY_DAYS} días). Finnhub/AV cubren el resto."
+                    )
+                    continue
+                if resp.status_code == 429:
+                    logger.warning(f"[NewsAPI macro] {month_key}: rate limit alcanzado")
+                    break
+                if resp.status_code != 200:
+                    _news_debug(f"[NewsAPI macro] {month_key}: HTTP {resp.status_code} q='{query}'")
+                    continue
+                data = resp.json()
+                if data.get("status") != "ok":
+                    info = data.get("message", "")
+                    _news_debug(f"[NewsAPI macro] {month_key} q='{query}': {info}")
+                    continue
+                for art in data.get("articles", []):
+                    title = (art.get("title") or "").strip()
+                    if not title or title == "[Removed]":
+                        continue
+                    pub_raw = art.get("publishedAt", "")
+                    try:
+                        pub_dt = datetime.fromisoformat(pub_raw.replace("Z", "+00:00"))
+                        ds = pub_dt.strftime("%Y-%m-%d")
+                    except Exception:
+                        ds = first_day.isoformat()
+                    by_date.setdefault(ds, []).append(_normalize_macro(
+                        title,
+                        art.get("url", ""),
+                        (art.get("source") or {}).get("name", "newsapi"),
+                        pub_raw,
+                        cat,
+                        query,
+                        (art.get("description") or "")[:300],
+                    ))
+            except Exception as e:
+                _news_debug(f"[NewsAPI macro] {month_key} q='{query}': {e}")
+
+    with open(cache_file, "w", encoding="utf-8") as fh:
+        json.dump(by_date, fh)
+
+    total = sum(len(v) for v in by_date.values())
+    logger.info(f"[NewsAPI macro] {month_key}: {total} artículos en {len(by_date)} días → cacheado")
+    return by_date
+
+
+def fetch_newsapi_macro_news(date_str: str) -> List[Dict]:
+    """Retorna artículos macro de NewsAPI para date_str usando caché mensual."""
+    global _newsapi_macro_month_cache
+    target_date = pd.to_datetime(date_str).date()
+    month_key = f"{target_date.year:04d}-{target_date.month:02d}"
+
+    if month_key not in _newsapi_macro_month_cache:
+        _newsapi_macro_month_cache[month_key] = _fetch_newsapi_macro_month(
+            target_date.year, target_date.month
+        )
+
+    articles = _newsapi_macro_month_cache[month_key].get(date_str, [])
+    _news_debug(f"[NewsAPI macro] {date_str}: {len(articles)} artículos")
+    return articles
 
 
 def ingest_macro_news(date_str):
@@ -1329,7 +1493,7 @@ def ingest_macro_news(date_str):
     seen = set()
     target_date = pd.to_datetime(date_str).date()
 
-    # ── Alpha Vantage: alternativa macro histórica en una llamada diaria ──────
+    # ── Alpha Vantage: macro histórica mensual cacheada ──────────────────────
     for art in fetch_alpha_vantage_macro_news(date_str):
         fp = _fingerprint(art.get("url", ""), art.get("headline", ""))
         if fp in seen:
@@ -1337,31 +1501,13 @@ def ingest_macro_news(date_str):
         seen.add(fp)
         articles.append(art)
 
-    # ── GDELT: fuente histórica gratuita, pero frágil/rate-limited ────────────
-    if DISABLE_GDELT:
-        _news_debug(f"[GDELT macro] {date_str}: fuente desactivada")
-    else:
-        for cat, queries in MACRO_QUERIES.items():
-            for query_tag in queries:
-                for art in fetch_gdelt_news(query_tag, target_date, n=5):
-                    url = art.get("url", "")
-                    title = art.get("title", "")
-                    fp = _fingerprint(url, title)
-                    if fp in seen or not title:
-                        continue
-                    seen.add(fp)
-                    # seendate de GDELT tiene formato: YYYYMMDDTHHMMSSZ
-                    raw_dt = art.get("seendate", "")
-                    try:
-                        pub_dt = datetime.strptime(raw_dt, "%Y%m%dT%H%M%SZ").isoformat()
-                    except Exception:
-                        pub_dt = target_date.isoformat()
-                    articles.append(
-                        _normalize_macro(
-                            title, url, art.get("domain", "gdelt"), pub_dt, cat, query_tag
-                        )
-                    )
-                # No sleep aquí: _gdelt_rate_wait() dentro de fetch_gdelt_news() ya gestiona el límite global.
+    # ── NewsAPI: macro mensual cacheada (requiere NEWSAPI_KEY) ────────────────
+    for art in fetch_newsapi_macro_news(date_str):
+        fp = _fingerprint(art.get("url", ""), art.get("headline", ""))
+        if fp in seen:
+            continue
+        seen.add(fp)
+        articles.append(art)
 
     # ── RSS en tiempo real (complemento para ejecuciones live del mismo día) ──
     for name, url in RSS_FEEDS.items():
@@ -2055,7 +2201,7 @@ def _process_ticker_day(
     ohlcv_all: Dict,
     news_all: Dict,
     alphavantage_news: Dict,
-    gdelt_ticker_news: Dict,
+    newsapi_ticker_news: Dict,
     macro_adj: float,
     macro_sentiment: str,
     risk_regime: str,
@@ -2128,23 +2274,23 @@ def _process_ticker_day(
         # ── Ingesta multi-fuente ─────────────────────────────────────────────
         finnhub_arts = news_all.get(ticker, {}).get(date_str, [])
         alphavantage_arts = alphavantage_news.get(ticker, {}).get(date_str, [])
-        gdelt_arts = gdelt_ticker_news.get(ticker, {}).get(date_str, [])
+        newsapi_arts = newsapi_ticker_news.get(ticker, {}).get(date_str, [])
         yfinance_arts = fetch_yfinance_ticker_news(ticker, date_str)
         articles = merge_ticker_articles(
-            finnhub_arts, alphavantage_arts, gdelt_arts, yfinance_arts
+            finnhub_arts, alphavantage_arts, newsapi_arts, yfinance_arts
         )
 
         _news_debug(
             f"[news-day] {date_str} {ticker}: "
             f"Finnhub={len(finnhub_arts)} AlphaVantage={len(alphavantage_arts)} "
-            f"GDELT={len(gdelt_arts)} "
+            f"NewsAPI={len(newsapi_arts)} "
             f"YFinance={len(yfinance_arts)} merged={len(articles)}"
         )
         if DEBUG_NEWS:
             for source_name, source_articles in (
                 ("Finnhub", finnhub_arts),
                 ("AlphaVantage", alphavantage_arts),
-                ("GDELT", gdelt_arts),
+                ("NewsAPI", newsapi_arts),
                 ("YFinance", yfinance_arts),
                 ("Merged", articles),
             ):
@@ -2160,7 +2306,7 @@ def _process_ticker_day(
             logger.warning(
                 f"[news-gap] {date_str} {ticker}: 0 noticias tras merge "
                 f"(Finnhub={len(finnhub_arts)}, AlphaVantage={len(alphavantage_arts)}, "
-                f"GDELT={len(gdelt_arts)}, YFinance={len(yfinance_arts)})"
+                f"NewsAPI={len(newsapi_arts)}, YFinance={len(yfinance_arts)})"
             )
 
         # ── Groq (LLM) + FinBERT por artículo ───────────────────────────────
@@ -2452,28 +2598,27 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
     ohlcv_all = fetch_ohlcv_all(active_tickers, start_d, end_d)
     vix_series = fetch_vix_historical(start_d, end_d)
 
-    # ── Prefetch paralelo de noticias (Finnhub + AlphaVantage + GDELT) ────────
-    # Ambas fuentes son independientes por ticker y usan caché en disco.
-    # max_workers=2 para respetar rate limits de GDELT (API pública compartida).
+    # ── Prefetch paralelo de noticias (Finnhub + AlphaVantage + NewsAPI) ────────
+    # Las tres fuentes son independientes por ticker y usan caché en disco.
     def _prefetch_ticker_news(ticker: str):
         f = fetch_news_historical(ticker, start_d, end_d)
         a = fetch_alpha_vantage_news_historical(ticker, start_d, end_d)
-        g = fetch_gdelt_ticker_news_historical(ticker, start_d, end_d)
-        return ticker, f, a, g
+        n = fetch_newsapi_ticker_news_historical(ticker, start_d, end_d)
+        return ticker, f, a, n
 
     logger.info(f"⬇ Prefetching noticias en paralelo para {active_tickers}…")
     news_all: Dict[str, Dict] = {}
     alphavantage_news: Dict[str, Dict] = {}
-    gdelt_ticker_news: Dict[str, Dict] = {}
-    with ThreadPoolExecutor(max_workers=min(2, len(active_tickers))) as exe:
+    newsapi_ticker_news: Dict[str, Dict] = {}
+    with ThreadPoolExecutor(max_workers=min(4, len(active_tickers))) as exe:
         prefetch_futs = {
             exe.submit(_prefetch_ticker_news, t): t for t in active_tickers
         }
         for fut in as_completed(prefetch_futs):
-            t, finnhub_data, alphavantage_data, gdelt_data = fut.result()
+            t, finnhub_data, alphavantage_data, newsapi_data = fut.result()
             news_all[t] = finnhub_data
             alphavantage_news[t] = alphavantage_data
-            gdelt_ticker_news[t] = gdelt_data
+            newsapi_ticker_news[t] = newsapi_data
     logger.info("✅ Prefetch completado")
 
     conn = get_db_connection()
@@ -2627,7 +2772,7 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
                 ohlcv_all,
                 news_all,
                 alphavantage_news,
-                gdelt_ticker_news,
+                newsapi_ticker_news,
                 macro_adj,
                 macro_sentiment,
                 risk_regime,
@@ -2659,7 +2804,9 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
         # --- C) REPORTE DIARIO E IDÉNTICO A AWS (Clon lambda_report) ---
         if conn:
             # 1. Obtenemos señales del último año desde la BBDD (Esto da memoria al sistema)
-            hist_signals_df = get_trading_data(conn, date_str, days_back=DAYS_BACK)
+            hist_signals_df = get_trading_data(
+                conn, date_str, days_back=DAYS_BACK, tickers=active_tickers
+            )
             metrics, diagnostics = _calc_backtesting(hist_signals_df)
             # Fase 1: backtesting de exposición continua usando datos in-memory
             exp_metrics, exp_diagnostics = _calc_exposure_backtesting(all_signal_records)
@@ -2671,7 +2818,9 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
             quant_audit_report = compute_quant_audit_report(
                 date_str,
                 hist_signals_df.to_dict("records") if not hist_signals_df.empty else [],
-                outcome_rows=get_signal_outcomes(conn, date_str, days_back=DAYS_BACK),
+                outcome_rows=get_signal_outcomes(
+                    conn, date_str, days_back=DAYS_BACK, tickers=active_tickers
+                ),
                 model_config=MODEL_CONFIG,
             )
             upsert_quant_audit_report(date_str, quant_audit_report)
@@ -2769,14 +2918,13 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
 
 if __name__ == "__main__":
     args = get_args()
+    _configure_logging(verbose=getattr(args, "verbose", False))
     if args.debug_news:
         DEBUG_NEWS = True
     if args.debug_news_headlines is not None:
         DEBUG_NEWS_HEADLINES = max(0, args.debug_news_headlines)
     if args.refresh_news_cache:
         REFRESH_NEWS_CACHE = True
-    if args.disable_gdelt:
-        DISABLE_GDELT = True
     tickers_list = (
         [t.strip().upper() for t in args.tickers.split(",")] if args.tickers else None
     )

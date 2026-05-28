@@ -11,46 +11,16 @@
         Simulación de inversión sobre los últimos <strong>{{ summary.total_tickers ? 365 : 0 }} días</strong> usando un capital inicial virtual de <strong>$10,000</strong> por activo.
       </p>
     </div>
-    <div class="page-actions">
-      <div class="filter-group">
-        <label>Fecha del Informe</label>
-        <select class="aurora-select" [(ngModel)]="selectedDate" (change)="onDateChange(selectedDate)">
-          @for (d of availableDates; track d.date) {
-            <option [value]="d.date">{{ d.date }}</option>
-          }
-        </select>
-      </div>
+    <div class="snapshot-pill">
+      <mat-icon>event</mat-icon>
+      <span>Snapshot fijo (último cierre): {{ selectedDate || '—' }}</span>
     </div>
   </header>
 
-  <mat-accordion class="glossary-accordion">
-    <mat-expansion-panel class="glossary-panel">
-      <mat-expansion-panel-header>
-        <mat-panel-title>
-          <mat-icon>lightbulb</mat-icon>
-          <span>¿Cómo interpretar estas métricas financieras? (Glosario)</span>
-        </mat-panel-title>
-      </mat-expansion-panel-header>
-      
-      <div class="glossary-content">
-        <div class="g-col">
-          <strong>Simulación (Backtesting):</strong> Evaluamos cómo habría rendido nuestra IA en el último año si hubiera operado con dinero real, usando una estrategia conservadora: compra cuando hay señales positivas y vende para quedarse en efectivo (liquidez) ante el peligro.
-        </div>
-        <div class="g-col">
-          <strong>Mejora vs Mercado (Alpha):</strong> Es la "ventaja competitiva" del algoritmo. Compara el beneficio de la IA frente a la estrategia pasiva de comprar el ETF y no hacer nada (Buy & Hold). Si es positivo, la IA gana al mercado.
-        </div>
-        <div class="g-col">
-          <strong>Calidad del Riesgo (Sharpe Ratio):</strong> Relaciona el beneficio obtenido con el riesgo (volatilidad) asumido. Un valor superior a 1.0 indica un comportamiento excelente.
-        </div>
-        <div class="g-col">
-          <strong>Factor de Beneficio (Profit Factor):</strong> Indica cuánto dinero se gana por cada dólar que se pierde. Un valor superior a 1.0 significa que la estrategia es rentable (ej: 2.0 significa que ganas el doble de lo que pierdes).
-        </div>
-        <div class="g-col">
-          <strong>Caída Máxima (Max Drawdown):</strong> El mayor porcentaje de dinero que la cartera llegó a perder desde su pico más alto. Mantenerse cerca del 0% es el objetivo principal para proteger el capital.
-        </div>
-      </div>
-    </mat-expansion-panel>
-  </mat-accordion>
+  <div class="card clean-note">
+    <mat-icon>info</mat-icon>
+    <span>Vista ejecutiva: snapshot final + histórico completo + ciclos BUY/SELL, sin selectores ni ruido.</span>
+  </div>
 
   @if (loading) {
     <div class="loader">
@@ -121,103 +91,63 @@
 
     <section class="card history-card">
       <div class="card-head history-head">
-        <div>
+        <div class="card-title">
+          <mat-icon>swap_horiz</mat-icon>
+          <span>Ciclos BUY / SELL por ticker</span>
+        </div>
+        <span class="card-sub">Entradas y salidas en timeline para auditar decisiones de forma clara.</span>
+      </div>
+      <highcharts-chart
+        [Highcharts]="Highcharts"
+        [options]="cyclesChartOptions"
+        [(update)]="cyclesChartUpdate"
+        class="history-chart">
+      </highcharts-chart>
+    </section>
+
+    <section class="section-row section-row-2">
+      <section class="card chart-card">
+        <div class="card-head">
           <div class="card-title">
-            <mat-icon>timeline</mat-icon>
-            <span>Evolución Histórica del Backtesting</span>
+            <mat-icon>bar_chart</mat-icon>
+            <span>Rentabilidad IA vs Mercado</span>
           </div>
-          <span class="card-sub">
-            Vista global por fecha de informe. Permite comparar todos los periodos disponibles, no solo el snapshot seleccionado.
-          </span>
-        </div>
-        <div class="history-controls">
-          <div class="filter-group">
-            <label>Métrica</label>
-            <select class="aurora-select" [(ngModel)]="historyMetric" (ngModelChange)="onHistoryControlChange()">
-              @for (metric of historyMetricOptions; track metric.value) {
-                <option [value]="metric.value">{{ metric.label }}</option>
-              }
-            </select>
-          </div>
-          <div class="filter-group">
-            <label>Activo</label>
-            <select class="aurora-select" [(ngModel)]="historyTicker" (ngModelChange)="onHistoryControlChange()">
-              <option value="__portfolio__">Media cartera</option>
-              @for (ticker of historyTickerOptions; track ticker) {
-                <option [value]="ticker">{{ ticker }}</option>
-              }
-            </select>
+          <div class="legend compact-legend">
+            <span class="leg-dot" style="background:var(--brand-600)"></span>
+            <span>IA</span>
+            <span class="leg-dot" style="background:var(--slate-400); margin-left:10px"></span>
+            <span>B&amp;H</span>
           </div>
         </div>
-      </div>
+        <div class="chart-host">
+          <ngx-charts-bar-vertical-2d
+            [results]="returnChart"
+            [xAxis]="true" [yAxis]="true" [showGridLines]="false"
+            [scheme]="compareScheme"
+            yAxisLabel="Rentabilidad Anual (%)" [showYAxisLabel]="true"
+            [showDataLabel]="true" [groupPadding]="4" [barPadding]="2" [roundEdges]="false">
+          </ngx-charts-bar-vertical-2d>
+        </div>
+      </section>
 
-      <div class="history-context">
-        <mat-icon>query_stats</mat-icon>
-        <span>{{ selectedHistoryMetric.description }}</span>
-      </div>
-
-      @if (historyLoading) {
-        <div class="history-loading">
-          <mat-spinner diameter="30"></mat-spinner>
-          <span>Cargando histórico completo de reports...</span>
+      <section class="card chart-card">
+        <div class="card-head">
+          <div class="card-title">
+            <mat-icon>add_circle_outline</mat-icon>
+            <span>Mejora vs Mercado (Alpha)</span>
+          </div>
+          <span class="card-sub">Verde: IA supera mercado. Rojo: IA por debajo.</span>
         </div>
-      } @else if (historyError) {
-        <div class="history-error">
-          <mat-icon>info_outline</mat-icon>
-          <span>{{ historyError }}</span>
+        <div class="chart-host">
+          <ngx-charts-bar-vertical
+            [results]="alphaChart"
+            [xAxis]="true" [yAxis]="true" [showGridLines]="true"
+            [customColors]="customColorsAlpha"
+            yAxisLabel="Exceso de Retorno (%)" [showYAxisLabel]="true"
+            [showDataLabel]="true" [roundEdges]="true">
+          </ngx-charts-bar-vertical>
         </div>
-      } @else if (historyChartOptions.series?.length) {
-        <highcharts-chart
-          [Highcharts]="Highcharts"
-          [constructorType]="'stockChart'"
-          [options]="historyChartOptions"
-          [(update)]="historyChartUpdate"
-          class="history-chart">
-        </highcharts-chart>
-      }
-    </section>
-
-    <section class="card chart-card">
-      <div class="card-head">
-        <div class="card-title">
-          <mat-icon>bar_chart</mat-icon>
-          <span>Rentabilidad Acumulada: Inteligencia Artificial vs Mercado</span>
-        </div>
-        <div class="legend">
-          <span class="leg-dot" style="background:var(--brand-600)"></span>
-          <span>Estrategia IA</span>
-          <span class="leg-dot" style="background:var(--slate-400); margin-left:14px"></span>
-          <span>Mercado (Buy &amp; Hold)</span>
-        </div>
-      </div>
-      <div class="chart-host">
-        <ngx-charts-bar-vertical-2d
-          [results]="returnChart"
-          [xAxis]="true" [yAxis]="true" [showGridLines]="false"
-          [scheme]="compareScheme"
-          yAxisLabel="Rentabilidad Anual (%)" [showYAxisLabel]="true"
-          [showDataLabel]="true" [groupPadding]="4" [barPadding]="2" [roundEdges]="false">
-        </ngx-charts-bar-vertical-2d>
-      </div>
-    </section>
-
-    <section class="card chart-card">
-      <div class="card-head">
-        <div class="card-title">
-          <mat-icon>add_circle_outline</mat-icon>
-          <span>Mejora vs Mercado (Alpha)</span>
-        </div>
-        <span class="card-sub">Si es Verde, la IA ha superado al mercado. Si es Rojo, la IA ha rendido menos.</span>
-      </div>
-      <div class="chart-host">
-        <ngx-charts-bar-vertical
-          [results]="alphaChart"
-          [xAxis]="true" [yAxis]="true" [showGridLines]="true"
-          [customColors]="customColorsAlpha"
-          yAxisLabel="Exceso de Retorno (%)" [showYAxisLabel]="true"
-          [showDataLabel]="true" [roundEdges]="true">
-        </ngx-charts-bar-vertical>
-      </div>
+      </section>
     </section>
 
     <section class="row-2">
@@ -227,7 +157,7 @@
             <mat-icon>speed</mat-icon>
             <span>Ratio de Sharpe Anualizado</span>
           </div>
-          <span class="card-sub">Calidad del riesgo por ETF</span>
+          <span class="card-sub">Retorno ajustado por riesgo</span>
         </div>
         <div class="chart-host-small" [style.height.px]="sharpeDrawdownChartHeight">
           <ngx-charts-bar-horizontal
@@ -251,7 +181,7 @@
             <mat-icon>arrow_downward</mat-icon>
             <span>Caída Máxima (Max Drawdown)</span>
           </div>
-          <span class="card-sub">Riesgo por ETF</span>
+          <span class="card-sub">Riesgo de caída por activo</span>
         </div>
         <div class="chart-host-small" [style.height.px]="sharpeDrawdownChartHeight">
           <ngx-charts-bar-horizontal
@@ -268,6 +198,48 @@
           <span>Una caída mayor al 15% indica una mala protección de capital</span>
         </div>
       </div>
+    </section>
+
+    <section class="card history-card">
+      <div class="card-head history-head">
+        <div>
+          <div class="card-title">
+            <mat-icon>timeline</mat-icon>
+            <span>Evolución Histórica del Backtesting</span>
+          </div>
+          <span class="card-sub">Todas las métricas clave en paralelo para lectura rápida.</span>
+        </div>
+      </div>
+
+      @if (historyLoading) {
+        <div class="history-loading">
+          <mat-spinner diameter="30"></mat-spinner>
+          <span>Cargando histórico completo de reports...</span>
+        </div>
+      } @else if (historyError) {
+        <div class="history-error">
+          <mat-icon>info_outline</mat-icon>
+          <span>{{ historyError }}</span>
+        </div>
+      } @else {
+        <div class="history-grid d-flex">
+          @for (metric of historyMetricOptions; track metric.value) {
+            <article class="history-metric-card">
+              <header class="history-metric-head">
+                <span class="history-metric-title">{{ metric.label }}</span>
+                <span class="history-metric-desc">{{ metric.description }}</span>
+              </header>
+              <highcharts-chart
+                [Highcharts]="Highcharts"
+                [constructorType]="'stockChart'"
+                [options]="historyChartOptionsByMetric[metric.value]"
+                [(update)]="historyChartUpdates[metric.value]"
+                class="history-chart">
+              </highcharts-chart>
+            </article>
+          }
+        </div>
+      }
     </section>
 
     <section class="card table-card">

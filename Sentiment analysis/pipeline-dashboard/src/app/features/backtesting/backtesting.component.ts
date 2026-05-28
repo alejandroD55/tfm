@@ -11,7 +11,7 @@ import { MatExpansionModule } from '@angular/material/expansion';
 import { NgxChartsModule } from '@swimlane/ngx-charts';
 import Highcharts from 'highcharts/highstock';
 import { HighchartsChartModule } from 'highcharts-angular';
-import { forkJoin, of, switchMap, catchError } from 'rxjs';
+import { forkJoin, of, catchError } from 'rxjs';
 import { ReportService } from '../../core/services/report.service';
 import { DailyReport, TickerView, ReportDateEntry } from '../../core/models/report.model';
 import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
@@ -27,6 +27,12 @@ interface BacktestHistoryPoint {
   sharpe: number;
   drawdown: number;
   final_equity: number;
+}
+
+interface SignalCyclePoint {
+  date: string;
+  ticker: string;
+  signal: 'BUY' | 'SELL' | 'HOLD';
 }
 
 @Component({
@@ -48,7 +54,6 @@ export class BacktestingComponent implements OnInit, AfterViewInit {
   Highcharts: typeof Highcharts = Highcharts;
 
   loading = true;
-  availableDates: ReportDateEntry[] = [];
   selectedDate = '';
   tickerViews: TickerView[] = [];
   summary: any = { total_tickers: 0, avg_cumulative_return: 0, avg_sharpe_ratio: 0, avg_max_drawdown: 0, total_closed_trades: 0 };
@@ -61,10 +66,25 @@ export class BacktestingComponent implements OnInit, AfterViewInit {
   historyLoading = false;
   historyError = '';
   historyRows: BacktestHistoryPoint[] = [];
-  historyTicker = '__portfolio__';
-  historyMetric: BacktestHistoryMetric = 'ai_return';
-  historyChartOptions: Highcharts.Options = {};
-  historyChartUpdate = false;
+  signalCycles: SignalCyclePoint[] = [];
+  historyChartOptionsByMetric: Record<BacktestHistoryMetric, Highcharts.Options> = {
+    ai_return: {},
+    buy_hold: {},
+    alpha: {},
+    sharpe: {},
+    drawdown: {},
+    final_equity: {},
+  };
+  historyChartUpdates: Record<BacktestHistoryMetric, boolean> = {
+    ai_return: false,
+    buy_hold: false,
+    alpha: false,
+    sharpe: false,
+    drawdown: false,
+    final_equity: false,
+  };
+  cyclesChartOptions: Highcharts.Options = {};
+  cyclesChartUpdate = false;
   historyMetricOptions: { value: BacktestHistoryMetric; label: string; unit: '%' | 'number' | '$'; description: string }[] = [
     { value: 'ai_return', label: 'Rentabilidad IA', unit: '%', description: 'Retorno acumulado de la estrategia Long/Cash' },
     { value: 'buy_hold', label: 'Mercado (B&H)', unit: '%', description: 'Retorno de comprar y mantener el ETF' },
@@ -102,40 +122,39 @@ export class BacktestingComponent implements OnInit, AfterViewInit {
     return this.tableSource.data ?? [];
   }
 
-  get historyTickerOptions(): string[] {
-    return [...new Set(this.historyRows.map(r => r.ticker))].sort();
-  }
-
-  get selectedHistoryMetric() {
-    return this.historyMetricOptions.find(m => m.value === this.historyMetric) ?? this.historyMetricOptions[0];
+  get cycleTickers(): string[] {
+    return [...new Set(this.signalCycles.map(r => r.ticker))].sort();
   }
 
   ngOnInit() {
-    this.reportSvc.listAvailableDates().pipe(
-      switchMap(dates => {
-        this.availableDates = dates;
+    this.reportSvc.listAvailableDates().subscribe({
+      next: (dates) => {
         this.loadBacktestingHistory(dates);
-        if (!dates.length) { this.loading = false; return []; }
+        if (!dates.length) {
+          this.loading = false;
+          return;
+        }
+        // Fijar siempre el snapshot más reciente (compendio de todos los ciclos).
         this.selectedDate = dates[0].date;
-        return this.reportSvc.loadReport(this.selectedDate);
-      })
-    ).subscribe({
-      next: (r: any) => { if (r) this.processReport(r); this.loading = false; },
-      error: () => { this.loading = false; },
+        this.reportSvc.loadReport(this.selectedDate).subscribe({
+          next: (report) => {
+            this.processReport(report);
+            this.loading = false;
+          },
+          error: () => {
+            this.loading = false;
+          },
+        });
+      },
+      error: () => {
+        this.loading = false;
+      },
     });
   }
 
   // Activa la ordenación de las columnas de la tabla
   ngAfterViewInit() {
     this.tableSource.sort = this.sort;
-  }
-
-  onDateChange(date: string) {
-    this.loading = true;
-    this.reportSvc.loadReport(date).subscribe({
-      next: r => { this.processReport(r); this.loading = false; },
-      error: () => { this.loading = false; },
-    });
   }
 
   private processReport(report: DailyReport) {
@@ -175,11 +194,13 @@ export class BacktestingComponent implements OnInit, AfterViewInit {
       )
     ).subscribe(reports => {
       const rows: BacktestHistoryPoint[] = [];
+      const cycles: SignalCyclePoint[] = [];
 
       reports.forEach((report, idx) => {
         if (!report) return;
         const date = sortedDates[idx].date;
-        for (const view of this.reportSvc.buildTickerViews(report)) {
+        const views = this.reportSvc.buildTickerViews(report);
+        for (const view of views) {
           rows.push({
             date,
             ticker: view.ticker,
@@ -191,119 +212,157 @@ export class BacktestingComponent implements OnInit, AfterViewInit {
             final_equity: view.final_equity,
           });
         }
+        for (const explain of report.top_signal_explanations ?? []) {
+          cycles.push({
+            date,
+            ticker: explain.ticker,
+            signal: explain.signal,
+          });
+        }
       });
 
       this.historyRows = rows;
+      this.signalCycles = cycles;
       this.historyLoading = false;
-      this.refreshHistoryChart();
+      this.refreshAllHistoryCharts();
+      this.refreshCyclesChart();
     }, () => {
       this.historyLoading = false;
       this.historyError = 'No se pudo cargar la evolución histórica del backtesting.';
     });
   }
 
-  onHistoryControlChange() {
-    this.refreshHistoryChart();
-  }
-
-  private refreshHistoryChart() {
+  private refreshAllHistoryCharts() {
     if (!this.historyRows.length) {
-      this.historyChartOptions = {};
-      this.historyChartUpdate = true;
+      for (const metric of this.historyMetricOptions) {
+        this.historyChartOptionsByMetric[metric.value] = {};
+        this.historyChartUpdates[metric.value] = true;
+      }
       return;
     }
 
-    const metric = this.selectedHistoryMetric;
-    const toTs = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
-    const valueOf = (row: BacktestHistoryPoint) => row[this.historyMetric];
     const byDate = new Map<string, BacktestHistoryPoint[]>();
     for (const row of this.historyRows) {
       if (!byDate.has(row.date)) byDate.set(row.date, []);
       byDate.get(row.date)!.push(row);
     }
+    const toTs = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
+    for (const metric of this.historyMetricOptions) {
+      const valueOf = (row: BacktestHistoryPoint) => row[metric.value];
+      const data = [...byDate.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([date, rows]) => [toTs(date), rows.reduce((sum, row) => sum + valueOf(row), 0) / rows.length]);
 
-    const data = this.historyTicker === '__portfolio__'
-      ? [...byDate.entries()]
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([date, rows]) => [toTs(date), rows.reduce((sum, row) => sum + valueOf(row), 0) / rows.length])
-      : this.historyRows
-          .filter(row => row.ticker === this.historyTicker)
-          .sort((a, b) => a.date.localeCompare(b.date))
-          .map(row => [toTs(row.date), valueOf(row)]);
+      const color = metric.value === 'alpha'
+        ? '#15803d'
+        : metric.value === 'drawdown'
+        ? '#b91c1c'
+        : metric.value === 'buy_hold'
+        ? '#64748b'
+        : metric.value === 'final_equity'
+        ? '#5b21b6'
+        : '#1d4ed8';
 
-    const color = this.historyMetric === 'alpha'
-      ? '#16a34a'
-      : this.historyMetric === 'drawdown'
-      ? '#ef4444'
-      : this.historyMetric === 'buy_hold'
-      ? '#94a3b8'
-      : this.historyMetric === 'final_equity'
-      ? '#7c3aed'
-      : '#2563eb';
+      this.historyChartOptionsByMetric[metric.value] = {
+        chart: {
+          height: 300,
+          backgroundColor: 'transparent',
+          zooming: { type: 'x' },
+        },
+        title: { text: undefined },
+        credits: { enabled: false },
+        rangeSelector: { enabled: false },
+        navigator: { enabled: false },
+        scrollbar: { enabled: false },
+        legend: { enabled: false },
+        xAxis: { type: 'datetime' },
+        yAxis: {
+          title: { text: metric.label },
+          labels: {
+            formatter: function () {
+              const n = Number(this.value);
+              if (metric.unit === '$') return `$${Highcharts.numberFormat(n, 0)}`;
+              if (metric.unit === '%') return `${Highcharts.numberFormat(n, 1)}%`;
+              return Highcharts.numberFormat(n, 2);
+            },
+          },
+          plotLines: metric.unit !== '$' ? [{ value: 0, color: '#94a3b8', width: 1 }] : [],
+        },
+        tooltip: {
+          valueDecimals: metric.unit === '$' ? 0 : 2,
+          valuePrefix: metric.unit === '$' ? '$' : undefined,
+          valueSuffix: metric.unit === '%' ? '%' : undefined,
+        },
+        plotOptions: {
+          series: {
+            dataGrouping: { enabled: false },
+            marker: { enabled: false },
+          } as any,
+        },
+        series: [{
+          type: 'line',
+          name: `${metric.label} (media cartera)`,
+          data,
+          color,
+          lineWidth: 2.2,
+        }] as any,
+      };
+      this.historyChartUpdates[metric.value] = true;
+    }
+  }
 
-    this.historyChartOptions = {
+  private refreshCyclesChart() {
+    if (!this.signalCycles.length) {
+      this.cyclesChartOptions = {};
+      this.cyclesChartUpdate = true;
+      return;
+    }
+
+    const toTs = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
+    const tickers = this.cycleTickers;
+    const yIndex = new Map(tickers.map((t, i) => [t, i]));
+    const buyData = this.signalCycles
+      .filter(point => point.signal === 'BUY')
+      .map(point => ({ x: toTs(point.date), y: yIndex.get(point.ticker) ?? 0, name: point.ticker }));
+    const sellData = this.signalCycles
+      .filter(point => point.signal === 'SELL')
+      .map(point => ({ x: toTs(point.date), y: yIndex.get(point.ticker) ?? 0, name: point.ticker }));
+
+    this.cyclesChartOptions = {
       chart: {
-        height: 420,
+        type: 'scatter',
+        height: Math.max(340, tickers.length * 64),
         backgroundColor: 'transparent',
         zooming: { type: 'x' },
       },
       title: { text: undefined },
       credits: { enabled: false },
-      rangeSelector: {
-        selected: 3,
-        inputEnabled: true,
-        buttons: [
-          { type: 'month', count: 1, text: '1M' },
-          { type: 'month', count: 3, text: '3M' },
-          { type: 'month', count: 6, text: '6M' },
-          { type: 'all', text: 'Todo' },
-        ],
-      },
-      navigator: { enabled: true },
-      scrollbar: { enabled: true },
-      legend: { enabled: false },
-      xAxis: {
-        type: 'datetime',
-        plotLines: this.selectedDate ? [{
-          value: toTs(this.selectedDate),
-          color: '#0f766e',
-          width: 2,
-          dashStyle: 'Dash',
-          label: { text: `Fecha seleccionada: ${this.selectedDate}`, rotation: 0, y: 14, style: { color: '#0f766e', fontWeight: '600' } },
-        }] : [],
-      },
+      xAxis: { type: 'datetime' },
       yAxis: {
-        title: { text: metric.label },
-        labels: {
-          formatter: function () {
-            const n = Number(this.value);
-            if (metric.unit === '$') return `$${Highcharts.numberFormat(n, 0)}`;
-            if (metric.unit === '%') return `${Highcharts.numberFormat(n, 1)}%`;
-            return Highcharts.numberFormat(n, 2);
-          },
-        },
-        plotLines: metric.unit !== '$' ? [{ value: 0, color: '#94a3b8', width: 1 }] : [],
+        title: { text: 'Ticker' },
+        categories: tickers,
+        min: -0.5,
+        max: Math.max(tickers.length - 0.5, 0),
+        tickInterval: 1,
       },
+      legend: { enabled: true },
       tooltip: {
-        valueDecimals: metric.unit === '$' ? 0 : 2,
-        valuePrefix: metric.unit === '$' ? '$' : undefined,
-        valueSuffix: metric.unit === '%' ? '%' : undefined,
+        pointFormatter: function () {
+          const d = Highcharts.dateFormat('%Y-%m-%d', Number(this.x));
+          return `<span><b>${this.series.name}</b> · ${this.name}<br/>${d}</span>`;
+        },
       },
       plotOptions: {
         series: {
-          dataGrouping: { enabled: false },
-          marker: { enabled: false },
-        } as any,
+          marker: { radius: 6, symbol: 'circle' },
+        },
       },
-      series: [{
-        type: 'line',
-        name: `${metric.label} · ${this.historyTicker === '__portfolio__' ? 'Media cartera' : this.historyTicker}`,
-        data,
-        color,
-        lineWidth: 2.4,
-      }] as any,
+      series: [
+        { type: 'scatter', name: 'BUY', data: buyData as any, color: '#15803d' },
+        { type: 'scatter', name: 'SELL', data: sellData as any, color: '#b91c1c' },
+      ] as any,
     };
-    this.historyChartUpdate = true;
+    this.cyclesChartUpdate = true;
   }
 
   /** ngx-charts reparte la altura entre categorías; sin esto las barras quedan demasiado finas. */
