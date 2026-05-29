@@ -1,0 +1,28 @@
+{
+  "sentiment_state": {
+    "bullish": 0,
+    "neutral": 1,
+    "bearish": 2
+  },
+  "rsi_state": {
+    "oversold": 0,
+    "neutral": 1,
+    "overbought": 2
+  },
+  "trend_state": {
+    "uptrend": 0,
+    "downtrend": 1
+  },
+  "volatility_state": {
+    "low": 0,
+    "high": 1
+  },
+  "risk_regime": {
+    "RISK_ON_STRONG": 3,
+    "RISK_ON": 2,
+    "NEUTRAL": 1,
+    "RISK_OFF_MILD": -1,
+    "RISK_OFF": -2,
+    "FEAR": -3
+  }
+}

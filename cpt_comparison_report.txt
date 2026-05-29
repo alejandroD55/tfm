@@ -1,0 +1,72 @@
+==============================================================================
+REPORTE DE RECALIBRACIÓN DE CPTs — RED BAYESIANA TFM
+Generado: 2026-05-29 09:37:43
+Observaciones de entrenamiento: 594
+Tasa de UP (market direction): 56.40%
+==============================================================================
+
+DISTRIBUCIÓN DE ESTADOS DE EVIDENCIA:
+  Sentiment:  {'neutral': 319, 'bearish': 171, 'bullish': 104}
+  RSI:        {'neutral': 537, 'overbought': 52, 'oversold': 5}
+  Trend:      {'uptrend': 402, 'downtrend': 192}
+  Volatility: {'high': 556, 'low': 38}
+
+------------------------------------------------------------------------------
+Combinación de evidencia                             Orig  Aprend       Δ  Zona
+------------------------------------------------------------------------------
+  bull/over/up/low                                  0.880   0.500  -0.380↓  HOLD –
+  bull/over/up/high                                 0.780   0.524  -0.256↓  BUY ↑
+  bull/over/do/low                                  0.750   0.500  -0.250↓  HOLD –
+  bull/over/do/high                                 0.820   0.500  -0.320↓  HOLD –
+  bull/neut/up/low                                  0.750   0.500  -0.250↓  HOLD –
+  bull/neut/up/high                                 0.700   0.476  -0.224↓  HOLD –
+  bull/neut/do/low                                  0.780   0.500  -0.280↓  HOLD –
+  bull/neut/do/high                                 0.650   0.565  -0.085↓  BUY ↑
+  bull/over/up/low                                  0.920   0.500  -0.420↓  HOLD –
+  bull/over/up/high                                 0.880   0.500  -0.380↓  HOLD –
+  bull/over/do/low                                  0.600   0.500  -0.100↓  HOLD –
+  bull/over/do/high                                 0.550   0.500  -0.050↓  HOLD –
+  bear/over/up/low                                  0.300   0.478  +0.178↑  HOLD –
+  bear/over/up/high                                 0.250   0.602  +0.352↑  BUY ↑
+  bear/over/do/low                                  0.200   0.524  +0.324↑  BUY ↑
+  bear/over/do/high                                 0.250   0.535  +0.285↑  BUY ↑
+  bear/neut/up/low                                  0.200   0.407  +0.207↑  HOLD –
+  bear/neut/up/high                                 0.150   0.546  +0.396↑  BUY ↑
+  bear/neut/do/low                                  0.200   0.500  +0.300↑  HOLD –
+  bear/neut/do/high                                 0.150   0.506  +0.356↑  HOLD –
+  bear/over/up/low                                  0.500   0.500  +0.000   HOLD –
+  bear/over/up/high                                 0.450   0.554  +0.104↑  BUY ↑
+  bear/over/do/low                                  0.100   0.565  +0.465↑  BUY ↑
+  bear/over/do/high                                 0.050   0.567  +0.517↑  BUY ↑
+  neut/over/up/low                                  0.580   0.500  -0.080↓  HOLD –
+  neut/over/up/high                                 0.520   0.576  +0.056↑  BUY ↑
+  neut/over/do/low                                  0.480   0.500  +0.020   HOLD –
+  neut/over/do/high                                 0.530   0.500  -0.030↓  HOLD –
+  neut/neut/up/low                                  0.480   0.500  +0.020   HOLD –
+  neut/neut/up/high                                 0.420   0.500  +0.080↑  HOLD –
+  neut/neut/do/low                                  0.480   0.500  +0.020   HOLD –
+  neut/neut/do/high                                 0.420   0.476  +0.056↑  HOLD –
+  neut/over/up/low                                  0.780   0.500  -0.280↓  HOLD –
+  neut/over/up/high                                 0.720   0.545  -0.174↓  BUY ↑
+  neut/over/do/low                                  0.380   0.500  +0.120↑  HOLD –
+  neut/over/do/high                                 0.320   0.500  +0.180↑  HOLD –
+------------------------------------------------------------------------------
+
+RESUMEN DE CAMBIOS:
+  Celdas en zona BUY  (≥0.52): 17 → 11
+  Celdas en zona HOLD:         10 → 25
+  Celdas en zona SELL (≤0.28):  0
+  Delta medio: +0.0133
+  Delta máx:   +0.5167  |  Delta mín: -0.4200
+
+INTERPRETACIÓN:
+  ⚠️  El cambio medio es muy pequeño (<2%). Posiblemente insuficientes datos. Se recomienda ejecutar de nuevo con más observaciones.
+
+PRÓXIMOS PASOS:
+  1. Revisa el reporte y verifica que los cambios tienen sentido económico.
+  2. Copia el bloque 'cpt_market_direction' de learned_cpts.json a MODEL_CONFIG
+     en lambda_bayesian.py y bootstrap_365_days.py.
+  3. O usa: python recalibrate_cpts.py --apply  para actualizar automáticamente.
+  4. Re-ejecuta el bootstrap en un subconjunto de fechas para verificar que
+     ahora se generan señales BUY/SELL.
+==============================================================================

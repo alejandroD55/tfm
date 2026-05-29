@@ -1,6 +1,28 @@
 # deploy: 2026-05-12 18:03 UTC
 import sys
+import os
 from unittest.mock import MagicMock
+
+
+# ── Camino B: cargar motor discriminativo ANTES del MockImporter ──────────────
+# El booster nativo de LightGBM no depende de sklearn, pero el MockImporter
+# bloquearía cualquier import de sklearn posterior. Cargamos el engine aquí,
+# antes de que el mock se registre, para que lightgbm pueda importar limpiamente.
+_disc_engine = None
+try:
+    # discriminative_engine.py debe estar en la misma carpeta que este archivo
+    # o en /tmp/ en Lambda (copiado desde S3 en el bootstrap de la función).
+    _lambda_dir = os.path.dirname(os.path.abspath(__file__))
+    _tfm_root   = os.path.dirname(_lambda_dir)
+    for _search in [_lambda_dir, _tfm_root]:
+        if _search not in sys.path:
+            sys.path.insert(0, _search)
+
+    from discriminative_engine import disc_engine as _disc_engine_raw
+    _disc_engine_raw.load()
+    _disc_engine = _disc_engine_raw
+except Exception as _disc_load_err:
+    pass  # BN como fallback — sin cambios en comportamiento actual
 
 
 # ── Mock de dependencias ML pesadas que pgmpy intenta importar ────────────────
@@ -380,7 +402,62 @@ def build_contribution_analysis(model, evidence_states: dict, macro_context: dic
         return {}
 
 
-def infer_signal(model, evidence_states, macro_context: dict = None):
+def infer_signal(model, evidence_states, macro_context: dict = None, disc_extra: dict = None):
+    """
+    Inferencia de señal de trading.
+
+    Prioridad:
+      1. Motor discriminativo LightGBM (Camino B) — si está disponible.
+      2. Red Bayesiana con ajuste macro (Camino A / original).
+
+    disc_extra: dict opcional con features adicionales para el discriminador
+                {prob_up_bn, signal_streak, prob_up_delta, prob_up_5d_mean,
+                 vol_20d, vol_ratio, sentiment_dispersion}
+    """
+    # ── Camino B: LightGBM discriminativo ─────────────────────────────────────
+    if _disc_engine is not None and getattr(_disc_engine, "available", False):
+        try:
+            # Calcular prob_up de la BN para usarla como feature del discriminador
+            _infer_bn = VariableElimination(model)
+            _result_bn = _infer_bn.query(
+                variables=["MarketDirection"], evidence=evidence_states, show_progress=False
+            )
+            prob_up_bn = round(float(_result_bn.values[1]), 4)
+
+            extra_ctx = dict(disc_extra or {})
+            extra_ctx["prob_up_bn"] = prob_up_bn
+
+            prob_up_adjusted   = _disc_engine.infer(evidence_states, macro_context, extra_ctx)
+            prob_down_adjusted = round(1.0 - prob_up_adjusted, 4)
+
+            # Umbrales calibrados a la distribución real del motor discriminativo
+            # (bimodal: cluster bajista [0.49–0.50], cluster alcista [0.55–0.61])
+            _DISC_BUY  = 0.55
+            _DISC_SELL = 0.50
+            if prob_up_adjusted >= _DISC_BUY:
+                signal = "BUY"
+            elif prob_up_adjusted <= _DISC_SELL:
+                signal = "SELL"
+            else:
+                signal = "HOLD"
+
+            logger.info(
+                f"[Camino B] prob_up_bn={prob_up_bn:.4f} → prob_up_disc={prob_up_adjusted:.4f} → {signal} "
+                f"(buy≥{_DISC_BUY}, sell≤{_DISC_SELL})"
+            )
+            return signal, prob_up_adjusted, prob_down_adjusted, {
+                "prob_up_raw":         prob_up_adjusted,
+                "prob_down_raw":       prob_down_adjusted,
+                "macro_adjustment":    0.0,
+                "effective_macro_adj": 0.0,
+                "macro_sentiment":     (macro_context or {}).get("macro_sentiment", "neutral"),
+                "risk_regime":         (macro_context or {}).get("risk_regime", "NEUTRAL"),
+                "engine":              "discriminative",
+            }
+        except Exception as _exc:
+            logger.warning(f"[Camino B] fallback a BN: {_exc}")
+
+    # ── Camino A / Fallback: Red Bayesiana ────────────────────────────────────
     infer  = VariableElimination(model)
     result = infer.query(
         variables=["MarketDirection"], evidence=evidence_states, show_progress=False
@@ -436,6 +513,7 @@ def infer_signal(model, evidence_states, macro_context: dict = None):
         "effective_macro_adj": effective_macro_adj,
         "macro_sentiment":     macro_sentiment,
         "risk_regime":         risk_regime,
+        "engine":              "bayesian",
     }
 
 

@@ -1,4 +1,4 @@
-import { Component, OnInit, AfterViewInit, ViewChild, inject } from '@angular/core';
+import { Component, OnInit, OnDestroy, AfterViewInit, ViewChild, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatTableModule, MatTableDataSource } from '@angular/material/table';
@@ -11,8 +11,9 @@ import { MatExpansionModule } from '@angular/material/expansion';
 import { NgxChartsModule } from '@swimlane/ngx-charts';
 import Highcharts from 'highcharts/highstock';
 import { HighchartsChartModule } from 'highcharts-angular';
-import { forkJoin, of, catchError } from 'rxjs';
+import { forkJoin, of, catchError, Subject, takeUntil } from 'rxjs';
 import { ReportService } from '../../core/services/report.service';
+import { PipelineContextService } from '../../core/services/pipeline-context.service';
 import { DailyReport, TickerView, ReportDateEntry } from '../../core/models/report.model';
 import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
 
@@ -46,8 +47,10 @@ interface SignalCyclePoint {
   templateUrl: './backtesting.component.html',
   styleUrl: './backtesting.component.scss',
 })
-export class BacktestingComponent implements OnInit, AfterViewInit {
+export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
   private reportSvc = inject(ReportService);
+  private pipelineCtx = inject(PipelineContextService);
+  private destroy$ = new Subject<void>();
 
   @ViewChild(MatSort) sort!: MatSort;
 
@@ -126,7 +129,25 @@ export class BacktestingComponent implements OnInit, AfterViewInit {
     return [...new Set(this.signalCycles.map(r => r.ticker))].sort();
   }
 
+  get pipelineLabel(): string {
+    return this.pipelineCtx.selectedPipeline()?.label ?? '';
+  }
+
   ngOnInit() {
+    this.pipelineCtx.pipelineChanged$.pipe(takeUntil(this.destroy$)).subscribe(() => {
+      this.reportSvc.clearCache();
+      this.loadPipelineData();
+    });
+    this.loadPipelineData();
+  }
+
+  ngOnDestroy() {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+
+  private loadPipelineData() {
+    this.loading = true;
     this.reportSvc.listAvailableDates().subscribe({
       next: (dates) => {
         this.loadBacktestingHistory(dates);
@@ -134,8 +155,8 @@ export class BacktestingComponent implements OnInit, AfterViewInit {
           this.loading = false;
           return;
         }
-        // Fijar siempre el snapshot más reciente (compendio de todos los ciclos).
-        this.selectedDate = dates[0].date;
+        // Snapshot = último día del pipeline activo (métricas con 10k desde inicio de corrida).
+        this.selectedDate = this.pipelineCtx.pipelineEndDate() ?? dates[0].date;
         this.reportSvc.loadReport(this.selectedDate).subscribe({
           next: (report) => {
             this.processReport(report);

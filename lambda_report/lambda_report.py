@@ -416,7 +416,7 @@ def get_close_price(ticker: str, date_str: str) -> float | None:
         # aunque caiga en fin de semana o festivo
         start = target - timedelta(days=1)
         end   = target + timedelta(days=6)
-        df = yf.download(ticker, start=start, end=end, progress=False)
+        df = yf.download(ticker, start=start, end=end, progress=False, repair=False)
         if df.empty:
             return None
         if isinstance(df.columns, pd.MultiIndex):

@@ -1,0 +1,65 @@
+{
+  "version": "1.0.0",
+  "engine": "lightgbm_discriminative",
+  "trained_at": "2026-05-29T09:31:12.039171Z",
+  "outcome_col": "outcome_d3",
+  "n_obs": 594,
+  "n_features": 13,
+  "auc_val": 0.6186,
+  "brier_val": 0.2408,
+  "platt_a": 0.913907,
+  "platt_b": 0.14619,
+  "lgbm_params": {
+    "objective": "binary",
+    "metric": "auc",
+    "num_leaves": 8,
+    "max_depth": 3,
+    "learning_rate": 0.05,
+    "n_estimators": 300,
+    "min_child_samples": 15,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "reg_alpha": 0.1,
+    "reg_lambda": 1.0,
+    "class_weight": "balanced",
+    "random_state": 42,
+    "verbose": -1
+  },
+  "cv_results": {
+    "folds": [
+      {
+        "fold": 1,
+        "n_train": 150,
+        "n_val": 148,
+        "auc_raw": 0.6191,
+        "auc_cal": 0.6191,
+        "brier": 0.2383,
+        "platt_a": 0.6632,
+        "platt_b": -0.3815
+      },
+      {
+        "fold": 2,
+        "n_train": 298,
+        "n_val": 148,
+        "auc_raw": 0.5463,
+        "auc_cal": 0.5463,
+        "brier": 0.2491,
+        "platt_a": 0.214,
+        "platt_b": -0.1236
+      },
+      {
+        "fold": 3,
+        "n_train": 446,
+        "n_val": 148,
+        "auc_raw": 0.552,
+        "auc_cal": 0.552,
+        "brier": 0.2479,
+        "platt_a": 0.449,
+        "platt_b": 0.0215
+      }
+    ]
+  },
+  "booster_path": "/Users/alejandroramosuparela/Projects/IAProjects/tfm/models/lgbm_booster.txt",
+  "target_definition": "above_ticker_median_return",
+  "description": "Clasificador discriminativo LightGBM entrenado sobre signal_outcomes. Target: retorno relativo a la mediana por ticker (split 50/50 garantizado). Sustituye la Red Bayesiana en infer_signal(). Calibraci\u00f3n Platt manual (numpy puro, sin sklearn en runtime)."
+}

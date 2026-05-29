@@ -1,4 +1,4 @@
-import { Component, OnInit, inject } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
@@ -7,8 +7,9 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatExpansionModule } from '@angular/material/expansion';
 import { LegendPosition, NgxChartsModule } from '@swimlane/ngx-charts';
-import { forkJoin, switchMap, of } from 'rxjs';
+import { forkJoin, switchMap, of, Subject, takeUntil } from 'rxjs';
 import { ReportService } from '../../core/services/report.service';
+import { PipelineContextService } from '../../core/services/pipeline-context.service';
 import { DailyReport, PipelineHealth, BatchStatus } from '../../core/models/report.model';
 import { ChartDataPoint } from '../../core/models/pipeline.model';
 
@@ -32,8 +33,10 @@ interface BatchSummary {
   templateUrl: './pipeline.component.html',
   styleUrl: './pipeline.component.scss',
 })
-export class PipelineComponent implements OnInit {
+export class PipelineComponent implements OnInit, OnDestroy {
   private reportSvc = inject(ReportService);
+  private pipelineCtx = inject(PipelineContextService);
+  private destroy$ = new Subject<void>();
 
   legendBelow = LegendPosition.Below;
 
@@ -75,7 +78,19 @@ export class PipelineComponent implements OnInit {
     return (this.batches.reduce((s, b) => s + b.coverage_ratio, 0) / this.batches.length) * 100;
   }
 
-  ngOnInit() { this.loadData(); }
+  ngOnInit() {
+    this.pipelineCtx.pipelineChanged$.pipe(takeUntil(this.destroy$)).subscribe(() => {
+      this.reportSvc.clearCache();
+      this.refresh();
+    });
+    this.loadData();
+  }
+
+  ngOnDestroy() {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+
   refresh()  { this.loading = true; this.batches = []; this.loadData(); }
 
   onPageSizeChange() { this.loading = true; this.batches = []; this.loadData(); }

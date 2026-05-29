@@ -665,6 +665,9 @@ def upsert_report(report_data: dict):
         now = datetime.now(timezone.utc)
         doc = {
             "report_date":             report_date,
+            "pipeline_start":          report_data.get("pipeline_start"),
+            "pipeline_end":            report_data.get("pipeline_end"),
+            "generated_at":            report_data.get("generated_at"),
             "pipeline_health":         report_data.get("pipeline_health", {}),
             "summary":                 report_data.get("summary", {}),
             "backtesting_metrics":     report_data.get("backtesting_metrics", {}),
@@ -673,6 +676,11 @@ def upsert_report(report_data: dict):
             "signal_diagnostics":      report_data.get("signal_diagnostics", {}),
             "backtesting_config":      report_data.get("backtesting_config", {}),
             "data_period_days":        report_data.get("data_period_days"),
+            "exposure_backtesting_metrics": report_data.get("exposure_backtesting_metrics", {}),
+            "exposure_backtesting_diagnostics": report_data.get("exposure_backtesting_diagnostics", {}),
+            "exposure_vs_binary_comparison": report_data.get("exposure_vs_binary_comparison", {}),
+            "trace_artifact":          report_data.get("trace_artifact"),
+            "quant_audit_artifact":    report_data.get("quant_audit_artifact"),
             "updated_at":              now,
         }
         db["reports"].update_one(

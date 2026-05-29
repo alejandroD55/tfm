@@ -18,6 +18,28 @@
     <span class="sb-status-text">Pipeline operativo</span>
   </div>
 
+  @if (pipelineCtx.pipelines().length > 0) {
+    <div class="sb-pipeline">
+      <label class="sb-pipeline-label" for="pipeline-select">Ejecución</label>
+      <select
+        id="pipeline-select"
+        class="sb-pipeline-select"
+        [ngModel]="pipelineCtx.selectedPipeline()?.id"
+        (ngModelChange)="onPipelineChange($event)"
+        matTooltip="Cada ejecución usa capital inicial independiente (10.000 €)"
+        matTooltipPosition="right">
+        @for (p of pipelineCtx.pipelines(); track p.id) {
+          <option [value]="p.id">{{ p.label }}</option>
+        }
+      </select>
+      @if (pipelineCtx.selectedPipeline(); as p) {
+        <div class="sb-pipeline-meta">
+          {{ p.reportCount }} días · {{ p.initialCapital | number:'1.0-0' }} € iniciales
+        </div>
+      }
+    </div>
+  }
+
   <!-- Nav: Análisis -->
   <div class="sb-section">
     <div class="sb-section-label">Análisis</div>

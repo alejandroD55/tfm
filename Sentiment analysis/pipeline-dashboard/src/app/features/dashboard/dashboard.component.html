@@ -7,7 +7,14 @@
         <span>Visión General de la Cartera</span>
       </div>
       <h1 class="page-title">Resumen Operativo</h1>
-      <p class="page-sub">Sistema de trading algorítmico · Red Bayesiana + FinBERT · Evaluando los últimos {{ report?.data_period_days || 365 }} días</p>
+      <p class="page-sub">
+        Sistema de trading algorítmico · Red Bayesiana + FinBERT
+        @if (pipelineLabel) {
+          · Pipeline <strong>{{ pipelineLabel }}</strong> · {{ initialCapital | number:'1.0-0' }} € iniciales
+        } @else {
+          · Evaluando los últimos {{ report?.data_period_days || 365 }} días
+        }
+      </p>
     </div>
     <div class="page-actions">
       <div class="filter-group">

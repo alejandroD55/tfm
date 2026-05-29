@@ -93,10 +93,31 @@ export class ApiService {
     return this.http.get<any>(`${this.baseUrl}/health`);
   }
 
-  // ─── Reports ──────────────────────────────────────────────────────
-  listReports(): Observable<{ dates: ReportDateEntry[]; total: number }> {
-    return this.http.get<any>(`${this.baseUrl}/reports`,
+  // ─── Pipelines (ejecuciones bootstrap) ───────────────────────────
+  listPipelines(): Observable<{
+    pipelines: {
+      id: string;
+      label: string;
+      start_date: string;
+      end_date: string;
+      report_count: number;
+      initial_capital: number;
+      first_report_date?: string;
+      last_report_date?: string;
+    }[];
+    total: number;
+  }> {
+    return this.http.get<any>(`${this.baseUrl}/pipelines`,
       { headers: this.authHeaders });
+  }
+
+  // ─── Reports ──────────────────────────────────────────────────────
+  listReports(start?: string, end?: string): Observable<{ dates: ReportDateEntry[]; total: number }> {
+    let params = new HttpParams();
+    if (start) params = params.set('start', start);
+    if (end) params = params.set('end', end);
+    return this.http.get<any>(`${this.baseUrl}/reports`,
+      { headers: this.authHeaders, params });
   }
 
   getReport<T>(date: string): Observable<T> {
@@ -296,9 +317,16 @@ export class ApiService {
 
   // ─── Exposure Management (Fase 1) ────────────────────────────────
   /** Histórico de exposición continua por ticker (lee reports MongoDB) */
-  getExposureHistory(ticker?: string, limit = 90): Observable<ExposureHistoryResponse> {
+  getExposureHistory(
+    ticker?: string,
+    limit = 90,
+    start?: string,
+    end?: string,
+  ): Observable<ExposureHistoryResponse> {
     let params = new HttpParams().set('limit', limit.toString());
     if (ticker) params = params.set('ticker', ticker.toUpperCase());
+    if (start) params = params.set('start', start);
+    if (end) params = params.set('end', end);
     return this.http.get<ExposureHistoryResponse>(`${this.baseUrl}/exposure/history`,
       { headers: this.authHeaders, params });
   }
@@ -308,6 +336,15 @@ export class ApiService {
     return this.http.get<ExposureSummaryResponse>(
       `${this.baseUrl}/exposure/summary/${date}`,
       { headers: this.authHeaders });
+  }
+
+  /** Exposición diaria enriquecida (Fase 2A) — VT, Kelly, vol multi-escala, dispersión */
+  getExposurePositions(ticker: string, limit = 90): Observable<ExposurePositionsResponse> {
+    const params = new HttpParams()
+      .set('ticker', ticker.toUpperCase())
+      .set('limit', limit.toString());
+    return this.http.get<ExposurePositionsResponse>(`${this.baseUrl}/exposure/positions`,
+      { headers: this.authHeaders, params });
   }
 
   // ─── Búsqueda de instrumentos financieros ─────────────────────────
@@ -450,6 +487,38 @@ export interface ExposureSummaryResponse {
   date:    string;
   tickers: string[];
   summary: Record<string, ExposureTickerSummary>;
+}
+
+// ─── DTOs de Exposure Engine Fase 2A ─────────────────────────────────────────
+
+/** Un punto de la serie temporal de posición enriquecida (Fase 2A) */
+export interface ExposurePositionPoint {
+  date:                  string;
+  ticker:                string;
+  close_price:           number | null;
+  // Régimen
+  confirmed_regime:      string | null;   // BULL / NEUTRAL / HIGH_VOL / BEAR (con confirmación temporal)
+  raw_regime:            string | null;   // régimen instantáneo antes de confirmación
+  vix_regime_label:      string | null;   // RISK_ON_STRONG / RISK_ON / NEUTRAL / RISK_OFF_MILD / RISK_OFF / FEAR / PANIC
+  // Componentes de exposición
+  vt_exposure:           number | null;   // Volatility Targeting: target_vol / realized_vol
+  kelly_exposure:        number | null;   // Fractional Kelly (0.35×f*)
+  target_exposure:       number | null;   // prob_to_exposure con régimen confirmado
+  smoothed_exposure:     number | null;   // EWM asimétrico α↑=0.15 / α↓=0.35
+  exposure_delta:        number | null;
+  previous_exposure:     number | null;
+  // Volatilidad del activo
+  vol_ratio:             number | null;   // vol_5d / vol_20d — aceleración de volatilidad
+  vol_20d:               number | null;   // volatilidad realizada anualizada 20d
+  // Sentimiento
+  sentiment_dispersion:  number | null;   // varianza ponderada del sentimiento [0, 1]
+}
+
+export interface ExposurePositionsResponse {
+  ticker:         string;
+  total:          number;
+  days_requested: number;
+  timeline:       ExposurePositionPoint[];
 }
 
 export interface MacroArticle {

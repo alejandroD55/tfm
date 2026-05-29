@@ -1,0 +1,121 @@
+{
+  "generated_at": "2026-05-29T09:37:43.023106",
+  "outcome_used": "outcome_d3",
+  "training_rows": 594,
+  "up_rate": 0.564,
+  "version": "learned_v1",
+  "description": "CPTs aprendidas con pgmpy BayesianEstimator desde 594 observaciones de signal_outcomes. Suavizado Dirichlet ESS=10.",
+  "cpt_market_direction": {
+    "variable": "MarketDirection",
+    "states": [
+      "down",
+      "up"
+    ],
+    "evidence_order": [
+      "Sentiment",
+      "RSI",
+      "Trend",
+      "Volatility"
+    ],
+    "values_P_down": [
+      0.5,
+      0.4762,
+      0.5,
+      0.5,
+      0.5,
+      0.5238,
+      0.5,
+      0.4348,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.5217,
+      0.3976,
+      0.4762,
+      0.4651,
+      0.5926,
+      0.4537,
+      0.5,
+      0.4937,
+      0.5,
+      0.4462,
+      0.4348,
+      0.4333,
+      0.5,
+      0.4242,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.5238,
+      0.5,
+      0.4545,
+      0.5,
+      0.5
+    ],
+    "values_P_up": [
+      0.5,
+      0.5238,
+      0.5,
+      0.5,
+      0.5,
+      0.4762,
+      0.5,
+      0.5652,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.4783,
+      0.6024,
+      0.5238,
+      0.5349,
+      0.4074,
+      0.5463,
+      0.5,
+      0.5063,
+      0.5,
+      0.5538,
+      0.5652,
+      0.5667,
+      0.5,
+      0.5758,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.4762,
+      0.5,
+      0.5455,
+      0.5,
+      0.5
+    ]
+  },
+  "priors": {
+    "Sentiment": {
+      "bullish": 0.179,
+      "bearish": 0.289,
+      "neutral": 0.532,
+      "rationale": "Emp\u00edrico desde signal_outcomes"
+    },
+    "RSI": {
+      "oversold": 0.0164,
+      "neutral": 0.89,
+      "overbought": 0.0936,
+      "rationale": "Emp\u00edrico desde signal_outcomes"
+    },
+    "Trend": {
+      "uptrend": 0.6738,
+      "downtrend": 0.3262,
+      "rationale": "Emp\u00edrico desde signal_outcomes"
+    },
+    "Volatility": {
+      "low": 0.0712,
+      "high": 0.9288,
+      "rationale": "Emp\u00edrico desde signal_outcomes"
+    }
+  }
+}

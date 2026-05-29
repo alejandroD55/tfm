@@ -1,0 +1,15 @@
+[
+  "sentiment_state",
+  "rsi_state",
+  "trend_state",
+  "volatility_state",
+  "prob_up",
+  "macro_adjustment",
+  "risk_regime",
+  "signal_streak",
+  "prob_up_delta",
+  "prob_up_5d_mean",
+  "vol_20d",
+  "vol_ratio",
+  "sentiment_dispersion"
+]

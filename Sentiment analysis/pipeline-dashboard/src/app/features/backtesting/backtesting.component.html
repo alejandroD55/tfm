@@ -8,12 +8,16 @@
       </div>
       <h1 class="page-title">Rendimiento y Riesgo (Backtesting)</h1>
       <p class="page-sub">
-        Simulación de inversión sobre los últimos <strong>{{ summary.total_tickers ? 365 : 0 }} días</strong> usando un capital inicial virtual de <strong>$10,000</strong> por activo.
+        @if (pipelineLabel) {
+          Pipeline <strong>{{ pipelineLabel }}</strong> · capital inicial <strong>10.000 €</strong> por activo (corrida independiente).
+        } @else {
+          Simulación con capital inicial virtual de <strong>10.000 €</strong> por activo.
+        }
       </p>
     </div>
     <div class="snapshot-pill">
       <mat-icon>event</mat-icon>
-      <span>Snapshot fijo (último cierre): {{ selectedDate || '—' }}</span>
+      <span>Cierre del pipeline: {{ selectedDate || '—' }}</span>
     </div>
   </header>
 

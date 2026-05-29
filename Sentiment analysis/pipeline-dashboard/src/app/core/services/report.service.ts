@@ -1,6 +1,7 @@
 import { Injectable, signal } from '@angular/core';
-import { Observable, from, map, switchMap, of, tap } from 'rxjs';
-import { ApiService, ReportDateEntry as ApiDateEntry } from './api.service';
+import { Observable, map, switchMap, of, tap } from 'rxjs';
+import { ApiService } from './api.service';
+import { PipelineContextService } from './pipeline-context.service';
 import {
   DailyReport, TickerView, ReportDateEntry,
 } from '../models/report.model';
@@ -12,15 +13,23 @@ export class ReportService {
   private reportCache = new Map<string, DailyReport>();
   readonly selectedDate = signal<string>('');
 
-  constructor(private api: ApiService) {}
+  constructor(
+    private api: ApiService,
+    private pipelineCtx: PipelineContextService,
+  ) {}
 
-  // ─── Lista fechas disponibles ─────────────────────────────────────
+  clearCache(): void {
+    this.reportCache.clear();
+  }
+
+  // ─── Lista fechas disponibles (acotada al pipeline activo) ─────────
   listAvailableDates(): Observable<ReportDateEntry[]> {
-    return this.api.listReports().pipe(
+    const { start, end } = this.pipelineCtx.dateFilter();
+    return this.api.listReports(start, end).pipe(
       map(resp => resp.dates.map(d => ({
         date:         d.date,
-        s3Key:        d.s3Key,
-        lastModified: new Date(d.lastModified),
+        s3Key:        d.s3Key ?? '',
+        lastModified: d.lastModified ? new Date(d.lastModified) : new Date(),
         has_trace:    d.has_trace ?? false,
       } as ReportDateEntry & { has_trace: boolean })))
     );

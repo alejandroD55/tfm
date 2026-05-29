@@ -1,8 +1,10 @@
-import { Component } from '@angular/core';
+import { Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { RouterModule } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { PipelineContextService } from '../../../core/services/pipeline-context.service';
 
 interface NavItem {
   label:       string;
@@ -15,11 +17,16 @@ interface NavItem {
 @Component({
   selector:    'app-sidebar',
   standalone:  true,
-  imports:     [CommonModule, RouterModule, MatIconModule, MatTooltipModule],
+  imports:     [CommonModule, FormsModule, RouterModule, MatIconModule, MatTooltipModule],
   templateUrl: './sidebar.component.html',
   styleUrl:    './sidebar.component.scss',
 })
 export class SidebarComponent {
+  readonly pipelineCtx = inject(PipelineContextService);
+
+  onPipelineChange(id: string): void {
+    this.pipelineCtx.selectPipelineById(id);
+  }
 
   mainNav: NavItem[] = [
     {

@@ -24,6 +24,14 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 import psycopg2
+
+# Desactivar la caché SQLite de yfinance: su implementación no es thread-safe
+# y provoca OperationalError('unable to open database file') bajo carga paralela.
+# Con la caché desactivada cada llamada va directo a la API (sin overhead de lock).
+try:
+    yf.set_tz_cache_location(None)  # yfinance ≥ 0.2.x
+except Exception:
+    pass
 import trafilatura
 from dotenv import load_dotenv
 from tqdm import tqdm
@@ -35,6 +43,13 @@ warnings.filterwarnings("ignore")
 
 _REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_REPO_ROOT, "shared"))
+
+# ── Camino B: motor discriminativo LightGBM (opcional) ───────────────────────
+try:
+    from discriminative_engine import disc_engine as _disc_engine
+    _disc_engine.load()   # carga perezosa — silencioso si modelo no existe aún
+except Exception:
+    _disc_engine = None
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -49,8 +64,14 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("trafilatura").setLevel(logging.CRITICAL)
 logging.getLogger("pymongo").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
+# Silenciar los falsos positivos "possibly delisted" de yfinance.
+# yfinance los loguea como ERROR cuando la ventana de descarga toca
+# fines de semana / festivos y retorna menos filas de las esperadas.
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+logging.getLogger("peewee").setLevel(logging.CRITICAL)
 
-load_dotenv()
+# Siempre cargar .env desde la raíz del repo (aunque ejecutes desde otro cwd).
+load_dotenv(Path(_REPO_ROOT) / ".env")
 
 def _configure_logging(verbose: bool) -> None:
     level = logging.INFO if verbose else logging.ERROR
@@ -126,9 +147,11 @@ REFRESH_NEWS_CACHE = os.getenv("BOOTSTRAP_REFRESH_NEWS_CACHE", "").lower() in (
     "on",
 )
 
+# Puerto 5433 = mapeo host en docker-compose.yml (postgres:5432 → host:5433).
+# Si usas 5432 sin Docker, caerás en el Postgres de macOS (sin rol tfmadmin).
 DB_CONFIG = {
-    "host": os.getenv("POSTGRES_HOST", "localhost"),
-    "port": int(os.getenv("POSTGRES_PORT", "5432")),
+    "host": os.getenv("POSTGRES_HOST", "127.0.0.1"),
+    "port": int(os.getenv("POSTGRES_PORT", "5433")),
     "user": os.getenv("POSTGRES_USER", "tfmadmin"),
     "password": os.getenv("POSTGRES_PASSWORD", "localpassword123"),
     "database": os.getenv("POSTGRES_DB", "tfm"),
@@ -630,15 +653,47 @@ from quant_observability import (
 )
 
 
-def get_db_connection():
-    return psycopg2.connect(
-        host=DB_CONFIG["host"],
-        port=DB_CONFIG["port"],
-        user=DB_CONFIG["user"],
-        password=DB_CONFIG["password"],
-        database=DB_CONFIG["database"],
-        sslmode="prefer",
+def get_db_connection(max_attempts: int = 4, base_delay: float = 0.5):
+    """
+    Abre una conexión psycopg2 con reintentos y backoff exponencial.
+
+    Motivo: bajo carga paralela (6 hilos × mismo instante) Docker puede
+    rechazar conexiones momentáneamente → psycopg2.OperationalError sin
+    mensaje. Con 4 intentos el retraso máximo es ~3.5 s, invisible al usuario.
+
+    Cambios respecto a la versión anterior:
+    - sslmode='disable': evita la negociación SSL en localhost (más rápido
+      y elimina overhead que provoca timeouts en hilos paralelos).
+    - connect_timeout=5: fuerza fallo rápido en vez de esperar indefinidamente.
+    - Backoff exponencial: 0.5 s → 1 s → 2 s → (falla).
+    """
+    last_exc = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return psycopg2.connect(
+                host=DB_CONFIG["host"],
+                port=DB_CONFIG["port"],
+                user=DB_CONFIG["user"],
+                password=DB_CONFIG["password"],
+                database=DB_CONFIG["database"],
+                sslmode="disable",       # localhost → sin SSL, más rápido
+                connect_timeout=5,       # fallo explícito a los 5 s
+            )
+        except psycopg2.OperationalError as exc:
+            last_exc = exc
+            if attempt < max_attempts:
+                delay = base_delay * (2 ** (attempt - 1))   # 0.5, 1.0, 2.0 s
+                logger.warning(
+                    f"[pg-connect] intento {attempt}/{max_attempts} fallido — "
+                    f"reintentando en {delay:.1f}s ({exc})"
+                )
+                time.sleep(delay)
+    hint = (
+        f"Revisa POSTGRES_* en {Path(_REPO_ROOT) / '.env'} — "
+        f"Docker local usa host={DB_CONFIG['host']} port=5433 user=tfmadmin db=tfm. "
+        f"Actual: port={DB_CONFIG['port']} user={DB_CONFIG['user']}"
     )
+    raise psycopg2.OperationalError(f"{last_exc}\n{hint}") from last_exc
 
 
 def pg_upsert_signal(conn, date_str, ticker, signal, prob_up, prob_down):
@@ -687,14 +742,13 @@ def pg_upsert_pipeline_kpi(
 
 
 def pg_upsert_position_state(
-    conn,
-    date_str: str,
-    ticker: str,
-    prob_up: float,
-    regime: str,
-    target_exposure: float,
-    smoothed_exposure: float,
-    exposure_delta: float,
+    conn, batch_date, ticker, prob_up, market_regime, target_exposure,
+    smoothed_exposure, exposure_delta,
+    # Nuevos campos Fase 2A:
+    confirmed_regime=None, raw_regime=None, regime_candidate=None, regime_candidate_days=None,
+    vt_exposure=None, kelly_exp=None,
+    vol_5d=None, vol_20d=None, vol_ratio=None, vol_percentile=None,
+    sentiment_dispersion=None, vix_regime_label=None,
 ):
     """Persiste el estado de exposición diario en la tabla position_state."""
     with conn.cursor() as c:
@@ -702,29 +756,63 @@ def pg_upsert_position_state(
             """
             INSERT INTO position_state
                 (batch_date, ticker, prob_up, market_regime,
-                 target_exposure, smoothed_exposure, exposure_delta)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                 target_exposure, smoothed_exposure, exposure_delta,
+                 confirmed_regime, raw_regime, regime_candidate, regime_candidate_days,
+                 vt_exposure, kelly_exposure,
+                 vol_5d, vol_20d, vol_ratio, vol_percentile_1y,
+                 sentiment_dispersion, vix_regime_label)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (batch_date, ticker) DO UPDATE SET
-                prob_up           = EXCLUDED.prob_up,
-                market_regime     = EXCLUDED.market_regime,
-                target_exposure   = EXCLUDED.target_exposure,
-                smoothed_exposure = EXCLUDED.smoothed_exposure,
-                exposure_delta    = EXCLUDED.exposure_delta
+                prob_up               = EXCLUDED.prob_up,
+                market_regime         = EXCLUDED.market_regime,
+                target_exposure       = EXCLUDED.target_exposure,
+                smoothed_exposure     = EXCLUDED.smoothed_exposure,
+                exposure_delta        = EXCLUDED.exposure_delta,
+                confirmed_regime      = EXCLUDED.confirmed_regime,
+                raw_regime            = EXCLUDED.raw_regime,
+                regime_candidate      = EXCLUDED.regime_candidate,
+                regime_candidate_days = EXCLUDED.regime_candidate_days,
+                vt_exposure           = EXCLUDED.vt_exposure,
+                kelly_exposure        = EXCLUDED.kelly_exposure,
+                vol_5d                = EXCLUDED.vol_5d,
+                vol_20d               = EXCLUDED.vol_20d,
+                vol_ratio             = EXCLUDED.vol_ratio,
+                vol_percentile_1y     = EXCLUDED.vol_percentile_1y,
+                sentiment_dispersion  = EXCLUDED.sentiment_dispersion,
+                vix_regime_label      = EXCLUDED.vix_regime_label
             """,
-            (date_str, ticker, float(prob_up), regime,
-             float(target_exposure), float(smoothed_exposure), float(exposure_delta)),
+            (
+                batch_date, ticker, float(prob_up), market_regime,
+                float(target_exposure), float(smoothed_exposure), float(exposure_delta),
+                confirmed_regime, raw_regime, regime_candidate,
+                int(regime_candidate_days) if regime_candidate_days is not None else None,
+                float(vt_exposure) if vt_exposure is not None else None,
+                float(kelly_exp) if kelly_exp is not None else None,
+                float(vol_5d) if vol_5d is not None else None,
+                float(vol_20d) if vol_20d is not None else None,
+                float(vol_ratio) if vol_ratio is not None else None,
+                float(vol_percentile) if vol_percentile is not None else None,
+                float(sentiment_dispersion) if sentiment_dispersion is not None else None,
+                vix_regime_label,
+            ),
         )
     conn.commit()
 
 
 # NUEVO: EXTRAER HISTÓRICO DE AURORA (Para clonar AWS lambda_report.py)
 def get_trading_data(
-    connection, report_date, days_back=DAYS_BACK, tickers: Optional[List[str]] = None
+    connection,
+    report_date,
+    days_back=DAYS_BACK,
+    tickers: Optional[List[str]] = None,
+    pipeline_start: Optional[date] = None,
 ):
     try:
         cursor = connection.cursor()
         end_date = pd.to_datetime(report_date).date()
         start_date = end_date - timedelta(days=days_back)
+        if pipeline_start is not None:
+            start_date = max(start_date, pipeline_start)
         query = """
             SELECT ts.batch_date, ts.ticker, ts.signal, ts.prob_up, ts.prob_down,
                    ti.close_price, ti.rsi_14, ti.sma_20, ti.sma_50,
@@ -763,12 +851,18 @@ def get_trading_data(
 
 
 def get_signal_outcomes(
-    connection, report_date, days_back=DAYS_BACK, tickers: Optional[List[str]] = None
+    connection,
+    report_date,
+    days_back=DAYS_BACK,
+    tickers: Optional[List[str]] = None,
+    pipeline_start: Optional[date] = None,
 ):
     try:
         cursor = connection.cursor()
         end_date = pd.to_datetime(report_date).date()
         start_date = end_date - timedelta(days=days_back)
+        if pipeline_start is not None:
+            start_date = max(start_date, pipeline_start)
         query = """
             SELECT batch_date, ticker, signal, prob_up, outcome_d1, outcome_d3,
                    outcome_d5, correct_d1, correct_d3, correct_d5
@@ -1309,6 +1403,31 @@ def merge_ticker_articles(
     return merged
 
 
+def _empty_vix_series() -> pd.Series:
+    """Serie vacía con DatetimeIndex (evita RangeIndex en comparaciones con fechas)."""
+    return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
+
+
+def vix_on_or_before(vix_series: pd.Series, as_of) -> Optional[float]:
+    """Último cierre VIX en o antes de `as_of` (día hábil del backtest)."""
+    if vix_series is None or vix_series.empty:
+        return None
+    if not isinstance(vix_series.index, pd.DatetimeIndex):
+        vix_series = vix_series.copy()
+        vix_series.index = pd.to_datetime(vix_series.index)
+    cutoff = pd.Timestamp(as_of).normalize()
+    idx = vix_series.index
+    if getattr(idx, "tz", None) is not None:
+        idx = idx.tz_convert(None)
+        vix_series = vix_series.copy()
+        vix_series.index = idx
+    mask = vix_series.index.normalize() <= cutoff
+    subset = vix_series.loc[mask]
+    if subset.empty:
+        return None
+    return _sf(subset.iloc[-1])
+
+
 def fetch_vix_historical(start_d: date, end_d: date) -> pd.Series:
     df = yf.download(
         "^VIX",
@@ -1317,12 +1436,26 @@ def fetch_vix_historical(start_d: date, end_d: date) -> pd.Series:
         progress=False,
         repair=False,
     )
-    if not df.empty:
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.droplevel(1)
-        df.index = pd.to_datetime(df.index)
-        return df["Close"]
-    return pd.Series(dtype=float)
+    if df.empty:
+        logger.warning(
+            "[VIX] yfinance no devolvió datos para ^VIX — risk_regime usará vix=None"
+        )
+        return _empty_vix_series()
+
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.droplevel(1)
+
+    close_col = "Close" if "Close" in df.columns else df.columns[0]
+    series = df[close_col].copy()
+    if isinstance(series, pd.DataFrame):
+        series = series.iloc[:, 0]
+
+    idx = pd.to_datetime(series.index)
+    if getattr(idx, "tz", None) is not None:
+        idx = idx.tz_convert(None)
+    series.index = idx
+
+    return series.dropna()
 
 
 def fetch_newsapi_macro_articles(query: str, target_date: date, n: int = 10) -> List[Dict]:
@@ -1666,7 +1799,67 @@ def get_bn_model():
     return model
 
 
-def run_bayesian_inference(evidence: Dict, macro_adj: float) -> Tuple[str, float]:
+def run_bayesian_inference(
+    evidence:      Dict,
+    macro_adj:     float,
+    macro_context: Optional[Dict] = None,
+    extra:         Optional[Dict] = None,
+) -> Tuple[str, float]:
+    """
+    Inferencia de señal. Usa el motor discriminativo (Camino B) si está disponible;
+    en caso contrario, cae a la Red Bayesiana original (Camino A / fallback).
+
+    Parámetros
+    ----------
+    evidence      : {Sentiment, RSI, Trend, Volatility}
+    macro_adj     : float — ajuste macro del día
+    macro_context : dict completo con risk_regime, macro_sentiment, etc.
+    extra         : dict con features opcionales para el discriminador:
+                    prob_up_bn, signal_streak, prob_up_delta, prob_up_5d_mean,
+                    vol_20d, vol_ratio, sentiment_dispersion
+    """
+    # ── Camino B: LightGBM discriminativo ─────────────────────────────────────
+    if _disc_engine is not None and getattr(_disc_engine, "available", False):
+        try:
+            mc = macro_context or {"macro_adjustment": macro_adj}
+            if "macro_adjustment" not in mc:
+                mc = dict(mc)
+                mc["macro_adjustment"] = macro_adj
+
+            # Calcular prob_up de la BN para usarla como feature del discriminador
+            from pgmpy.inference import VariableElimination
+            _result_bn = VariableElimination(get_bn_model()).query(
+                variables=["MarketDirection"], evidence=evidence, show_progress=False
+            )
+            extra_ctx = dict(extra or {})
+            extra_ctx["prob_up_bn"] = float(_result_bn.values[1])
+
+            prob_up = _disc_engine.infer(evidence, mc, extra_ctx)
+
+            # El motor discriminativo opera con retorno relativo a la mediana
+            # por ticker (target balanceado 50/50).  Su distribución de salida
+            # empírica es bimodal en [0.49–0.50] (bajista) y [0.55–0.61] (alcista).
+            # Se usan umbrales calibrados a esa distribución, distintos a los de la BN:
+            #   BUY  : prob > 0.55 → el modelo predice retorno superior a la mediana
+            #   SELL : prob < 0.50 → el modelo predice retorno inferior a la mediana
+            #   HOLD : zona de incertidumbre (0.50 – 0.55)
+            _DISC_BUY  = 0.55
+            _DISC_SELL = 0.50
+            if prob_up >= _DISC_BUY:
+                signal = "BUY"
+            elif prob_up <= _DISC_SELL:
+                signal = "SELL"
+            else:
+                signal = "HOLD"
+            logger.debug(
+                f"[DiscEngine] prob_up={prob_up:.4f} → {signal} "
+                f"(buy≥{_DISC_BUY}, sell≤{_DISC_SELL})"
+            )
+            return signal, prob_up
+        except Exception as _exc:
+            logger.debug(f"[DiscEngine] fallback a BN: {_exc}")
+
+    # ── Fallback: Red Bayesiana (Camino A / original) ─────────────────────────
     from pgmpy.inference import VariableElimination
 
     infer = VariableElimination(get_bn_model())
@@ -1801,6 +1994,207 @@ def smooth_exposure(target: float, previous: float, alpha: float = 0.25) -> floa
     ante noticias puntuales manteniendo la dirección estratégica del régimen.
     """
     return round(alpha * target + (1.0 - alpha) * previous, 4)
+
+
+# =============================================================================
+# FASE 2A — MEJORAS DE EXPOSURE ENGINE (basadas en literatura académica)
+# =============================================================================
+
+def classify_vix_regime(vix: Optional[float]) -> Tuple[str, float]:
+    """
+    Clasificación multi-nivel del VIX con ajuste macro no lineal.
+    Sustituye el binario RISK_OFF/RISK_ON por 6 niveles con magnitudes distintas.
+    Ref: evita que VIX=26 y VIX=55 reciban el mismo ajuste de -0.04.
+    """
+    if vix is None:
+        return "NEUTRAL", 0.0
+    if vix < 14:   return "RISK_ON_STRONG",  +0.07
+    if vix < 18:   return "RISK_ON",          +0.04
+    if vix < 22:   return "NEUTRAL",          +0.00
+    if vix < 28:   return "RISK_OFF_MILD",    -0.03
+    if vix < 35:   return "RISK_OFF",         -0.06
+    if vix < 45:   return "FEAR",             -0.10
+    return             "PANIC",               -0.15
+
+
+def smooth_exposure_v2(target: float, previous: float,
+                        alpha_up: float = 0.15, alpha_down: float = 0.35) -> float:
+    """
+    EWM asimétrico: las reducciones de exposición son más rápidas que los aumentos.
+    Principio: 'Cut risk fast, re-enter carefully' (estándar en fondos sistemáticos).
+    alpha_down > alpha_up garantiza asimetría de gestión de riesgo.
+    """
+    alpha = alpha_down if target < previous else alpha_up
+    return round(alpha * target + (1.0 - alpha) * previous, 4)
+
+
+def compute_vol_regime_features(close_series, vix: Optional[float]) -> dict:
+    """
+    Volatilidad realizada multi-escala del propio activo.
+    VIX mide vol implícita del S&P500, no del activo individual.
+    vol_ratio > 1.5 = volatilidad acelerando (señal de transición de régimen).
+    vol_percentile = posición de la vol actual en el histórico del activo.
+    """
+    try:
+        if not hasattr(close_series, 'pct_change'):
+            close_series = pd.Series(close_series)
+        returns = close_series.pct_change().dropna()
+        if len(returns) < 21:
+            return {}
+        ann = np.sqrt(252)
+        vol_5  = float(returns.tail(5).std()  * ann)
+        vol_20 = float(returns.tail(20).std() * ann)
+        vol_60 = float(returns.tail(60).std() * ann) if len(returns) >= 60 else vol_20
+        vol_ratio = round(vol_5 / (vol_20 + 1e-9), 3)
+        # Percentil histórico (1 año)
+        hist_vols = returns.tail(252).rolling(20).std().dropna() * ann
+        vol_pct = float((hist_vols < vol_20).mean()) if len(hist_vols) > 10 else 0.5
+        vix_vs_realized = round(vix / (vol_20 * 100 + 1e-9), 2) if vix else None
+        return {
+            "vol_5d": round(vol_5, 4),
+            "vol_20d": round(vol_20, 4),
+            "vol_60d": round(vol_60, 4),
+            "vol_ratio": vol_ratio,
+            "vol_percentile_1y": round(vol_pct, 3),
+            "vix_vs_realized": vix_vs_realized,
+        }
+    except Exception:
+        return {}
+
+
+def compute_volatility_target_exposure(
+    close_series,
+    target_annual_vol: float = 0.15,
+    vol_lookback_fast: int = 10,
+    vol_lookback_slow: int = 60,
+    blend_fast: float = 0.5,
+) -> dict:
+    """
+    Volatility Targeting: exposure = target_vol / realized_vol_blended.
+    Estándar en fondos sistemáticos (AQR, Two Sigma). No requiere parámetros por activo.
+    Ref: Concretum Group (2024) — comparativa VT vs VP en 40 mercados de futuros.
+    """
+    try:
+        if not hasattr(close_series, 'pct_change'):
+            close_series = pd.Series(close_series)
+        returns = close_series.pct_change().dropna()
+        if len(returns) < vol_lookback_slow:
+            return {"vt_exposure": 1.0, "vol_blended": None}
+        ann = np.sqrt(252)
+        vol_fast = float(returns.tail(vol_lookback_fast).std() * ann)
+        vol_slow = float(returns.tail(vol_lookback_slow).std() * ann)
+        vol_blended = blend_fast * vol_fast + (1 - blend_fast) * vol_slow
+        vol_blended = max(vol_blended, 0.01)
+        vt_exp = round(min(1.0, target_annual_vol / vol_blended), 3)
+        return {
+            "vt_exposure": vt_exp,
+            "vol_blended": round(vol_blended, 4),
+            "vol_fast": round(vol_fast, 4),
+            "vol_slow": round(vol_slow, 4),
+        }
+    except Exception:
+        return {"vt_exposure": 1.0, "vol_blended": None}
+
+
+def compute_win_loss_stats(close_series, window: int = 252) -> dict:
+    """Estadísticas de ganancia/pérdida media del activo desde datos históricos."""
+    try:
+        if not hasattr(close_series, 'pct_change'):
+            close_series = pd.Series(close_series)
+        returns = close_series.pct_change().dropna().tail(window)
+        wins   = returns[returns > 0]
+        losses = returns[returns < 0]
+        return {
+            "avg_win":  float(wins.mean())         if len(wins)   > 0 else 0.005,
+            "avg_loss": float(abs(losses.mean()))  if len(losses) > 0 else 0.005,
+            "win_rate": float(len(wins) / len(returns)) if len(returns) > 0 else 0.5,
+        }
+    except Exception:
+        return {"avg_win": 0.005, "avg_loss": 0.005, "win_rate": 0.5}
+
+
+def kelly_exposure(prob_up: float, avg_win: float, avg_loss: float,
+                    kelly_fraction: float = 0.35) -> float:
+    """
+    Fractional Kelly Criterion para sizing de posición.
+    f* = p/L - q/W  (Kelly completo), f = kelly_fraction * f*
+    Ref: Kelly (1956), Ed Thorp. kelly_fraction=0.35 es conservador y práctico.
+    Devuelve 0 si no hay edge estadístico (Kelly negativo).
+    """
+    p = max(0.01, min(0.99, prob_up))
+    q = 1.0 - p
+    W = max(0.001, avg_win)
+    L = max(0.001, avg_loss)
+    f_full = (p / L) - (q / W)
+    return round(float(max(0.0, min(1.0, kelly_fraction * f_full))), 3)
+
+
+def update_regime_confirmation(
+    raw_regime: str,
+    state: dict,
+) -> Tuple[str, dict]:
+    """
+    Confirmación temporal de régimen para evitar whipsaw.
+    BEAR/HIGH_VOL se confirman en 1 día (riesgo = reacción rápida).
+    BULL requiere 3 días consecutivos (evita falsas rupturas).
+    NEUTRAL requiere 2 días.
+    Basado en: Statistical Jump Model (Shu, Yu & Mulvey, Princeton 2024).
+    """
+    CONFIRM_DAYS = {"BULL": 3, "NEUTRAL": 2, "HIGH_VOL": 1, "BEAR": 1}
+    if raw_regime == state.get("candidate"):
+        state["days"] = state.get("days", 0) + 1
+    else:
+        state["candidate"] = raw_regime
+        state["days"] = 1
+    required = CONFIRM_DAYS.get(raw_regime, 2)
+    if state["days"] >= required:
+        state["confirmed"] = raw_regime
+    return state.get("confirmed", "NEUTRAL"), state
+
+
+def compute_decayed_sentiment(
+    sentiment_samples: list,
+    reference_date,
+    half_life_days: float = 2.5,
+) -> dict:
+    """
+    Sentimiento ponderado por antigüedad con función de decaimiento exponencial.
+    Noticias de hoy pesan más que las de hace 3 días.
+    También calcula dispersión: alta dispersión = artículos contradictorios = incertidumbre.
+    Ref: Kargarzadeh (2024) — decay functions mejoran Sharpe de 3.64 a 5.10.
+    sentiment_samples: lista de dicts con 'sentiment', 'confidence', opcionalmente 'date'.
+    """
+    if not sentiment_samples:
+        return {"sentiment": 0.0, "dispersion": 0.0, "n_articles": 0, "decay_applied": False}
+    decay_rate = float(np.log(2) / half_life_days)
+    sentiment_map = {"bullish": 1.0, "neutral": 0.0, "bearish": -1.0}
+    weighted_s, weights = [], []
+    ref = pd.Timestamp(str(reference_date))
+    for item in sentiment_samples:
+        s_val = sentiment_map.get(item.get("sentiment", "neutral"), 0.0)
+        conf  = float(item.get("confidence", 1.0))
+        try:
+            item_date = pd.Timestamp(str(item.get("date", reference_date)))
+            days_ago = max(0, (ref - item_date).days)
+        except Exception:
+            days_ago = 0
+        weight = float(np.exp(-decay_rate * days_ago)) * conf
+        weighted_s.append(s_val)
+        weights.append(weight)
+    weights_arr = np.array(weights)
+    sents_arr   = np.array(weighted_s)
+    total_w = weights_arr.sum()
+    if total_w < 1e-9:
+        return {"sentiment": 0.0, "dispersion": 0.0, "n_articles": len(sentiment_samples), "decay_applied": True}
+    w_mean = float((sents_arr * weights_arr).sum() / total_w)
+    w_var  = float(((sents_arr - w_mean) ** 2 * weights_arr).sum() / total_w)
+    dispersion = float(np.sqrt(w_var))
+    return {
+        "sentiment":   round(w_mean, 4),
+        "dispersion":  round(dispersion, 4),
+        "n_articles":  len(sentiment_samples),
+        "decay_applied": True,
+    }
 
 
 def _calc_exposure_backtesting(signals_list: List[Dict]) -> Tuple[Dict, Dict]:
@@ -2208,6 +2602,7 @@ def _process_ticker_day(
     signal_history: List[str],       # copia del historial del ticker (no compartida)
     previous_exposure: float = 0.5,  # exposición suavizada del día anterior
     vix: Optional[float] = None,     # VIX del día (para detect_market_regime)
+    regime_confirmation_state: dict = None,  # Fase 2A: estado de confirmación temporal
 ) -> Optional[Dict]:
     """
     Procesa un ticker para un día concreto en un hilo independiente.
@@ -2384,8 +2779,24 @@ def _process_ticker_day(
             ),
         }
 
-        # ── Inferencia bayesiana ─────────────────────────────────────────────
-        raw_signal, prob_up = run_bayesian_inference(evidence, macro_adj)
+        # ── Inferencia (Camino B si disponible, fallback BN) ────────────────
+        # vol_features no está disponible aquí (se calcula post-inferencia);
+        # pasamos los datos de sentimiento que sí tenemos.
+        _disc_extra = {
+            "sentiment_dispersion": (
+                sentiment_detail.get("dispersion")
+                if isinstance(sentiment_detail, dict) else None
+            ),
+            "signal_streak": len(signal_history),
+        }
+        _macro_ctx = {
+            "macro_adjustment": macro_adj,
+            "macro_sentiment":  macro_sentiment,
+            "risk_regime":      risk_regime,
+        }
+        raw_signal, prob_up = run_bayesian_inference(
+            evidence, macro_adj, macro_context=_macro_ctx, extra=_disc_extra
+        )
 
         try:
             contribution_analysis = compute_contribution_analysis(
@@ -2421,34 +2832,100 @@ def _process_ticker_day(
         signal = confirmed_signal
         reasoning = build_reasoning_local(evidence, prob_up, signal)
 
-        # ── Exposure Management (Fase 1) ─────────────────────────────────────
-        # El régimen usa SMA200 (estructural) + VIX + drawdown_from_ath.
-        # Difiere de risk_regime (que sólo usa VIX y modula macro_adj)
-        # porque mira la tendencia de largo plazo del propio activo.
-        market_regime_exp = detect_market_regime(
+        # ── Exposure Management (Fase 2A) ────────────────────────────────────
+        # Obtener serie de precios del activo para cálculos de vol
+        _close_series_exp = None
+        try:
+            _df_exp = ohlcv_all.get(ticker)
+            if _df_exp is not None and "Close" in _df_exp.columns:
+                _close_series_exp = _df_exp["Close"].dropna()
+        except Exception:
+            pass
+
+        # VIX multi-nivel (reemplaza binario RISK_OFF/ON)
+        vix_regime_label_exp, macro_raw_adj_v2 = classify_vix_regime(vix)
+
+        # Régimen con confirmación temporal (anti-whipsaw)
+        raw_regime_exp = detect_market_regime(
             sma50=ind.get("sma_50"),
             sma200=ind.get("sma_200"),
             vix=vix,
             drawdown_from_ath=ind.get("drawdown_from_ath"),
         )
-        target_exposure   = prob_to_exposure(prob_up, market_regime_exp)
-        smoothed_exposure = smooth_exposure(target_exposure, previous_exposure)
-        exposure_delta    = round(smoothed_exposure - previous_exposure, 4)
+        conf_state = regime_confirmation_state or {"candidate": "NEUTRAL", "days": 0, "confirmed": "NEUTRAL"}
+        confirmed_regime_exp, new_conf_state = update_regime_confirmation(raw_regime_exp, conf_state)
+
+        # Volatility Targeting
+        vt_result = {}
+        if _close_series_exp is not None and len(_close_series_exp) >= 60:
+            vt_result = compute_volatility_target_exposure(_close_series_exp)
+        vt_exp = vt_result.get("vt_exposure", 1.0)
+
+        # Fractional Kelly
+        wl_stats = {"avg_win": 0.005, "avg_loss": 0.005}
+        if _close_series_exp is not None and len(_close_series_exp) >= 60:
+            wl_stats = compute_win_loss_stats(_close_series_exp)
+        k_exp = kelly_exposure(prob_up, wl_stats["avg_win"], wl_stats["avg_loss"])
+
+        # Exposición base desde prob_up (con régimen confirmado, no raw)
+        target_exposure = prob_to_exposure(prob_up, confirmed_regime_exp)
+
+        # Combinar: VT limita el techo, Kelly y prob_up modulan dentro de ese techo
+        # VT es el sizing "seguro" dado el riesgo actual del activo.
+        # Kelly y target_exposure determinan si usar más o menos de ese techo.
+        # exposure_combined = VT_exp * (0.5 + prob_up) clamped al régimen
+        exposure_combined = round(min(vt_exp, target_exposure * (0.5 + prob_up)), 3)
+        # Ajuste macro multi-nivel (amortiguado en uptrend para activos no-hedge)
+        if confirmed_regime_exp == "BULL" and macro_raw_adj_v2 < 0:
+            effective_macro_v2 = macro_raw_adj_v2 * 0.40
+        else:
+            effective_macro_v2 = macro_raw_adj_v2
+        exposure_combined = round(max(0.05, min(1.0, exposure_combined + effective_macro_v2)), 3)
+
+        # Sentimiento con decaimiento temporal
+        decayed_sent = compute_decayed_sentiment(sentiment_samples, date_str)
+        sentiment_dispersion = decayed_sent.get("dispersion", 0.0)
+
+        # Suavizado asimétrico (Fase 2A — reemplaza smooth_exposure simétrico)
+        smoothed_exposure = smooth_exposure_v2(
+            target=exposure_combined,
+            previous=previous_exposure,
+            alpha_up=0.15,
+            alpha_down=0.35,
+        )
+        exposure_delta = round(smoothed_exposure - previous_exposure, 4)
+
+        # Vol features para diagnóstico y frontend
+        vol_features = {}
+        if _close_series_exp is not None:
+            vol_features = compute_vol_regime_features(_close_series_exp, vix)
 
         logger.debug(
-            f"[EXPOSURE] {ticker} {date_str}: regime={market_regime_exp} "
-            f"prob_up={prob_up:.3f} target={target_exposure:.3f} "
-            f"smooth={smoothed_exposure:.3f} Δ={exposure_delta:+.3f}"
+            f"[EXPOSURE-V2] {ticker} {date_str}: raw={raw_regime_exp} confirmed={confirmed_regime_exp} "
+            f"vix_label={vix_regime_label_exp} vt={vt_exp:.3f} kelly={k_exp:.3f} "
+            f"target={exposure_combined:.3f} smooth={smoothed_exposure:.3f} Δ={exposure_delta:+.3f}"
         )
 
-        # Persistir en position_state (conexión del hilo)
+        # Persistir en position_state con campos enriquecidos
         try:
             pg_upsert_position_state(
                 thread_conn, date_str, ticker, prob_up,
-                market_regime_exp, target_exposure, smoothed_exposure, exposure_delta,
+                confirmed_regime_exp, exposure_combined, smoothed_exposure, exposure_delta,
+                confirmed_regime=confirmed_regime_exp,
+                raw_regime=raw_regime_exp,
+                regime_candidate=new_conf_state.get("candidate"),
+                regime_candidate_days=new_conf_state.get("days"),
+                vt_exposure=vt_exp,
+                kelly_exp=k_exp,
+                vol_5d=vol_features.get("vol_5d"),
+                vol_20d=vol_features.get("vol_20d"),
+                vol_ratio=vol_features.get("vol_ratio"),
+                vol_percentile=vol_features.get("vol_percentile_1y"),
+                sentiment_dispersion=sentiment_dispersion,
+                vix_regime_label=vix_regime_label_exp,
             )
         except Exception as exc:
-            logger.warning(f"[EXPOSURE] position_state upsert falló {ticker} {date_str}: {exc}")
+            logger.warning(f"[EXPOSURE-V2] position_state upsert falló {ticker} {date_str}: {exc}")
 
         # ── Trace + persistencia ─────────────────────────────────────────────
         trace_data = {
@@ -2490,11 +2967,19 @@ def _process_ticker_day(
             "contribution_analysis": contribution_analysis,
             "reasoning": reasoning,
             "exposure_management": {
-                "market_regime": market_regime_exp,
-                "target_exposure": target_exposure,
+                "market_regime": confirmed_regime_exp,
+                "raw_regime": raw_regime_exp,
+                "confirmed_regime": confirmed_regime_exp,
+                "vix_regime_label": vix_regime_label_exp,
+                "target_exposure": exposure_combined,
+                "vt_exposure": vt_exp,
+                "kelly_exposure": k_exp,
                 "smoothed_exposure": smoothed_exposure,
                 "exposure_delta": exposure_delta,
                 "previous_exposure": previous_exposure,
+                "sentiment_dispersion": sentiment_dispersion,
+                "vol_ratio": vol_features.get("vol_ratio"),
+                "vol_20d": vol_features.get("vol_20d"),
             },
         }
         upsert_bayesian_report(date_str, ticker, trace_data, MODEL_CONFIG["version"])
@@ -2541,9 +3026,17 @@ def _process_ticker_day(
             "risk_regime": risk_regime,
             "macro_adjustment": macro_adj,
             # Fase 1: exposición continua
-            "market_regime": market_regime_exp,
-            "target_exposure": target_exposure,
+            "market_regime": confirmed_regime_exp,
+            "target_exposure": exposure_combined,
             "smoothed_exposure": smoothed_exposure,
+            # Fase 2A: campos enriquecidos
+            "confirmed_regime": confirmed_regime_exp,
+            "raw_regime": raw_regime_exp,
+            "vix_regime_label": vix_regime_label_exp,
+            "vt_exposure": vt_exp,
+            "kelly_exposure": k_exp,
+            "vol_ratio": vol_features.get("vol_ratio"),
+            "sentiment_dispersion": sentiment_dispersion,
         }
 
         return {
@@ -2553,7 +3046,8 @@ def _process_ticker_day(
             "new_history": new_history,
             "kpis": kpis,
             "smoothed_exposure": smoothed_exposure,   # para actualizar exposure_history_per_ticker
-            "market_regime": market_regime_exp,
+            "market_regime": confirmed_regime_exp,
+            "new_conf_state": new_conf_state,         # Fase 2A: estado de confirmación temporal
         }
 
     except Exception as e:
@@ -2587,6 +3081,10 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
     logger.info(
         f"🚀 Iniciando Bootstrap Local TFM | Rango: {start_d} a {end_d} | Tickers: {active_tickers}"
     )
+    logger.info(
+        f"PostgreSQL: {DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']} "
+        f"(user={DB_CONFIG['user']})"
+    )
     if DEBUG_NEWS:
         logger.info(
             f"🔎 Debug noticias activo | headlines={DEBUG_NEWS_HEADLINES} | "
@@ -2597,6 +3095,15 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
     # Para poder calcular indicadores en start_d, la lambda descarga días extra.
     ohlcv_all = fetch_ohlcv_all(active_tickers, start_d, end_d)
     vix_series = fetch_vix_historical(start_d, end_d)
+    if vix_series.empty:
+        logger.warning(
+            "[VIX] serie vacía tras descarga — macro risk_regime sin VIX (comprueba red/yfinance)"
+        )
+    elif logger.isEnabledFor(logging.INFO):
+        logger.info(
+            f"[VIX] {len(vix_series)} días ({vix_series.index.min().date()} → "
+            f"{vix_series.index.max().date()})"
+        )
 
     # ── Prefetch paralelo de noticias (Finnhub + AlphaVantage + NewsAPI) ────────
     # Las tres fuentes son independientes por ticker y usan caché en disco.
@@ -2641,6 +3148,22 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
                     PRIMARY KEY (batch_date, ticker)
                 )
             """)
+            # Fase 2A: añadir columnas enriquecidas si no existen
+            c.execute("""
+                ALTER TABLE position_state
+                    ADD COLUMN IF NOT EXISTS confirmed_regime     VARCHAR(20),
+                    ADD COLUMN IF NOT EXISTS raw_regime           VARCHAR(20),
+                    ADD COLUMN IF NOT EXISTS regime_candidate     VARCHAR(20),
+                    ADD COLUMN IF NOT EXISTS regime_candidate_days INTEGER,
+                    ADD COLUMN IF NOT EXISTS vt_exposure          FLOAT,
+                    ADD COLUMN IF NOT EXISTS kelly_exposure       FLOAT,
+                    ADD COLUMN IF NOT EXISTS vol_5d               FLOAT,
+                    ADD COLUMN IF NOT EXISTS vol_20d              FLOAT,
+                    ADD COLUMN IF NOT EXISTS vol_ratio            FLOAT,
+                    ADD COLUMN IF NOT EXISTS vol_percentile_1y    FLOAT,
+                    ADD COLUMN IF NOT EXISTS sentiment_dispersion FLOAT,
+                    ADD COLUMN IF NOT EXISTS vix_regime_label     VARCHAR(25)
+            """)
         conn.commit()
         logger.info("✅ Tabla position_state lista")
     except Exception as exc:
@@ -2664,6 +3187,13 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
     # Acumulado de todos los signal_records (incluye smoothed_exposure) para
     # calcular el backtesting de exposición en cada iteración del reporte.
     all_signal_records: List[Dict] = []
+
+    # ── Fase 2A — Estado de confirmación temporal de régimen por ticker ───────
+    # Evita whipsaw: BULL requiere 3 días, NEUTRAL 2, BEAR/HIGH_VOL 1.
+    regime_confirmation_per_ticker: dict = {
+        t: {"candidate": "NEUTRAL", "days": 0, "confirmed": "NEUTRAL"}
+        for t in active_tickers
+    }
 
     # ── ThreadPoolExecutor para procesamiento paralelo por ticker ─────────────
     # Se crea UNA SOLA VEZ fuera del loop y se reutiliza en cada día.
@@ -2696,11 +3226,7 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
         macro_score = macro_sentiment_data["score"]
         n_macro_articles = macro_sentiment_data["n_articles"]
 
-        vix = (
-            _sf(vix_series[vix_series.index <= bd].iloc[-1])
-            if not vix_series[vix_series.index <= bd].empty
-            else None
-        )
+        vix = vix_on_or_before(vix_series, bd)
         risk_regime = (
             "RISK_OFF"
             if vix and vix > 25
@@ -2779,6 +3305,7 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
                 list(signal_history_per_ticker[ticker]),    # copia — evita race condition
                 exposure_history_per_ticker[ticker],        # Fase 1: exposición previa
                 vix,                                        # Fase 1: VIX para detect_regime
+                regime_confirmation_per_ticker.get(ticker), # Fase 2A: estado confirmación
             ): ticker
             for ticker in active_tickers
         }
@@ -2794,6 +3321,8 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
             all_signal_records.append(result["signal_record"])          # Fase 1
             signal_history_per_ticker[t] = result["new_history"]
             exposure_history_per_ticker[t] = result["smoothed_exposure"]  # Fase 1
+            if result.get("new_conf_state"):                              # Fase 2A
+                regime_confirmation_per_ticker[t] = result["new_conf_state"]
             global_kpis["total_headlines"] += result["kpis"]["total_headlines"]
             global_kpis["processed_headlines"] += result["kpis"]["processed_headlines"]
 
@@ -2805,7 +3334,11 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
         if conn:
             # 1. Obtenemos señales del último año desde la BBDD (Esto da memoria al sistema)
             hist_signals_df = get_trading_data(
-                conn, date_str, days_back=DAYS_BACK, tickers=active_tickers
+                conn,
+                date_str,
+                days_back=DAYS_BACK,
+                tickers=active_tickers,
+                pipeline_start=start_d,
             )
             metrics, diagnostics = _calc_backtesting(hist_signals_df)
             # Fase 1: backtesting de exposición continua usando datos in-memory
@@ -2819,15 +3352,22 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
                 date_str,
                 hist_signals_df.to_dict("records") if not hist_signals_df.empty else [],
                 outcome_rows=get_signal_outcomes(
-                    conn, date_str, days_back=DAYS_BACK, tickers=active_tickers
+                    conn,
+                    date_str,
+                    days_back=DAYS_BACK,
+                    tickers=active_tickers,
+                    pipeline_start=start_d,
                 ),
                 model_config=MODEL_CONFIG,
             )
             upsert_quant_audit_report(date_str, quant_audit_report)
 
+            period_days = (pd.to_datetime(date_str).date() - start_d).days + 1
             report_data = {
                 "report_date": date_str,
-                "data_period_days": DAYS_BACK,  # Usamos DAYS_BACK, como en AWS
+                "pipeline_start": start_d.isoformat(),
+                "pipeline_end": end_d.isoformat(),
+                "data_period_days": period_days,
                 "generated_at": datetime.now().isoformat(),
                 "pipeline_health": health,
                 "signal_diagnostics": diagnostics,
@@ -2875,7 +3415,7 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
                 "backtesting_config": {
                     "initial_capital": INITIAL_CAP,
                     "risk_free_rate": RISK_FREE_RATE,
-                    "period_days": DAYS_BACK,
+                    "period_days": period_days,
                     "strategy_type": "Long/Cash",
                     "sharpe_annualized": True,
                     "limitation": "El backtesting asume ejecucion al cierre. Estrategia Long/Cash: BUY entra al mercado, SELL cierra posicion, HOLD mantiene posicion abierta.",

@@ -3,6 +3,7 @@ TFM Dashboard API - FastAPI
 ===========================
 Endpoints:
   GET /health
+  GET /pipelines                    - Lista ejecuciones bootstrap (rangos independientes)
   GET /reports                      - Lista fechas (reports + trazas + raw_news reciente)
   GET /reports/{date}               - Report completo (MongoDB)
   GET /trace/{date}                 - Traza bayesiana completa (MongoDB bayesian_traces)
@@ -67,6 +68,124 @@ PIPELINE_MANUAL_DISABLED_MSG = (
     "Servicio deshabilitado temporalmente. "
     "La ejecucion manual del pipeline no esta disponible en este momento."
 )
+PIPELINE_GAP_DAYS = int(os.getenv("PIPELINE_GAP_DAYS", "4"))
+DEFAULT_INITIAL_CAPITAL = 10_000.0
+
+
+def _norm_report_date(v) -> str | None:
+    if not v:
+        return None
+    s = str(v)[:10]
+    return s if len(s) == 10 else None
+
+
+def _date_in_range(d: str, start: Optional[str], end: Optional[str]) -> bool:
+    if start and d < start:
+        return False
+    if end and d > end:
+        return False
+    return True
+
+
+def _segment_dates_into_pipelines(
+    sorted_dates: list[str], gap_days: int = PIPELINE_GAP_DAYS
+) -> list[dict]:
+    """Agrupa fechas contiguas separando huecos mayores a gap_days (fines de semana ~3d)."""
+    if not sorted_dates:
+        return []
+    segments: list[dict] = []
+    seg_start = sorted_dates[0]
+    prev = sorted_dates[0]
+    for d in sorted_dates[1:]:
+        gap = (datetime.strptime(d, "%Y-%m-%d") - datetime.strptime(prev, "%Y-%m-%d")).days
+        if gap > gap_days:
+            segments.append({"start_date": seg_start, "end_date": prev})
+            seg_start = d
+        prev = d
+    segments.append({"start_date": seg_start, "end_date": prev})
+    return segments
+
+
+def _list_pipelines_from_mongo(db) -> list[dict]:
+    """
+    Pipelines = corridas bootstrap independientes (10k EUR cada una).
+    Prioridad: pipeline_start/pipeline_end en reports; fallback: segmentar fechas.
+    """
+    by_key: dict[tuple[str, str], dict] = {}
+    orphan_dates: list[str] = []
+
+    for doc in db["reports"].find(
+        {},
+        {
+            "report_date": 1,
+            "pipeline_start": 1,
+            "pipeline_end": 1,
+            "backtesting_config": 1,
+        },
+    ):
+        rd = _norm_report_date(doc.get("report_date"))
+        if not rd:
+            continue
+        ps = _norm_report_date(doc.get("pipeline_start"))
+        pe = _norm_report_date(doc.get("pipeline_end"))
+        cap = (doc.get("backtesting_config") or {}).get("initial_capital")
+        if ps and pe:
+            key = (ps, pe)
+            row = by_key.setdefault(
+                key,
+                {
+                    "start_date": ps,
+                    "end_date": pe,
+                    "report_count": 0,
+                    "initial_capital": cap or DEFAULT_INITIAL_CAPITAL,
+                    "first_report": rd,
+                    "last_report": rd,
+                },
+            )
+            row["report_count"] += 1
+            if rd < row["first_report"]:
+                row["first_report"] = rd
+            if rd > row["last_report"]:
+                row["last_report"] = rd
+            if cap:
+                row["initial_capital"] = cap
+        else:
+            orphan_dates.append(rd)
+
+    pipelines: list[dict] = []
+    for (ps, pe), row in by_key.items():
+        pipelines.append(
+            {
+                "id": f"{ps}_{pe}",
+                "label": f"{ps} → {pe}",
+                "start_date": ps,
+                "end_date": pe,
+                "report_count": row["report_count"],
+                "initial_capital": row.get("initial_capital", DEFAULT_INITIAL_CAPITAL),
+                "first_report_date": row["first_report"],
+                "last_report_date": row["last_report"],
+            }
+        )
+
+    if not pipelines and orphan_dates:
+        for seg in _segment_dates_into_pipelines(sorted(set(orphan_dates))):
+            ps, pe = seg["start_date"], seg["end_date"]
+            count = sum(1 for d in orphan_dates if ps <= d <= pe)
+            pipelines.append(
+                {
+                    "id": f"{ps}_{pe}",
+                    "label": f"{ps} → {pe}",
+                    "start_date": ps,
+                    "end_date": pe,
+                    "report_count": count,
+                    "initial_capital": DEFAULT_INITIAL_CAPITAL,
+                    "first_report_date": ps,
+                    "last_report_date": pe,
+                }
+            )
+
+    pipelines.sort(key=lambda p: p["start_date"], reverse=True)
+    return pipelines
 
 
 def _reject_manual_pipeline() -> None:
@@ -423,28 +542,51 @@ def health():
     }
 
 
+# ─── Pipelines (ejecuciones bootstrap) ───────────────────────────────────────
+
+
+@app.get("/pipelines", tags=["Pipelines"])
+def list_pipelines(x_api_key: str = Header(default="")):
+    """
+    Lista pipelines independientes (cada bootstrap con capital inicial propio).
+    Agrupa por pipeline_start/pipeline_end en reports; si faltan metadatos, segmenta por huecos de fechas.
+    """
+    check_api_key(x_api_key)
+    try:
+        db = _require_mongo()
+        pipelines = _list_pipelines_from_mongo(db)
+        return {"pipelines": pipelines, "total": len(pipelines)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("list_pipelines error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ─── Reports ──────────────────────────────────────────────────────────────────
 
 
 @app.get("/reports", tags=["Reports"])
-def list_reports(x_api_key: str = Header(default="")):
+def list_reports(
+    start: Optional[str] = Query(default=None, description="Filtro YYYY-MM-DD (inicio pipeline)"),
+    end: Optional[str] = Query(default=None, description="Filtro YYYY-MM-DD (fin pipeline)"),
+    x_api_key: str = Header(default=""),
+):
     """
     Fechas para el selector del dashboard: unión de
     - `reports.report_date` (pipeline llegó a lambda_report), y
     - `bayesian_traces.batch_date` (hay traza aunque el reporte falte o falle).
 
-    Las ejecuciones de Step Functions por sí solas no generan entradas aquí:
-    hace falta al menos datos escritos en Mongo.
+    Query opcional `start`/`end` acota al pipeline activo en el frontend.
     """
     check_api_key(x_api_key)
+    if start and len(start) != 10:
+        raise HTTPException(status_code=400, detail="start: formato YYYY-MM-DD")
+    if end and len(end) != 10:
+        raise HTTPException(status_code=400, detail="end: formato YYYY-MM-DD")
     try:
         db = _require_mongo()
-
-        def norm_date(v) -> str | None:
-            if not v:
-                return None
-            s = str(v)[:10]
-            return s if len(s) == 10 else None
+        norm_date = _norm_report_date
 
         trace_dates = {
             d
@@ -461,7 +603,7 @@ def list_reports(x_api_key: str = Header(default="")):
             .limit(500)
         ):
             d = norm_date(doc.get("report_date"))
-            if not d:
+            if not d or not _date_in_range(d, start, end):
                 continue
             lm = doc.get("updated_at") or doc.get("created_at")
             ts = lm.isoformat() if hasattr(lm, "isoformat") and lm else None
@@ -476,6 +618,8 @@ def list_reports(x_api_key: str = Header(default="")):
                 by_date[d] = row
 
         for d in trace_dates:
+            if not _date_in_range(d, start, end):
+                continue
             if d in by_date:
                 continue
             doc = db["bayesian_traces"].find_one(
@@ -494,7 +638,7 @@ def list_reports(x_api_key: str = Header(default="")):
             {
                 d
                 for x in db["raw_news"].distinct("batch_date")
-                if (d := norm_date(x))
+                if (d := norm_date(x)) and _date_in_range(d, start, end)
             },
             reverse=True,
         )[:120]
@@ -509,7 +653,7 @@ def list_reports(x_api_key: str = Header(default="")):
             }
 
         dates = sorted(by_date.values(), key=lambda x: x["date"], reverse=True)[:500]
-        return {"dates": dates, "total": len(dates)}
+        return {"dates": dates, "total": len(dates), "start": start, "end": end}
     except HTTPException:
         raise
     except Exception as e:
@@ -2234,6 +2378,8 @@ def get_macro_history(
 def get_exposure_history(
     ticker: Optional[str] = Query(default=None, description="Ticker concreto o todos si se omite"),
     limit:  int           = Query(default=90,   ge=1, le=500, description="Nº de días a devolver"),
+    start: Optional[str] = Query(default=None, description="Filtro inicio pipeline YYYY-MM-DD"),
+    end: Optional[str] = Query(default=None, description="Filtro fin pipeline YYYY-MM-DD"),
     x_api_key: str = Header(default=""),
 ):
     """
@@ -2250,23 +2396,35 @@ def get_exposure_history(
     Reportes anteriores a la Fase 1 devolverán null en los campos de exposición.
     """
     check_api_key(x_api_key)
+    if start and len(start) != 10:
+        raise HTTPException(status_code=400, detail="start: formato YYYY-MM-DD")
+    if end and len(end) != 10:
+        raise HTTPException(status_code=400, detail="end: formato YYYY-MM-DD")
     db = _require_mongo()
 
     ticker_upper = ticker.upper() if ticker else None
 
-    # Traemos los N últimos reportes con los campos de exposición
+    mongo_query: dict = {}
+    if start or end:
+        rd_filter: dict = {}
+        if start:
+            rd_filter["$gte"] = start
+        if end:
+            rd_filter["$lte"] = end
+        mongo_query["report_date"] = rd_filter
+
     projection = {
         "report_date": 1,
         "exposure_vs_binary_comparison": 1,
         "exposure_backtesting_metrics": 1,
         "exposure_backtesting_diagnostics": 1,
     }
-    docs = list(
-        db["reports"]
-        .find({}, projection)
-        .sort("report_date", -1)
-        .limit(limit)
-    )
+    cursor = db["reports"].find(mongo_query, projection).sort("report_date", -1)
+    if not (start or end):
+        cursor = cursor.limit(limit)
+    docs = list(cursor)
+    if start or end:
+        docs = docs[:limit]
     docs.sort(key=lambda d: str(d.get("report_date", "")))  # orden cronológico
 
     timeline = []
@@ -2373,4 +2531,88 @@ def get_exposure_summary(date: str, x_api_key: str = Header(default="")):
         "date":    date,
         "tickers": sorted(summary.keys()),
         "summary": summary,
+    }
+
+
+# =============================================================================
+# EXPOSURE ENGINE — Fase 2A (datos enriquecidos por ticker/día)
+# Lee de bayesian_reports que contiene trace_data.exposure_management con
+# todos los nuevos campos: VT, Kelly, vol multi-escala, régimen confirmado,
+# dispersión de sentimiento.
+# =============================================================================
+
+@app.get("/exposure/positions", tags=["Exposure"])
+def get_exposure_positions(
+    ticker: str      = Query(...,        description="Ticker requerido"),
+    limit:  int      = Query(default=90, ge=1, le=500, description="Días a devolver"),
+    x_api_key: str   = Header(default=""),
+):
+    """
+    Exposición diaria enriquecida (Fase 2A) para un ticker concreto.
+
+    Lee de bayesian_reports y extrae trace_data.exposure_management con:
+      - confirmed_regime / raw_regime: régimen con confirmación temporal
+      - vix_regime_label: clasificación VIX en 6 niveles (RISK_ON_STRONG → PANIC)
+      - vt_exposure: Volatility Targeting exposure (target_vol / realized_vol)
+      - kelly_exposure: Fractional Kelly sizing desde datos históricos
+      - smoothed_exposure: exposición final tras EWM asimétrico
+      - vol_ratio: vol_5d / vol_20d — aceleración de volatilidad
+      - vol_20d: volatilidad realizada media del activo
+      - sentiment_dispersion: varianza ponderada del sentimiento (alta = artículos contradictorios)
+
+    Estos datos alimentan el panel de descomposición del frontend (Fase 2A).
+    Si el campo no existe en un registro (datos pre-Fase2A), se devuelve null.
+    """
+    check_api_key(x_api_key)
+    db = _require_mongo()
+
+    t = ticker.upper()
+
+    docs = list(
+        db["bayesian_reports"]
+        .find(
+            {"ticker": t},
+            {
+                "date": 1, "ticker": 1,
+                "data.exposure_management": 1,
+                "data.raw_values.close_price": 1,
+            },
+        )
+        .sort("date", -1)
+        .limit(limit)
+    )
+    docs.sort(key=lambda d: str(d.get("date", "")))
+
+    timeline = []
+    for doc in docs:
+        date_str = str(doc.get("date", ""))[:10]
+        em = (doc.get("data") or {}).get("exposure_management") or {}
+
+        timeline.append({
+            "date":                 date_str,
+            "ticker":               t,
+            "close_price":          (doc.get("data") or {}).get("raw_values", {}).get("close_price"),
+            # Régimen
+            "confirmed_regime":     em.get("confirmed_regime"),
+            "raw_regime":           em.get("raw_regime"),
+            "vix_regime_label":     em.get("vix_regime_label"),
+            # Exposición — componentes
+            "vt_exposure":          em.get("vt_exposure"),
+            "kelly_exposure":       em.get("kelly_exposure"),
+            "target_exposure":      em.get("target_exposure"),
+            "smoothed_exposure":    em.get("smoothed_exposure"),
+            "exposure_delta":       em.get("exposure_delta"),
+            "previous_exposure":    em.get("previous_exposure"),
+            # Volatilidad del activo
+            "vol_ratio":            em.get("vol_ratio"),
+            "vol_20d":              em.get("vol_20d"),
+            # Sentimiento
+            "sentiment_dispersion": em.get("sentiment_dispersion"),
+        })
+
+    return {
+        "ticker":         t,
+        "total":          len(timeline),
+        "days_requested": limit,
+        "timeline":       timeline,
     }

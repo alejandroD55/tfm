@@ -1,0 +1,15 @@
+{
+  "prob_up_5d_mean": 0.161609,
+  "macro_adjustment": 0.141046,
+  "prob_up": 0.117802,
+  "signal_streak": 0.114346,
+  "prob_up_delta": 0.0966,
+  "risk_regime": 0.027279,
+  "sentiment_state": 0.015892,
+  "rsi_state": 0.001687,
+  "trend_state": 0.0,
+  "volatility_state": 0.0,
+  "vol_20d": 0.0,
+  "vol_ratio": 0.0,
+  "sentiment_dispersion": 0.0
+}

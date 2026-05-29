@@ -9,10 +9,11 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatChipsModule } from '@angular/material/chips';
 import { MatExpansionModule } from '@angular/material/expansion';
 import { NgxChartsModule } from '@swimlane/ngx-charts';
-import { catchError, debounceTime, interval, of, Subject, switchMap, takeWhile } from 'rxjs';
+import { catchError, debounceTime, interval, of, Subject, switchMap, takeUntil, takeWhile } from 'rxjs';
 import { ApiService, InstrumentResult, InstrumentProfile, PipelineStageStatus } from '../../core/services/api.service';
 import { TraceService } from '../../core/services/trace.service';
 import { ReportService } from '../../core/services/report.service';
+import { PipelineContextService } from '../../core/services/pipeline-context.service';
 import { ReportDateEntry } from '../../core/models/report.model';
 import { TickerTrace } from '../../core/models/trace.model';
 import { PORTFOLIO_MODULE_DISABLED_MSG } from '../../core/constants/portfolio.constants';
@@ -55,7 +56,9 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
   private api       = inject(ApiService);
   private traceSvc  = inject(TraceService);
   private reportSvc = inject(ReportService);
+  private pipelineCtx = inject(PipelineContextService);
   private route     = inject(ActivatedRoute);
+  private destroy$ = new Subject<void>();
 
   // ─── Instrument search state ──────────────────────────────────────
   instrumentQuery      = '';
@@ -109,15 +112,11 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
     const qpTicker = this.route.snapshot.queryParamMap.get('ticker')?.toUpperCase() || '';
     const qpDate   = this.route.snapshot.queryParamMap.get('date') || '';
 
-    this.reportSvc.listAvailableDates().subscribe((dates) => {
-      this.availableDates = dates;
-      if (qpDate) this.selectedDate = qpDate;
-      else if (dates.length) this.selectedDate = dates[0].date;
-      if (qpTicker) {
-        this.tickerInput = qpTicker;
-        this.loadTicker();
-      }
+    this.pipelineCtx.pipelineChanged$.pipe(takeUntil(this.destroy$)).subscribe(() => {
+      this.reportSvc.clearCache();
+      this.reloadDates(this.tickerInput || qpTicker, '');
     });
+    this.reloadDates(qpTicker, qpDate);
 
     this.api.getTickers().subscribe({
       next: (resp) => {
@@ -144,8 +143,33 @@ export class TickerExplorerComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy() {
+    this.destroy$.next();
+    this.destroy$.complete();
     this.searchSubject.complete();
     this.stopPipelineTimer();
+  }
+
+  private clampDateToPipeline(date: string): string {
+    const p = this.pipelineCtx.selectedPipeline();
+    if (!p || !date) return date;
+    if (date < p.startDate) return p.startDate;
+    if (date > p.endDate) return p.endDate;
+    return date;
+  }
+
+  private reloadDates(qpTicker: string, qpDate: string) {
+    this.reportSvc.listAvailableDates().subscribe((dates) => {
+      this.availableDates = dates;
+      if (qpDate) {
+        this.selectedDate = this.clampDateToPipeline(qpDate);
+      } else if (dates.length) {
+        this.selectedDate = this.pipelineCtx.pipelineEndDate() ?? dates[0].date;
+      }
+      if (qpTicker) {
+        this.tickerInput = qpTicker;
+        this.loadTicker();
+      }
+    });
   }
 
   // ─── Instrument search ────────────────────────────────────────────
