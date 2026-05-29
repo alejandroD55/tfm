@@ -681,6 +681,8 @@ def upsert_report(report_data: dict):
             "exposure_vs_binary_comparison": report_data.get("exposure_vs_binary_comparison", {}),
             "trace_artifact":          report_data.get("trace_artifact"),
             "quant_audit_artifact":    report_data.get("quant_audit_artifact"),
+            "inference_engine":        report_data.get("inference_engine"),
+            "disc_model_meta":         report_data.get("disc_model_meta"),
             "updated_at":              now,
         }
         db["reports"].update_one(

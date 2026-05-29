@@ -3363,12 +3363,31 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
             upsert_quant_audit_report(date_str, quant_audit_report)
 
             period_days = (pd.to_datetime(date_str).date() - start_d).days + 1
+            _engine_name = (
+                "discriminative_lgbm"
+                if (_disc_engine is not None and getattr(_disc_engine, "available", False))
+                else "bayesian_network"
+            )
+            _disc_meta = (
+                _disc_engine.meta
+                if (_disc_engine is not None and getattr(_disc_engine, "available", False))
+                else None
+            )
             report_data = {
                 "report_date": date_str,
                 "pipeline_start": start_d.isoformat(),
                 "pipeline_end": end_d.isoformat(),
                 "data_period_days": period_days,
                 "generated_at": datetime.now().isoformat(),
+                "inference_engine": _engine_name,
+                "disc_model_meta": {
+                    "auc_val":        _disc_meta.get("auc_val")        if _disc_meta else None,
+                    "trained_at":     _disc_meta.get("trained_at")     if _disc_meta else None,
+                    "n_obs":          _disc_meta.get("n_obs")          if _disc_meta else None,
+                    "target":         _disc_meta.get("target_definition", "outcome_d3_up") if _disc_meta else None,
+                    "disc_buy_th":    0.55,
+                    "disc_sell_th":   0.50,
+                } if _disc_meta else None,
                 "pipeline_health": health,
                 "signal_diagnostics": diagnostics,
                 "benchmark_comparison": {
