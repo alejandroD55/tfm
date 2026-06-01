@@ -21,7 +21,8 @@ RUN pip install --no-cache-dir \
     joblib \
     pyparsing \
     tqdm \
-    "pymongo[srv]==4.6.3"
+    "pymongo[srv]==4.6.3" \
+    lightgbm==4.3.0
 
 # ── pgmpy SIN sus dependencias pesadas (sklearn, torch…) ─────────────────────
 RUN pip install --no-cache-dir --no-deps pgmpy==0.1.19
@@ -33,7 +34,10 @@ RUN find /var/lang/lib/python3.11/site-packages \
     -exec rm -rf {} + 2>/dev/null || true
 
 COPY lambda_bayesian/lambda_bayesian.py ${LAMBDA_TASK_ROOT}/
+COPY lambda_bayesian/discriminative_engine.py ${LAMBDA_TASK_ROOT}/
+COPY models/ ${LAMBDA_TASK_ROOT}/models/
 COPY shared/mongo_utils.py ${LAMBDA_TASK_ROOT}/
+COPY shared/exposure_constraints.py ${LAMBDA_TASK_ROOT}/
 RUN chmod 644 ${LAMBDA_TASK_ROOT}/lambda_bayesian.py ${LAMBDA_TASK_ROOT}/mongo_utils.py
 
 CMD ["lambda_bayesian.handler"]

@@ -31,6 +31,14 @@
           <option value="HOLD">MANTENER</option>
         </select>
       </div>
+
+      <div class="filter-group">
+        <label>Modelo de inferencia</label>
+        <select class="aurora-select" [(ngModel)]="selectedModelId">
+          <option value="bayesian_v1.2">Bayesiano v1.2</option>
+          <option value="gbm_v1">GBM v1 (LightGBM)</option>
+        </select>
+      </div>
     </div>
   </header>
 
@@ -672,8 +680,33 @@
                         <span class="dec-cap">Decisión Final</span>
                         <span class="dec-val">{{ row.signal === 'BUY' ? 'COMPRAR' : row.signal === 'SELL' ? 'CASH' : 'MANTENER' }}</span>
                         <span class="dec-sub">Confianza Alcista: {{ (row.prob_up*100)|number:'1.1-1' }}%</span>
+                        @if (getRecommendedExposure(row.ticker) !== null) {
+                          <span class="dec-sub">Exposición recomendada: {{ getRecommendedExposure(row.ticker) }}%</span>
+                        }
                       </div>
                     </div>
+
+                    @if (isFeatureLoading(row.ticker)) {
+                      <p class="feature-loading">Cargando capa de features…</p>
+                    } @else if (getFeatureSnapshot(row.ticker); as feat) {
+                      <div class="feature-panels">
+                        <div class="feat-mini-card">
+                          <h5><mat-icon>bolt</mat-icon> Catalizadores (7d)</h5>
+                          <p>{{ feat.catalysts?.catalyst_count_7d ?? 0 }} eventos · neto {{ feat.catalysts?.catalyst_sentiment_net ?? 0 }}</p>
+                          @for (ev of feat.catalysts?.events_sample?.slice(0, 3) ?? []; track ev.headline) {
+                            <small class="catalyst-line">{{ ev.event_type }} · {{ ev.headline }}</small>
+                          }
+                        </div>
+                        <div class="feat-mini-card">
+                          <h5><mat-icon>account_balance</mat-icon> Fundamentales</h5>
+                          <p>
+                            Crecimiento ingresos: {{ feat.fundamental?.revenue_growth_yoy != null ? (feat.fundamental!.revenue_growth_yoy! * 100 | number:'1.0-1') + '%' : 'N/D' }}
+                            · Estrés: {{ feat.fundamental?.fundamental_stress ?? 'N/D' }}
+                            <span class="feat-src">({{ feat.fundamental?.source ?? '—' }})</span>
+                          </p>
+                        </div>
+                      </div>
+                    }
 
                     <div class="explainer">
                       <mat-icon>info</mat-icon>

@@ -64,6 +64,9 @@ try:
     from mongo_utils import upsert_bayesian_report as _mongo_upsert_bayesian_report
     from mongo_utils import read_macro_context      as _mongo_read_macro_context
     from mongo_utils import distinct_raw_news_tickers as _mongo_distinct_raw_news_tickers
+    from mongo_utils import read_feature_snapshot as _mongo_read_feature_snapshot
+    from mongo_utils import upsert_feature_snapshot as _mongo_upsert_feature_snapshot
+    from mongo_utils import upsert_model_trace as _mongo_upsert_model_trace
 
     logger.info("mongo_utils (bayesian) cargado")
 except ImportError:
@@ -71,7 +74,27 @@ except ImportError:
     _mongo_upsert_bayesian_report = None
     _mongo_read_macro_context     = None
     _mongo_distinct_raw_news_tickers = None
+    _mongo_read_feature_snapshot = None
+    _mongo_upsert_feature_snapshot = None
+    _mongo_upsert_model_trace = None
     logger.warning("mongo_utils no disponible en lambda_bayesian")
+
+try:
+    from exposure_constraints import (
+        apply_exposure_constraints,
+        prob_to_exposure,
+        detect_market_regime_simple,
+    )
+except ImportError:
+    apply_exposure_constraints = None
+    prob_to_exposure = None
+    detect_market_regime_simple = None
+
+MODEL_ID = (
+    "gbm_v1"
+    if _disc_engine is not None and getattr(_disc_engine, "available", False)
+    else "bayesian_v1.2"
+)
 
 try:
     from quant_observability import compute_contribution_analysis
@@ -720,6 +743,24 @@ def upsert_signal_explanation(connection, batch_date, ticker, states):
     cursor.close()
 
 
+def _load_shap_importance_global():
+    """Carga SHAP global desde models/shap_importance.json si existe."""
+    search_dirs = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "models"),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models"),
+        "/tmp/models",
+    ]
+    for base in search_dirs:
+        path = os.path.join(base, "shap_importance.json")
+        if os.path.isfile(path):
+            try:
+                with open(path) as f:
+                    return json.load(f)
+            except Exception as exc:
+                logger.warning(f"shap_importance.json no legible en {path}: {exc}")
+    return {}
+
+
 def upsert_pipeline_kpi(connection, batch_date, run_id, trigger_type, stage, metrics):
     cursor = connection.cursor()
     cursor.execute(
@@ -818,8 +859,18 @@ def handler(event, context):
                     "Trend": discretize_trend(float(sma_20), float(sma_50)),
                     "Volatility": vol_state,
                 }
+                feature_snapshot = (
+                    _mongo_read_feature_snapshot(latest_date, ticker)
+                    if _mongo_read_feature_snapshot
+                    else None
+                )
+                disc_extra = {}
+                if feature_snapshot:
+                    sent = feature_snapshot.get("sentiment") or {}
+                    if sent.get("dispersion") is not None:
+                        disc_extra["sentiment_dispersion"] = float(sent["dispersion"])
                 raw_signal, prob_up, prob_down, macro_info = infer_signal(
-                    model, evidence_states, macro_context
+                    model, evidence_states, macro_context, disc_extra=disc_extra or None
                 )
                 contribution_analysis = build_contribution_analysis(
                     model, evidence_states, macro_context
@@ -840,6 +891,42 @@ def handler(event, context):
                 signal = confirmed_signal  # downstream usa siempre la señal confirmada
 
                 reasoning = build_reasoning(evidence_states, prob_up, signal)
+
+                feature_ref = f"feature_snapshots/{latest_date}/{ticker.upper()}"
+                exposure_constraints = {}
+                if apply_exposure_constraints and prob_to_exposure:
+                    macro_detail = (macro_context or {}).get("detail") or {}
+                    vix = macro_detail.get("vix")
+                    risk_reg = (macro_context or {}).get("risk_regime")
+                    regime = detect_market_regime_simple(vix=vix, risk_regime=risk_reg)
+                    target_exp = prob_to_exposure(prob_up, regime)
+                    fund_stress = None
+                    catalyst_count = 0
+                    catalyst_net = 0.0
+                    if feature_snapshot:
+                        fund_stress = (feature_snapshot.get("fundamental") or {}).get(
+                            "fundamental_stress"
+                        )
+                        cats = feature_snapshot.get("catalysts") or {}
+                        catalyst_count = int(cats.get("catalyst_count_7d") or 0)
+                        catalyst_net = float(cats.get("catalyst_sentiment_net") or 0.0)
+                        feature_ref = feature_snapshot.get(
+                            "feature_snapshot_ref", feature_ref
+                        )
+                    exposure_constraints = apply_exposure_constraints(
+                        target_exp,
+                        market_regime=regime,
+                        risk_regime=risk_reg,
+                        fundamental_stress=fund_stress,
+                        catalyst_count_7d=catalyst_count,
+                        catalyst_sentiment_net=catalyst_net,
+                    )
+                    if _mongo_upsert_feature_snapshot and feature_snapshot:
+                        feature_snapshot["exposure_constraints"] = exposure_constraints
+                        feature_snapshot["inference_prob_up"] = prob_up
+                        _mongo_upsert_feature_snapshot(
+                            latest_date, ticker, feature_snapshot
+                        )
 
                 upsert_signal_explanation(
                     connection, latest_date, ticker, evidence_states
@@ -896,6 +983,9 @@ def handler(event, context):
                     },
                     "contribution_analysis": contribution_analysis,
                     "reasoning": reasoning,
+                    "model_id": MODEL_ID,
+                    "feature_snapshot_ref": feature_ref,
+                    "exposure_constraints": exposure_constraints,
                 }
                 if _mongo_upsert_bayesian_report:
                     _mongo_upsert_bayesian_report(
@@ -935,6 +1025,22 @@ def handler(event, context):
                 f"attempted={len(tickers)} skipped={len(skipped)}"
             )
         trace_key = save_bayesian_trace(latest_date, tickers_trace, execution_meta)
+
+        if _mongo_upsert_model_trace and MODEL_ID == "gbm_v1":
+            shap_global = _load_shap_importance_global()
+            model_trace = {
+                "model_id": MODEL_ID,
+                "inference_engine": "discriminative",
+                "tickers": list(tickers_trace.keys()),
+                "signals_generated": signals_processed,
+                "disc_model_meta": (
+                    _disc_engine.meta if _disc_engine is not None else {}
+                ),
+                "shap_importance_global": shap_global,
+                "bayesian_trace_ref": trace_key,
+            }
+            _mongo_upsert_model_trace(latest_date, MODEL_ID, model_trace)
+
         upsert_pipeline_kpi(
             connection,
             latest_date,

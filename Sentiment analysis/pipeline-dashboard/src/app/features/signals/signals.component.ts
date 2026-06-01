@@ -17,7 +17,7 @@ import { PipelineContextService } from '../../core/services/pipeline-context.ser
 import { TraceService } from '../../core/services/trace.service';
 import {
   ApiService, NewsDetailResponse, NewsArticleDetail, MacroContext, MacroArticle,
-  OhlcvPoint, TickerPerformanceResponse,
+  OhlcvPoint, TickerPerformanceResponse, FeatureSnapshot, InferenceModelId,
 } from '../../core/services/api.service';
 import {
   TickerView, ReportDateEntry, DailyReport,
@@ -77,6 +77,9 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
 
   tickerTraceCache = new Map<string, TickerTrace | null>();
   tickerTraceLoading = new Set<string>();
+  featureCache = new Map<string, FeatureSnapshot | null>();
+  featureLoading = new Set<string>();
+  selectedModelId: InferenceModelId = 'gbm_v1';
   hasTraceForDate = false;
 
   // ── OHLCV Week chart ──────────────────────────────────────────────────────
@@ -402,8 +405,34 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     } else {
       this.expandedRows.add(ticker);
       this.loadTickerTrace(ticker);
+      this.loadFeatureSnapshot(ticker);
       this.loadOhlcvWeek(ticker);
     }
+  }
+
+  loadFeatureSnapshot(ticker: string) {
+    if (this.featureCache.has(ticker) || this.featureLoading.has(ticker)) return;
+    this.featureLoading.add(ticker);
+    this.apiSvc.getFeatures(this.selectedDate, ticker).pipe(
+      catchError(() => of(null))
+    ).subscribe(doc => {
+      this.featureLoading.delete(ticker);
+      this.featureCache.set(ticker, doc);
+    });
+  }
+
+  getFeatureSnapshot(ticker: string): FeatureSnapshot | null {
+    return this.featureCache.get(ticker) ?? null;
+  }
+
+  isFeatureLoading(ticker: string): boolean {
+    return this.featureLoading.has(ticker);
+  }
+
+  getRecommendedExposure(ticker: string): number | null {
+    const f = this.getFeatureSnapshot(ticker);
+    const c = f?.exposure_constraints?.constrained_exposure;
+    return c != null ? Math.round(c * 1000) / 10 : null;
   }
 
   loadOhlcvWeek(ticker: string) {

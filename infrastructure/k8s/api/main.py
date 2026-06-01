@@ -25,6 +25,8 @@ Endpoints:
   GET /instrument/{symbol}/profile  - Perfil detallado de un instrumento (nuevo)
   GET /sentiment/{date}/{ticker}    - Sentimiento detallado
   GET /indicators/{date}/{ticker}   - Indicadores tecnicos
+  GET /features/{date}/{ticker}     - Feature snapshot unificado
+  GET /model/traces/{date}          - Trazas por model_id (gbm_v1, bayesian_v1.2)
   GET /analytics/calibration/{date} - Calibracion y reliability table
   GET /analytics/transitions/{date} - Exposicion y transiciones de senal
   GET /analytics/regimes/{date}     - Rendimiento por regimen de mercado
@@ -207,6 +209,8 @@ try:
         list_bayesian_report_tickers,
         read_raw_news_ticker,
         read_ohlcv_ticker,
+        read_feature_snapshot,
+        read_model_trace,
     )
 except ImportError:
     get_etf_tickers = None  # type: ignore[misc, assignment]
@@ -222,6 +226,8 @@ except ImportError:
     list_bayesian_report_tickers = None  # type: ignore[misc, assignment]
     read_raw_news_ticker = None  # type: ignore[misc, assignment]
     read_ohlcv_ticker = None  # type: ignore[misc, assignment]
+    read_feature_snapshot = None  # type: ignore[misc, assignment]
+    read_model_trace = None  # type: ignore[misc, assignment]
 
 try:
     from quant_observability import compute_quant_audit_report
@@ -243,6 +249,7 @@ _STATE_TO_STAGE = {
     "lambda_ingestion": "ingestion",
     "lambda_sentiment": "parallel",
     "lambda_indicators": "parallel",
+    "lambda_features": "parallel",
     "parallel_analysis": "parallel",
     "lambda_bayesian": "bayesian",
     "lambda_report": "report",
@@ -733,9 +740,18 @@ def get_trace_ticker(date: str, ticker: str, x_api_key: str = Header(default="")
             trace_source = "bayesian_reports"
 
     if ticker_trace is not None:
+        feature_snapshot = None
+        if read_feature_snapshot:
+            feature_snapshot = read_feature_snapshot(date, ticker_upper)  # type: ignore[misc]
         return {
             "date": date,
             "ticker": ticker_upper,
+            "model_id": (trace or {}).get("model_id")
+            or ticker_trace.get("model_id")
+            or "bayesian_v1.2",
+            "feature_snapshot_ref": ticker_trace.get("feature_snapshot_ref"),
+            "exposure_constraints": ticker_trace.get("exposure_constraints", {}),
+            "feature_snapshot": feature_snapshot,
             "model_config": (trace or {}).get("model_config"),
             "execution": (trace or {}).get("execution"),
             "trace": ticker_trace,
@@ -869,6 +885,57 @@ def get_sentiment_detail(date: str, ticker: str, x_api_key: str = Header(default
     except Exception as e:
         logger.exception("get_sentiment_detail error")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Feature snapshot unificado ───────────────────────────────────────────────
+
+
+@app.get("/features/{date}/{ticker}", tags=["Trazabilidad"])
+def get_feature_snapshot(date: str, ticker: str, x_api_key: str = Header(default="")):
+    """Feature snapshot: sentimiento, técnico, macro, catalizadores y fundamentales."""
+    check_api_key(x_api_key)
+    if not date or len(date) != 10:
+        raise HTTPException(status_code=400, detail="Formato: YYYY-MM-DD")
+    ticker_u = ticker.upper()
+    if read_feature_snapshot:
+        doc = read_feature_snapshot(date, ticker_u)  # type: ignore[misc]
+        if doc:
+            return _serialize_doc(doc)
+    db = _require_mongo()
+    doc = db["feature_snapshots"].find_one(
+        {"batch_date": date, "ticker": ticker_u}, {"_id": 0}
+    )
+    if not doc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No hay feature_snapshot para {ticker_u} en {date}. "
+            "Ejecuta lambda_features tras sentiment+indicators.",
+        )
+    return _serialize_doc(doc)
+
+
+@app.get("/model/traces/{date}", tags=["Trazabilidad"])
+def get_model_traces(
+    date: str,
+    model_id: str = Query(default="gbm_v1"),
+    x_api_key: str = Header(default=""),
+):
+    """Traza alternativa por model_id (p. ej. gbm_v1 en rama GBM)."""
+    check_api_key(x_api_key)
+    if read_model_trace:
+        trace = read_model_trace(date, model_id)  # type: ignore[misc]
+        if trace:
+            return {"date": date, "model_id": model_id, "trace": trace}
+    db = _require_mongo()
+    doc = db["model_traces"].find_one(
+        {"batch_date": date, "model_id": model_id}, {"_id": 0}
+    )
+    if not doc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No hay model_trace {model_id} para {date}",
+        )
+    return _serialize_doc(doc)
 
 
 # ─── Indicadores tecnicos raw (NUEVO) ─────────────────────────────────────────
@@ -2271,6 +2338,10 @@ def mongo_stats(x_api_key: str = Header(default="")):
             "bayesian_traces": db["bayesian_traces"].count_documents({}),
             "reports": db["reports"].count_documents({}),
             "quant_audit_reports": db["quant_audit_reports"].count_documents({}),
+            "feature_snapshots": db["feature_snapshots"].count_documents({}),
+            "catalyst_events": db["catalyst_events"].count_documents({}),
+            "fundamental_snapshots": db["fundamental_snapshots"].count_documents({}),
+            "model_traces": db["model_traces"].count_documents({}),
         },
         "bayesian_traces_by_date": trace_dates,
     }
@@ -2306,6 +2377,25 @@ def mongo_setup_indexes(x_api_key: str = Header(default="")):
     created.append("macro_news: batch_date")
     db["macro_context"].create_index([("batch_date", ASCENDING)], unique=True)
     created.append("macro_context: indice unico batch_date")
+    db["feature_snapshots"].create_index(
+        [("batch_date", ASCENDING), ("ticker", ASCENDING)], unique=True
+    )
+    db["feature_snapshots"].create_index(
+        [("ticker", ASCENDING), ("batch_date", DESCENDING)]
+    )
+    created.append("feature_snapshots: 2 indices (1 unico)")
+    db["catalyst_events"].create_index(
+        [("batch_date", ASCENDING), ("ticker", ASCENDING)]
+    )
+    created.append("catalyst_events: batch_date+ticker")
+    db["fundamental_snapshots"].create_index(
+        [("ticker", ASCENDING), ("week_start", ASCENDING)], unique=True
+    )
+    created.append("fundamental_snapshots: ticker+week_start unico")
+    db["model_traces"].create_index(
+        [("batch_date", ASCENDING), ("model_id", ASCENDING)], unique=True
+    )
+    created.append("model_traces: batch_date+model_id unico")
     return {"message": "Indices creados correctamente", "details": created}
 
 

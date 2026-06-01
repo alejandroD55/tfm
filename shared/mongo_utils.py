@@ -17,6 +17,10 @@ Colecciones en la BD 'tfm':
   quant_audit_reports → observabilidad cuantitativa agregada por report_date
   macro_news        → noticias macro globales (FED, inflacion, geopolitica…)
   macro_context     → MacroSentiment + RiskRegime calculados por batch_date
+  feature_snapshots → vector de features por (batch_date, ticker) para modelos/API
+  catalyst_events   → eventos catalizadores detectados (opcional)
+  fundamental_snapshots → métricas fundamentales semanales (opcional)
+  model_traces      → trazas por modelo (gbm_v1, bayesian_v1.2, …)
 
 Indices recomendados (ejecutar via POST /mongo/setup-indexes):
   etf_universe:     {_id:1}
@@ -29,6 +33,10 @@ Indices recomendados (ejecutar via POST /mongo/setup-indexes):
   quant_audit_reports: {report_date:1} unico
   macro_news:  {batch_date:1}, {category:1}
   macro_context: {batch_date:1} unico
+  feature_snapshots: {batch_date:1, ticker:1} unico, {ticker:1, batch_date:-1}
+  catalyst_events: {batch_date:1, ticker:1}
+  fundamental_snapshots: {ticker:1, week_start:1} unico
+  model_traces: {batch_date:1, model_id:1} unico
 """
 import json
 import logging
@@ -821,3 +829,159 @@ def read_macro_context(batch_date: str) -> dict:
     except Exception as exc:
         logger.warning(f"MongoDB read_macro_context failed: {exc}")
         return {}
+
+
+# ─── feature_snapshots ───────────────────────────────────────────────────────
+
+def upsert_feature_snapshot(batch_date: str, ticker: str, snapshot: Dict[str, Any]) -> None:
+    """Persiste feature_snapshot por (batch_date, ticker)."""
+    try:
+        db = _get_db()
+        if db is None:
+            return
+        now = datetime.now(timezone.utc)
+        ticker_u = ticker.upper()
+        doc = dict(snapshot or {})
+        doc["batch_date"] = batch_date
+        doc["ticker"] = ticker_u
+        doc["updated_at"] = now
+        db["feature_snapshots"].update_one(
+            {"batch_date": batch_date, "ticker": ticker_u},
+            {"$set": doc, "$setOnInsert": {"created_at": now}},
+            upsert=True,
+        )
+    except Exception as exc:
+        logger.warning(f"MongoDB upsert_feature_snapshot failed ({ticker}): {exc}")
+
+
+def read_feature_snapshot(batch_date: str, ticker: str) -> Optional[Dict[str, Any]]:
+    db = _get_db()
+    if db is None:
+        return None
+    try:
+        doc = db["feature_snapshots"].find_one(
+            {"batch_date": batch_date, "ticker": ticker.upper()},
+            {"_id": 0},
+        )
+        return doc if doc else None
+    except Exception as exc:
+        logger.warning(f"MongoDB read_feature_snapshot failed ({ticker}): {exc}")
+        return None
+
+
+def list_feature_snapshot_tickers(batch_date: str) -> List[str]:
+    db = _get_db()
+    if db is None:
+        return []
+    try:
+        return sorted(
+            db["feature_snapshots"].distinct("ticker", {"batch_date": batch_date})
+        )
+    except Exception as exc:
+        logger.warning(f"MongoDB list_feature_snapshot_tickers failed: {exc}")
+        return []
+
+
+# ─── catalyst_events (opcional) ──────────────────────────────────────────────
+
+def upsert_catalyst_events(
+    batch_date: str, ticker: str, events: List[Dict[str, Any]]
+) -> None:
+    try:
+        db = _get_db()
+        if db is None:
+            return
+        now = datetime.now(timezone.utc)
+        db["catalyst_events"].update_one(
+            {"batch_date": batch_date, "ticker": ticker.upper()},
+            {
+                "$set": {
+                    "batch_date": batch_date,
+                    "ticker": ticker.upper(),
+                    "events": events or [],
+                    "count": len(events or []),
+                    "updated_at": now,
+                },
+                "$setOnInsert": {"created_at": now},
+            },
+            upsert=True,
+        )
+    except Exception as exc:
+        logger.warning(f"MongoDB upsert_catalyst_events failed ({ticker}): {exc}")
+
+
+# ─── fundamental_snapshots (semanal, opcional) ─────────────────────────────
+
+def upsert_fundamental_snapshot(
+    ticker: str, week_start: str, fundamentals: Dict[str, Any]
+) -> None:
+    try:
+        db = _get_db()
+        if db is None:
+            return
+        now = datetime.now(timezone.utc)
+        doc = dict(fundamentals or {})
+        doc["ticker"] = ticker.upper()
+        doc["week_start"] = week_start
+        doc["updated_at"] = now
+        db["fundamental_snapshots"].update_one(
+            {"ticker": ticker.upper(), "week_start": week_start},
+            {"$set": doc, "$setOnInsert": {"created_at": now}},
+            upsert=True,
+        )
+    except Exception as exc:
+        logger.warning(f"MongoDB upsert_fundamental_snapshot failed ({ticker}): {exc}")
+
+
+def read_fundamental_snapshot(ticker: str, week_start: str) -> Optional[Dict[str, Any]]:
+    db = _get_db()
+    if db is None:
+        return None
+    try:
+        return db["fundamental_snapshots"].find_one(
+            {"ticker": ticker.upper(), "week_start": week_start},
+            {"_id": 0},
+        )
+    except Exception as exc:
+        logger.warning(f"MongoDB read_fundamental_snapshot failed: {exc}")
+        return None
+
+
+# ─── model_traces (GBM / comparación de modelos) ─────────────────────────────
+
+def upsert_model_trace(batch_date: str, model_id: str, trace: Dict[str, Any]) -> None:
+    try:
+        db = _get_db()
+        if db is None:
+            return
+        now = datetime.now(timezone.utc)
+        db["model_traces"].update_one(
+            {"batch_date": batch_date, "model_id": model_id},
+            {
+                "$set": {
+                    "batch_date": batch_date,
+                    "model_id": model_id,
+                    "trace": trace,
+                    "updated_at": now,
+                },
+                "$setOnInsert": {"created_at": now},
+            },
+            upsert=True,
+        )
+    except Exception as exc:
+        logger.warning(f"MongoDB upsert_model_trace failed ({model_id}): {exc}")
+
+
+def read_model_trace(batch_date: str, model_id: str) -> Optional[Dict[str, Any]]:
+    db = _get_db()
+    if db is None:
+        return None
+    try:
+        doc = db["model_traces"].find_one(
+            {"batch_date": batch_date, "model_id": model_id},
+            {"_id": 0, "trace": 1},
+        )
+        return doc.get("trace") if doc else None
+    except Exception as exc:
+        logger.warning(f"MongoDB read_model_trace failed: {exc}")
+        return None
