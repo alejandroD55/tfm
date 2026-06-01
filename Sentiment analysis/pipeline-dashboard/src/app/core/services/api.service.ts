@@ -181,6 +181,20 @@ export class ApiService {
       { headers: this.authHeaders });
   }
 
+  /** Feature snapshot unificado (sentimiento, técnico, macro, catalizadores, fundamentales) */
+  getFeatures(date: string, ticker: string): Observable<FeatureSnapshot> {
+    return this.http.get<FeatureSnapshot>(
+      `${this.baseUrl}/features/${date}/${ticker.toUpperCase()}`,
+      { headers: this.authHeaders });
+  }
+
+  /** Traza por model_id (bayesian_v1.2 | gbm_v1) */
+  getModelTrace(date: string, modelId = 'bayesian_v1.2'): Observable<{ date: string; model_id: string; trace: unknown }> {
+    const params = new HttpParams().set('model_id', modelId);
+    return this.http.get<any>(`${this.baseUrl}/model/traces/${date}`,
+      { headers: this.authHeaders, params });
+  }
+
   // ─── Files ────────────────────────────────────────────────────────
   listFiles(prefix: string, maxKeys = 200): Observable<FileListResponse> {
     const params = new HttpParams()
@@ -536,6 +550,57 @@ export interface MacroNewsResponse {
   total:    number;
   articles: MacroArticle[];
 }
+
+// ─── Feature snapshot ─────────────────────────────────────────────────────────
+
+export interface FeatureSnapshot {
+  schema_version: string;
+  batch_date: string;
+  ticker: string;
+  model_id?: string;
+  sentiment?: {
+    score?: number | null;
+    state?: string | null;
+    dispersion?: number;
+    n_headlines?: number;
+  };
+  technical?: {
+    rsi_14?: number | null;
+    sma_20?: number | null;
+    sma_50?: number | null;
+    bb_width_ratio?: number | null;
+    close_price?: number | null;
+  };
+  macro?: {
+    macro_sentiment?: string | null;
+    risk_regime?: string | null;
+    macro_score?: number | null;
+    vix?: number | null;
+    macro_events?: Record<string, unknown>;
+  };
+  catalysts?: {
+    catalyst_count_7d?: number;
+    catalyst_next_days?: number | null;
+    catalyst_sentiment_net?: number;
+    events_sample?: { event_type?: string; headline?: string; sentiment?: string }[];
+  };
+  fundamental?: {
+    revenue_growth_yoy?: number | null;
+    ebitda_margin?: number | null;
+    debt_equity?: number | null;
+    fundamental_stress?: number | null;
+    source?: string;
+  };
+  exposure_constraints?: {
+    constrained_exposure?: number;
+    regime_ceiling?: number;
+    fundamental_cap?: number;
+    catalyst_penalty?: number;
+  };
+}
+
+/** Modelo activo en dashboard (comparación bayesiano vs GBM). */
+export type InferenceModelId = 'bayesian_v1.2' | 'gbm_v1';
 
 // ─── DTOs de OHLCV semanal ────────────────────────────────────────────────────
 

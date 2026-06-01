@@ -1,0 +1,17 @@
+# ─── Lambda Features ────────────────────────────────────────────────────────
+FROM public.ecr.aws/lambda/python:3.11
+
+LABEL maintainer="tfm-trading" \
+      lambda="lambda_features" \
+      version="1.0"
+
+COPY lambda_features/requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
+RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
+
+COPY lambda_features/lambda_features.py ${LAMBDA_TASK_ROOT}/
+COPY shared/mongo_utils.py ${LAMBDA_TASK_ROOT}/
+COPY shared/catalyst.py ${LAMBDA_TASK_ROOT}/
+COPY shared/exposure_constraints.py ${LAMBDA_TASK_ROOT}/
+COPY shared/feature_builder.py ${LAMBDA_TASK_ROOT}/
+
+CMD ["lambda_features.handler"]
