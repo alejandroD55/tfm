@@ -66,6 +66,11 @@ _FEATURE_DEFAULTS = {
 }
 
 
+def _feat_float(val, default: float) -> float:
+    """float() seguro: si la clave existe pero vale None, usa default."""
+    return float(default if val is None else val)
+
+
 class DiscriminativeEngine:
     """
     Motor de inferencia discriminativa con booster nativo LightGBM.
@@ -79,6 +84,7 @@ class DiscriminativeEngine:
         self._platt_b: float = 0.0
         self._meta: dict = {}
         self._loaded = False
+        self.available = False
 
     # ── Carga ──────────────────────────────────────────────────────────────────
 
@@ -168,16 +174,16 @@ class DiscriminativeEngine:
         rgm_enc  = LABEL_ENCODERS["risk_regime"].get(rgm_raw, 1)
 
         # Continuas
-        prob_up   = float(extra.get("prob_up_bn",          _FEATURE_DEFAULTS["prob_up"]))
-        macro_adj = float(mc.get("macro_adjustment",        _FEATURE_DEFAULTS["macro_adjustment"]))
+        prob_up   = _feat_float(extra.get("prob_up_bn"),          _FEATURE_DEFAULTS["prob_up"])
+        macro_adj = _feat_float(mc.get("macro_adjustment"),        _FEATURE_DEFAULTS["macro_adjustment"])
 
         # Momentum (opcionales, default si no están disponibles)
-        streak    = float(extra.get("signal_streak",        _FEATURE_DEFAULTS["signal_streak"]))
-        delta     = float(extra.get("prob_up_delta",        _FEATURE_DEFAULTS["prob_up_delta"]))
-        mean5     = float(extra.get("prob_up_5d_mean",      prob_up))
-        vol20d    = float(extra.get("vol_20d",              _FEATURE_DEFAULTS["vol_20d"]))
-        vol_ratio = float(extra.get("vol_ratio",            _FEATURE_DEFAULTS["vol_ratio"]))
-        sent_disp = float(extra.get("sentiment_dispersion", _FEATURE_DEFAULTS["sentiment_dispersion"]))
+        streak    = _feat_float(extra.get("signal_streak"),        _FEATURE_DEFAULTS["signal_streak"])
+        delta     = _feat_float(extra.get("prob_up_delta"),        _FEATURE_DEFAULTS["prob_up_delta"])
+        mean5     = _feat_float(extra.get("prob_up_5d_mean"),      prob_up)
+        vol20d    = _feat_float(extra.get("vol_20d"),              _FEATURE_DEFAULTS["vol_20d"])
+        vol_ratio = _feat_float(extra.get("vol_ratio"),            _FEATURE_DEFAULTS["vol_ratio"])
+        sent_disp = _feat_float(extra.get("sentiment_dispersion"), _FEATURE_DEFAULTS["sentiment_dispersion"])
 
         feature_map = {
             "sentiment_state":      float(sent_enc),

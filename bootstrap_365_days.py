@@ -25,11 +25,12 @@ import numpy as np
 import yfinance as yf
 import psycopg2
 
-# Desactivar la caché SQLite de yfinance: su implementación no es thread-safe
-# y provoca OperationalError('unable to open database file') bajo carga paralela.
-# Con la caché desactivada cada llamada va directo a la API (sin overhead de lock).
+# yfinance usa SQLite para caché de timezones. None rompe Ticker.history (TypeError).
+# Usamos /tmp para evitar locks entre procesos y el error con set_tz_cache_location(None).
 try:
-    yf.set_tz_cache_location(None)  # yfinance ≥ 0.2.x
+    _yf_tz_cache = os.path.join(os.environ.get("TMPDIR", "/tmp"), "yfinance_tz_cache")
+    os.makedirs(_yf_tz_cache, exist_ok=True)
+    yf.set_tz_cache_location(_yf_tz_cache)
 except Exception:
     pass
 import trafilatura
@@ -898,21 +899,66 @@ def get_signal_outcomes(
 # =============================================================================
 # DATOS Y LÓGICA DE BACKTESTING
 # =============================================================================
+def _normalize_ohlcv_index(df: pd.DataFrame) -> pd.DataFrame:
+    """Índice datetime naive (sin TZ) para comparar con date_str YYYY-MM-DD."""
+    idx = pd.to_datetime(df.index)
+    if getattr(idx, "tz", None) is not None:
+        idx = idx.tz_convert(None)
+    df = df.copy()
+    df.index = idx
+    return df
+
+
+def _download_ohlcv_ticker(
+    ticker: str, download_start: date, download_end: date
+) -> pd.DataFrame:
+    """Descarga OHLCV con yf.download; fallback a Ticker.history si falla."""
+    start_s, end_s = str(download_start), str(download_end)
+    for attempt in range(3):
+        df = yf.download(
+            ticker, start=start_s, end=end_s, progress=False, repair=False
+        )
+        if not df.empty:
+            return df
+        if attempt < 2:
+            logger.warning(
+                f"[OHLCV] {ticker}: yf.download vacío (intento {attempt + 1}/3), reintentando…"
+            )
+            time.sleep(1.5 * (attempt + 1))
+
+    logger.warning(f"[OHLCV] {ticker}: yf.download falló, probando Ticker.history…")
+    df = yf.Ticker(ticker).history(start=start_s, end=end_s, auto_adjust=False)
+    if df.empty:
+        return df
+    # history devuelve Open/High/Low/Close/Volume con mismo esquema
+    keep = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in df.columns]
+    return df[keep]
+
+
 def fetch_ohlcv_all(
     tickers: List[str], start_date: date, end_date: date
 ) -> Dict[str, pd.DataFrame]:
     # Lookback de 350 días calendario ≈ 245 días hábiles, garantiza SMA200 desde el primer día del rango
     download_start = start_date - timedelta(days=350)
+    # yfinance trata end como exclusivo: +1 día para incluir el último día simulado
+    download_end = end_date + timedelta(days=1)
     result = {}
     for ticker in tickers:
-        df = yf.download(
-            ticker, start=str(download_start), end=str(end_date), progress=False, repair=False
+        df = _download_ohlcv_ticker(ticker, download_start, download_end)
+        if df.empty:
+            logger.error(
+                f"[OHLCV] {ticker}: sin datos tras download+history "
+                f"({download_start} → {download_end})"
+            )
+            continue
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.droplevel(1)
+        df = _normalize_ohlcv_index(df)
+        result[ticker] = df
+        logger.info(
+            f"[OHLCV] {ticker}: {len(df)} filas "
+            f"({df.index.min().date()} → {df.index.max().date()})"
         )
-        if not df.empty:
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.droplevel(1)
-            df.index = pd.to_datetime(df.index)
-            result[ticker] = df
     return result
 
 
@@ -926,10 +972,14 @@ def fetch_news_historical(ticker: str, start_d: date, end_d: date) -> Dict[str, 
         with open(cache_file, encoding="utf-8") as fh:
             cached = json.load(fh)
         total, days = _count_news(cached)
-        _news_debug(
-            f"[news-cache] Finnhub {ticker}: {total} articulos en {days} dias desde {cache_file}"
+        if total > 0:
+            _news_debug(
+                f"[news-cache] Finnhub {ticker}: {total} articulos en {days} dias desde {cache_file}"
+            )
+            return cached
+        logger.warning(
+            f"[news-cache] Finnhub {ticker}: cache vacio ({cache_file.name}), re-fetching"
         )
-        return cached
     if cache_file.exists() and REFRESH_NEWS_CACHE:
         _news_debug(f"[news-cache] Finnhub {ticker}: ignorando cache por --refresh-news-cache")
     if not FINNHUB_API_KEY:
@@ -940,16 +990,24 @@ def fetch_news_historical(ticker: str, start_d: date, end_d: date) -> Dict[str, 
     while current <= end_d:
         next_m = date(current.year + (current.month == 12), (current.month % 12) + 1, 1)
         month_end = min(next_m - timedelta(days=1), end_d)
-        resp = requests.get(
-            "https://finnhub.io/api/v1/company-news",
-            params={
-                "symbol": ticker,
-                "from": str(current),
-                "to": str(month_end),
-                "token": FINNHUB_API_KEY,
-            },
-            timeout=15,
-        )
+        try:
+            resp = requests.get(
+                "https://finnhub.io/api/v1/company-news",
+                params={
+                    "symbol": ticker,
+                    "from": str(current),
+                    "to": str(month_end),
+                    "token": FINNHUB_API_KEY,
+                },
+                timeout=15,
+            )
+        except requests.RequestException as exc:
+            logger.warning(
+                f"[Finnhub] {ticker} {current:%Y-%m}: error de red ({exc}), omitiendo mes"
+            )
+            time.sleep(1.2)
+            current = next_m
+            continue
         if resp.status_code == 200:
             for art in resp.json() or []:
                 dt = datetime.utcfromtimestamp(art.get("datetime", 0)).strftime(
@@ -973,10 +1031,15 @@ def fetch_news_historical(ticker: str, start_d: date, end_d: date) -> Dict[str, 
             )
         time.sleep(1.2)
         current = next_m
-    with open(cache_file, "w", encoding="utf-8") as fh:
-        json.dump(news_by_date, fh)
     total, days = _count_news(news_by_date)
-    logger.info(f"[Finnhub] {ticker}: {total} articulos en {days} dias -> cacheado")
+    if total > 0:
+        with open(cache_file, "w", encoding="utf-8") as fh:
+            json.dump(news_by_date, fh)
+        logger.info(f"[Finnhub] {ticker}: {total} articulos en {days} dias -> cacheado")
+    else:
+        logger.warning(
+            f"[Finnhub] {ticker}: 0 articulos en {days} dias (no se cachea respuesta vacia)"
+        )
     return news_by_date
 
 
@@ -1689,7 +1752,8 @@ def calculate_indicators_for_date(
         import pandas_ta as ta
 
     target_dt = pd.to_datetime(target_date)
-    df = ohlcv_df[ohlcv_df.index <= target_dt].copy()
+    df = _normalize_ohlcv_index(ohlcv_df)
+    df = df[df.index <= target_dt].copy()
     if len(df) < 50:
         return None
 
@@ -1857,7 +1921,7 @@ def run_bayesian_inference(
             )
             return signal, prob_up
         except Exception as _exc:
-            logger.debug(f"[DiscEngine] fallback a BN: {_exc}")
+            logger.warning(f"[DiscEngine] fallback a BN: {_exc}")
 
     # ── Fallback: Red Bayesiana (Camino A / original) ─────────────────────────
     from pgmpy.inference import VariableElimination
@@ -1974,8 +2038,12 @@ def prob_to_exposure(prob_up: float, regime: str) -> float:
       - prob_up ≥ 0.75 → ceiling del régimen
       - valores intermedios → interpolación lineal dentro de [floor, ceiling]
     """
-    FLOORS   = {"BULL": 0.60, "NEUTRAL": 0.35, "HIGH_VOL": 0.20, "BEAR": 0.10}
-    CEILINGS = {"BULL": 1.00, "NEUTRAL": 0.80, "HIGH_VOL": 0.60, "BEAR": 0.45}
+    # Floors conservadores: nunca salir del mercado salvo condición extrema.
+    # "A menos que sea hipercatastrofista, mantener posición" — coste de oportunidad.
+    # BULL/NEUTRAL: siempre invertido ≥ 50-70%. BEAR: reducir pero no salir (≥15%).
+    # Solo PANIC (VIX > 45) permite reducir a 5%, ningún régimen llega a 0%.
+    FLOORS   = {"BULL": 0.70, "NEUTRAL": 0.50, "HIGH_VOL": 0.30, "BEAR": 0.15}
+    CEILINGS = {"BULL": 1.00, "NEUTRAL": 0.85, "HIGH_VOL": 0.65, "BEAR": 0.50}
     floor   = FLOORS.get(regime, 0.35)
     ceiling = CEILINGS.get(regime, 0.80)
     # Normalizar prob_up al intervalo [0,1] dentro de [0.30, 0.75]
@@ -2222,6 +2290,9 @@ def _calc_exposure_backtesting(signals_list: List[Dict]) -> Tuple[Dict, Dict]:
         if len(ts) < 2:
             continue
 
+        # Día 0: 10.000 € en cash, exposición 0%.
+        # La curva de equity refleja cómo el capital crece al ir aumentando la exposición
+        # según los indicadores, sin nunca salir completamente del mercado una vez invertido.
         capital = INITIAL_CAP
         equity = [capital]
         daily_rets: List[float] = []
@@ -2289,12 +2360,11 @@ def _calc_backtesting(signals_df: pd.DataFrame) -> Tuple[Dict, Dict]:
         capital = INITIAL_CAP
         equity = [capital]
 
-        current_position = 1
-        if len(ts) > 0 and pd.notna(ts.iloc[0]["close_price"]):
-            entry_p = float(ts.iloc[0]["close_price"])
-        else:
-            entry_p = 0.0
-            current_position = 0
+        # Empezar siempre en cash (sin posición abierta).
+        # La primera señal BUY abre la posición; SELL cierra pero no va a 0
+        # porque en la práctica el floor de exposición siempre mantiene algo.
+        current_position = 0
+        entry_p = 0.0
 
         trades_rets = []
         days_invested = 0
@@ -2623,10 +2693,24 @@ def _process_ticker_day(
             else None
         )
         if not ind:
+            if ohlcv_df is None:
+                logger.warning(f"[skip] {ticker} {date_str}: sin OHLCV en prefetch")
+            else:
+                target_dt = pd.to_datetime(date_str)
+                n_rows = len(ohlcv_df[ohlcv_df.index <= target_dt])
+                if n_rows < 50:
+                    logger.warning(
+                        f"[skip] {ticker} {date_str}: solo {n_rows} filas OHLCV (min 50)"
+                    )
+                else:
+                    logger.warning(
+                        f"[skip] {ticker} {date_str}: indicadores None con {n_rows} filas"
+                    )
             return None
 
         # ── OHLCV → MongoDB + Aurora ────────────────────────────────────────
         target_dt = pd.to_datetime(date_str)
+        ohlcv_df = _normalize_ohlcv_index(ohlcv_df)
         if target_dt in ohlcv_df.index:
             row_data = ohlcv_df.loc[target_dt]
             upsert_ohlcv_bulk(
@@ -2762,12 +2846,13 @@ def _process_ticker_day(
             sentiment_samples
         )
 
+        rsi_val = ind.get("rsi_14")
         evidence = {
             "Sentiment": dom_sent,
             "RSI": (
                 "oversold"
-                if ind["rsi_14"] < 30
-                else ("overbought" if ind["rsi_14"] > 70 else "neutral")
+                if rsi_val is not None and rsi_val < 30
+                else ("overbought" if rsi_val is not None and rsi_val > 70 else "neutral")
             ),
             "Trend": (
                 "uptrend"
@@ -3091,9 +3176,36 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
             f"refresh_cache={REFRESH_NEWS_CACHE}"
         )
 
+    # Motor de inferencia activo (Camino B = LightGBM; Camino A = BN fallback)
+    if _disc_engine is not None:
+        _disc_engine.load()
+    _using_lgbm = (
+        _disc_engine is not None and getattr(_disc_engine, "available", False)
+    )
+    if _using_lgbm:
+        _meta = _disc_engine.meta or {}
+        logger.info(
+            f"🧠 Motor de inferencia: LightGBM (discriminative_lgbm) "
+            f"| AUC={_meta.get('auc_val', 'N/A')} "
+            f"| entrenado {_meta.get('trained_at', '?')[:10]}"
+        )
+    else:
+        logger.warning(
+            "🧠 Motor de inferencia: Red Bayesiana (fallback) — "
+            "LightGBM no disponible. Entrena o copia modelos en models/ "
+            "(lgbm_booster.txt) y comprueba pip install lightgbm."
+        )
+
     # ── 1. DESCARGA INICIAL DE DATOS ──
     # Para poder calcular indicadores en start_d, la lambda descarga días extra.
     ohlcv_all = fetch_ohlcv_all(active_tickers, start_d, end_d)
+    missing_ohlcv = [t for t in active_tickers if t not in ohlcv_all]
+    if missing_ohlcv:
+        logger.error(
+            f"Abortando pipeline: sin datos OHLCV para {missing_ohlcv}. "
+            "Comprueba red/yfinance y reintenta (p. ej. --verbose)."
+        )
+        sys.exit(1)
     vix_series = fetch_vix_historical(start_d, end_d)
     if vix_series.empty:
         logger.warning(
@@ -3181,9 +3293,10 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
     signal_history_per_ticker: dict = {t: [] for t in active_tickers}
 
     # ── Fase 1 — Exposure tracking ────────────────────────────────────────────
-    # Exposición suavizada del día anterior por ticker (EWM).
-    # Valor inicial 0.5 = exposición neutral (equivalente al prior de mercado).
-    exposure_history_per_ticker: dict = {t: 0.5 for t in active_tickers}
+    # Empezamos en 0.0 (100% cash) y el sistema rampa hacia la exposición objetivo
+    # a medida que las señales se acumulan. smooth_exposure_v2 con alpha_up=0.15
+    # garantiza una entrada gradual (~7 días para alcanzar el 65% del target).
+    exposure_history_per_ticker: dict = {t: 0.0 for t in active_tickers}
     # Acumulado de todos los signal_records (incluye smoothed_exposure) para
     # calcular el backtesting de exposición en cada iteración del reporte.
     all_signal_records: List[Dict] = []
