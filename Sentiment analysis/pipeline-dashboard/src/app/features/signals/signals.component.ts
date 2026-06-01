@@ -1,4 +1,4 @@
-import { Component, OnInit, AfterViewInit, ViewChild, inject } from '@angular/core';
+import { Component, OnInit, OnDestroy, AfterViewInit, ViewChild, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatTableModule, MatTableDataSource } from '@angular/material/table';
@@ -11,8 +11,9 @@ import { MatExpansionModule } from '@angular/material/expansion';
 import { NgxChartsModule } from '@swimlane/ngx-charts';
 import Highcharts from 'highcharts/highstock';
 import { HighchartsChartModule } from 'highcharts-angular';
-import { switchMap, catchError, of } from 'rxjs';
+import { switchMap, catchError, of, Subject, takeUntil } from 'rxjs';
 import { ReportService } from '../../core/services/report.service';
+import { PipelineContextService } from '../../core/services/pipeline-context.service';
 import { TraceService } from '../../core/services/trace.service';
 import {
   ApiService, NewsDetailResponse, NewsArticleDetail, MacroContext, MacroArticle,
@@ -38,10 +39,12 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
   templateUrl: './signals.component.html',
   styleUrl: './signals.component.scss',
 })
-export class SignalsComponent implements OnInit, AfterViewInit {
+export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
   private reportSvc = inject(ReportService);
   private traceSvc  = inject(TraceService);
   private apiSvc    = inject(ApiService);
+  private pipelineCtx = inject(PipelineContextService);
+  private destroy$ = new Subject<void>();
 
   @ViewChild(MatSort) sort!: MatSort;
 
@@ -108,12 +111,27 @@ export class SignalsComponent implements OnInit, AfterViewInit {
   customVolColors = (name: string) => name === 'BAJA' ? '#3B82F6' : '#F59E0B';
 
   ngOnInit() {
+    this.pipelineCtx.pipelineChanged$.pipe(takeUntil(this.destroy$)).subscribe(() => {
+      this.reportSvc.clearCache();
+      this.loadInitial();
+    });
+    this.loadInitial();
+  }
+
+  ngOnDestroy() {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+
+  private loadInitial() {
+    this.loading = true;
     this.reportSvc.listAvailableDates().pipe(
       switchMap(dates => {
         this.availableDates = dates;
         if (!dates.length) { this.loading = false; return []; }
-        this.selectedDate = dates[0].date;
-        this.hasTraceForDate = !!(dates[0] as any).has_trace;
+        this.selectedDate = this.pipelineCtx.pipelineEndDate() ?? dates[0].date;
+        const entry = dates.find(d => d.date === this.selectedDate) ?? dates[0];
+        this.hasTraceForDate = !!(entry as any).has_trace;
         return this.reportSvc.loadReport(this.selectedDate);
       })
     ).subscribe({

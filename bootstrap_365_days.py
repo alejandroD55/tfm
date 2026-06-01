@@ -719,12 +719,18 @@ def pg_upsert_position_state(
 
 # NUEVO: EXTRAER HISTÓRICO DE AURORA (Para clonar AWS lambda_report.py)
 def get_trading_data(
-    connection, report_date, days_back=DAYS_BACK, tickers: Optional[List[str]] = None
+    connection,
+    report_date,
+    days_back=DAYS_BACK,
+    tickers: Optional[List[str]] = None,
+    pipeline_start: Optional[date] = None,
 ):
     try:
         cursor = connection.cursor()
         end_date = pd.to_datetime(report_date).date()
         start_date = end_date - timedelta(days=days_back)
+        if pipeline_start is not None:
+            start_date = max(start_date, pipeline_start)
         query = """
             SELECT ts.batch_date, ts.ticker, ts.signal, ts.prob_up, ts.prob_down,
                    ti.close_price, ti.rsi_14, ti.sma_20, ti.sma_50,
@@ -763,12 +769,18 @@ def get_trading_data(
 
 
 def get_signal_outcomes(
-    connection, report_date, days_back=DAYS_BACK, tickers: Optional[List[str]] = None
+    connection,
+    report_date,
+    days_back=DAYS_BACK,
+    tickers: Optional[List[str]] = None,
+    pipeline_start: Optional[date] = None,
 ):
     try:
         cursor = connection.cursor()
         end_date = pd.to_datetime(report_date).date()
         start_date = end_date - timedelta(days=days_back)
+        if pipeline_start is not None:
+            start_date = max(start_date, pipeline_start)
         query = """
             SELECT batch_date, ticker, signal, prob_up, outcome_d1, outcome_d3,
                    outcome_d5, correct_d1, correct_d3, correct_d5
@@ -2805,7 +2817,11 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
         if conn:
             # 1. Obtenemos señales del último año desde la BBDD (Esto da memoria al sistema)
             hist_signals_df = get_trading_data(
-                conn, date_str, days_back=DAYS_BACK, tickers=active_tickers
+                conn,
+                date_str,
+                days_back=DAYS_BACK,
+                tickers=active_tickers,
+                pipeline_start=start_d,
             )
             metrics, diagnostics = _calc_backtesting(hist_signals_df)
             # Fase 1: backtesting de exposición continua usando datos in-memory
@@ -2819,16 +2835,24 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
                 date_str,
                 hist_signals_df.to_dict("records") if not hist_signals_df.empty else [],
                 outcome_rows=get_signal_outcomes(
-                    conn, date_str, days_back=DAYS_BACK, tickers=active_tickers
+                    conn,
+                    date_str,
+                    days_back=DAYS_BACK,
+                    tickers=active_tickers,
+                    pipeline_start=start_d,
                 ),
                 model_config=MODEL_CONFIG,
             )
             upsert_quant_audit_report(date_str, quant_audit_report)
 
+            period_days = (pd.to_datetime(date_str).date() - start_d).days + 1
             report_data = {
                 "report_date": date_str,
-                "data_period_days": DAYS_BACK,  # Usamos DAYS_BACK, como en AWS
+                "pipeline_start": start_d.isoformat(),
+                "pipeline_end": end_d.isoformat(),
+                "data_period_days": period_days,
                 "generated_at": datetime.now().isoformat(),
+                "inference_engine": "bayesian_network",
                 "pipeline_health": health,
                 "signal_diagnostics": diagnostics,
                 "benchmark_comparison": {

@@ -1,4 +1,4 @@
-import { Component, OnInit, inject } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
@@ -8,9 +8,10 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatExpansionModule } from '@angular/material/expansion';
 import { MatChipsModule } from '@angular/material/chips';
-import { switchMap } from 'rxjs';
+import { Subject, switchMap, takeUntil } from 'rxjs';
 import { TraceService } from '../../core/services/trace.service';
 import { ReportService } from '../../core/services/report.service';
+import { PipelineContextService } from '../../core/services/pipeline-context.service';
 import { BayesianTrace, ModelConfig, TickerTrace } from '../../core/models/trace.model';
 import { ReportDateEntry } from '../../core/models/report.model';
 
@@ -25,9 +26,11 @@ import { ReportDateEntry } from '../../core/models/report.model';
   templateUrl: './audit.component.html',
   styleUrl: './audit.component.scss',
 })
-export class AuditComponent implements OnInit {
+export class AuditComponent implements OnInit, OnDestroy {
   private traceSvc  = inject(TraceService);
   private reportSvc = inject(ReportService);
+  private pipelineCtx = inject(PipelineContextService);
+  private destroy$ = new Subject<void>();
 
   loading       = true;
   trace: BayesianTrace | null = null;
@@ -58,11 +61,24 @@ export class AuditComponent implements OnInit {
   }
 
   ngOnInit() {
+    this.pipelineCtx.pipelineChanged$.pipe(takeUntil(this.destroy$)).subscribe(() => {
+      this.loadDates();
+    });
+    this.loadDates();
+  }
+
+  ngOnDestroy() {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+
+  private loadDates() {
+    this.loading = true;
     this.reportSvc.listAvailableDates().pipe(
       switchMap(dates => {
         this.availableDates = dates;
         if (!dates.length) { this.loading = false; return []; }
-        this.selectedDate = dates[0].date;
+        this.selectedDate = this.pipelineCtx.pipelineEndDate() ?? dates[0].date;
         return this.traceSvc.getTrace(this.selectedDate);
       })
     ).subscribe({

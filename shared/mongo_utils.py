@@ -665,6 +665,9 @@ def upsert_report(report_data: dict):
         now = datetime.now(timezone.utc)
         doc = {
             "report_date":             report_date,
+            "pipeline_start":          report_data.get("pipeline_start"),
+            "pipeline_end":            report_data.get("pipeline_end"),
+            "generated_at":            report_data.get("generated_at"),
             "pipeline_health":         report_data.get("pipeline_health", {}),
             "summary":                 report_data.get("summary", {}),
             "backtesting_metrics":     report_data.get("backtesting_metrics", {}),

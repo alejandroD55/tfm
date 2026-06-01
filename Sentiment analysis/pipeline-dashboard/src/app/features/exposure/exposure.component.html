@@ -4,7 +4,7 @@
     <div class="page-head-text">
       <div class="page-eyebrow">
         <mat-icon>show_chart</mat-icon>
-        <span>Gestión de Exposición · Fase 1</span>
+        <span>Gestión de Exposición · Fase 2A</span>
       </div>
       <h1 class="page-title">Exposición Probabilística de Mercado</h1>
       <p class="page-sub">
@@ -62,6 +62,24 @@
         </div>
         <div class="g-col">
           <strong>Suavizado EWM (α=0.25):</strong> La exposición objetivo se filtra con un promedio exponencial (ventana efectiva ~4 días) para evitar cambios bruscos ante noticias puntuales.
+        </div>
+        <div class="g-col">
+          <strong>Fase 2A — Volatility Targeting (VT):</strong> <code>exposure = min(1, σ_target / σ_realizada)</code> — escala automáticamente el tamaño de posición cuando la volatilidad supera el objetivo de cartera (15% anual). Estándar AQR / Two Sigma.
+        </div>
+        <div class="g-col">
+          <strong>Fractional Kelly (35%):</strong> Tamaño óptimo derivado de la tasa de acierto histórica y el ratio ganancia/pérdida. Fracción 0.35 para reducir el riesgo de ruina frente al Kelly completo.
+        </div>
+        <div class="g-col">
+          <strong>EWM Asimétrico α↑=0.15 / α↓=0.35:</strong> La exposición sube lentamente (ventana efectiva 12 días) y baja rápido (5 días). Principio «corta el riesgo rápido, re-entra con cautela».
+        </div>
+        <div class="g-col">
+          <strong>Confirmación Temporal de Régimen:</strong> BULL requiere 3 días consecutivos; NEUTRAL 2 días; BEAR/HIGH_VOL 1 día. Elimina cambios de régimen por ruido puntual (whipsaw).
+        </div>
+        <div class="g-col">
+          <strong>VIX Multi-nivel (6 estados):</strong> Reemplaza el binario RISK_OFF/ON. Desde RISK_ON_STRONG (+7%) hasta PANIC (−15%) el ajuste macro es no-lineal y continuo.
+        </div>
+        <div class="g-col">
+          <strong>Sentimiento con Decaimiento Exponencial:</strong> Las noticias recientes pesan más (half-life = 2.5 días). La dispersión entre artículos actúa como señal de incertidumbre que reduce la confianza del modelo.
         </div>
       </div>
     </mat-expansion-panel>
@@ -271,6 +289,396 @@
           </table>
         </div>
       </section>
+    }
+
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         BLOQUE FASE 2A — Motor Probabilístico de Exposición
+         Visible solo cuando hay datos del endpoint /exposure/positions
+         ═══════════════════════════════════════════════════════════════════ -->
+
+    @if (loadingPositions) {
+      <div class="state-panel">
+        <mat-spinner diameter="36"></mat-spinner>
+        <p>Cargando motor Fase 2A…</p>
+      </div>
+    }
+
+    @if (!loadingPositions && positionsTimeline.length > 0) {
+
+      <!-- Separador visual Fase 2A -->
+      <div class="fase2a-divider">
+        <div class="fase2a-line"></div>
+        <span class="fase2a-label">
+          <mat-icon>science</mat-icon>
+          Motor Probabilístico Fase 2A
+        </span>
+        <div class="fase2a-line"></div>
+      </div>
+
+      <!-- ── SECCIÓN 1: Gráfico VT Techo / Fractional Kelly / EWM Final ────── -->
+      <section class="chart-section fase2a-section">
+        <div class="section-header">
+          <mat-icon>tune</mat-icon>
+          <h2>Motor de Exposición — Volatility Targeting · Kelly · EWM</h2>
+          <span class="section-badge badge-blue">Fase 2A</span>
+        </div>
+        <p class="section-desc">
+          Tres componentes técnicos determinan la exposición final. El <strong>VT Techo</strong> (azul discontinuo)
+          escala automáticamente la posición cuando la volatilidad supera el objetivo —
+          cuanta más vol, menos exposición. El <strong>Fractional Kelly</strong> (naranja punteado) calcula
+          el tamaño óptimo según la tasa de acierto histórica del activo. La <strong>Exposición Final</strong>
+          (verde área) aplica el EWM asimétrico: sube lento (α=0.15 ≈ 12 días) y baja rápido (α=0.35 ≈ 5 días).
+        </p>
+
+        <!-- Leyenda técnica inline -->
+        <div class="legend-tech-row">
+          <span class="legend-item">
+            <span class="legend-dot" style="background:#60a5fa; border-style:dashed"></span>
+            <span class="legend-text">VT Techo — <code>min(1, σ_target / σ_blend)</code></span>
+          </span>
+          <span class="legend-item">
+            <span class="legend-dot" style="background:#f59e0b; border-style:dotted"></span>
+            <span class="legend-text">Fractional Kelly — <code>0.35 × (p/L − q/W)</code></span>
+          </span>
+          <span class="legend-item">
+            <span class="legend-dot" style="background:#34d399"></span>
+            <span class="legend-text">Exposición Final — EWM α↑=0.15 / α↓=0.35</span>
+          </span>
+        </div>
+
+        <highcharts-chart
+          [Highcharts]="Highcharts"
+          [options]="vtChartOpts"
+          [update]="vtChartUpdate"
+          style="width:100%;display:block;margin-top:12px">
+        </highcharts-chart>
+      </section>
+
+      <!-- ── SECCIÓN 2: Desglose último día — KPI de componentes ─────────────── -->
+      @if (latestPosition) {
+        <section class="decomp-section fase2a-section">
+          <div class="section-header">
+            <mat-icon>analytics</mat-icon>
+            <h2>Desglose del Último Día — Componentes de Exposición</h2>
+            <span class="section-badge badge-purple">{{ latestPosition.date }}</span>
+          </div>
+          <p class="section-desc">
+            Cada componente tiene un fundamento técnico diferente. El modelo toma el mínimo entre VT y la
+            exposición ajustada por régimen, y luego aplica Kelly como referencia de tamaño. El EWM asimétrico
+            suaviza el resultado final para evitar rebalanceos excesivos.
+          </p>
+          <div class="decomp-grid">
+
+            <div class="decomp-card card-blue">
+              <div class="decomp-icon">
+                <mat-icon>speed</mat-icon>
+              </div>
+              <div class="decomp-body">
+                <div class="decomp-label">VT Techo</div>
+                <div class="decomp-value">{{ fmtPct(latestPosition.vt_exposure) }}</div>
+                <div class="decomp-formula"><code>σ_target (15%) / σ_realizada_blend</code></div>
+                <div class="decomp-rationale">Máximo de exposición permitido por la volatilidad actual. Si el activo se vuelve más volátil, este techo baja automáticamente sin parámetros manuales.</div>
+              </div>
+            </div>
+
+            <div class="decomp-card card-orange">
+              <div class="decomp-icon">
+                <mat-icon>casino</mat-icon>
+              </div>
+              <div class="decomp-body">
+                <div class="decomp-label">Fractional Kelly</div>
+                <div class="decomp-value">{{ fmtPct(latestPosition.kelly_exposure) }}</div>
+                <div class="decomp-formula"><code>f = 0.35 × (p/L − q/W)</code></div>
+                <div class="decomp-rationale">Tamaño óptimo derivado de la tasa de acierto (p) y el ratio ganancia media / pérdida media (W/L), estimados sobre una ventana de 252 días del activo.</div>
+              </div>
+            </div>
+
+            <div class="decomp-card card-green">
+              <div class="decomp-icon">
+                <mat-icon>trending_up</mat-icon>
+              </div>
+              <div class="decomp-body">
+                <div class="decomp-label">Posición Final (EWM)</div>
+                <div class="decomp-value accent-green">{{ fmtPct(latestPosition.smoothed_exposure) }}</div>
+                <div class="decomp-formula"><code>EWM α↑=0.15 · α↓=0.35</code></div>
+                <div class="decomp-rationale">Resultado tras aplicar el suavizado asimétrico. Sube con prudencia (≈12 días de ventana efectiva) y baja con rapidez (≈5 días) ante deterioro de señal.</div>
+              </div>
+            </div>
+
+            @if (latestPosition.target_exposure !== null && latestPosition.target_exposure !== undefined) {
+              <div class="decomp-card card-slate">
+                <div class="decomp-icon">
+                  <mat-icon>account_tree</mat-icon>
+                </div>
+                <div class="decomp-body">
+                  <div class="decomp-label">Exposición Objetivo (pre-EWM)</div>
+                  <div class="decomp-value">{{ fmtPct(latestPosition.target_exposure) }}</div>
+                  <div class="decomp-formula"><code>min(VT, prob_map × régimen) + Δ_macro</code></div>
+                  <div class="decomp-rationale">Exposición antes del suavizado. Combina el techo VT, el mapeo bayesiano de prob_up al régimen confirmado y el ajuste del régimen VIX.</div>
+                </div>
+              </div>
+            }
+
+          </div>
+
+          <!-- Delta de exposición -->
+          @if (latestPosition.exposure_delta !== null && latestPosition.exposure_delta !== undefined) {
+            <div class="delta-row">
+              <span class="delta-label">Variación respecto al día anterior:</span>
+              <span class="delta-value"
+                [class.delta-pos]="latestPosition.exposure_delta >= 0"
+                [class.delta-neg]="latestPosition.exposure_delta < 0">
+                {{ latestPosition.exposure_delta >= 0 ? '+' : '' }}{{ fmtPct(latestPosition.exposure_delta) }}
+              </span>
+              <span class="delta-hint">
+                {{ latestPosition.exposure_delta >= 0
+                   ? 'EWM α=0.15 — subida contenida (ventana ~12 días)'
+                   : 'EWM α=0.35 — bajada acelerada (ventana ~5 días)' }}
+              </span>
+            </div>
+          }
+
+        </section>
+      }
+
+      <!-- ── SECCIÓN 3: Volatilidad del activo ─────────────────────────────── -->
+      @if (latestPosition) {
+        <section class="vol-section fase2a-section">
+          <div class="section-header">
+            <mat-icon>graphic_eq</mat-icon>
+            <h2>Volatilidad del Activo — Multi-escala</h2>
+            <span class="section-badge badge-amber">vol_5d · vol_20d · vol_ratio</span>
+          </div>
+          <p class="section-desc">
+            El modelo calcula volatilidad en tres horizontes (5 / 20 / 60 días) para distinguir ruido
+            de tendencia. El <code>vol_ratio = vol_5d / vol_20d</code> actúa como sensor de aceleración:
+            si supera 1.4, el Volatility Targeting reduce automáticamente la exposición.
+          </p>
+
+          <div class="vol-grid">
+
+            <div class="vol-metric-card">
+              <div class="vol-metric-header">
+                <span class="vol-metric-name">Volatilidad Realizada (20d)</span>
+                <span class="vol-metric-badge">Referencia principal del VT</span>
+              </div>
+              <div class="vol-metric-value">
+                {{ latestPosition.vol_20d !== null && latestPosition.vol_20d !== undefined
+                   ? (latestPosition.vol_20d * 100).toFixed(1) + '%'
+                   : '—' }}
+                <span class="vol-metric-unit">anualizada</span>
+              </div>
+              <div class="vol-metric-hint">
+                Umbral de referencia: 15% (σ_target). Si vol_20d &gt; 15%, el techo VT &lt; 100%.
+              </div>
+            </div>
+
+            <div class="vol-metric-card">
+              <div class="vol-metric-header">
+                <span class="vol-metric-name">Vol Ratio (5d / 20d)</span>
+                <span class="vol-metric-badge">Aceleración de volatilidad</span>
+              </div>
+              <div class="vol-metric-value" [style.color]="volRatioColor">
+                {{ latestPosition.vol_ratio !== null && latestPosition.vol_ratio !== undefined
+                   ? latestPosition.vol_ratio.toFixed(2) + '×'
+                   : '—' }}
+              </div>
+              <div class="vol-ratio-label-row">
+                <span class="vol-ratio-badge" [style.background]="volRatioColor">{{ volRatioLabel }}</span>
+                <span class="vol-ratio-bar-wrap">
+                  <span class="vol-ratio-bar" [style.width.%]="volRatioBarWidth()" [style.background]="volRatioColor"></span>
+                </span>
+              </div>
+              <div class="vol-metric-hint">
+                <strong>&gt; 1.4</strong> → VT reduce exposición automáticamente ·
+                <strong>&lt; 0.7</strong> → vol en compresión, techo VT se amplía
+              </div>
+            </div>
+
+          </div>
+        </section>
+      }
+
+      <!-- ── SECCIÓN 4: Régimen de mercado — Confirmación temporal + VIX ──── -->
+      @if (latestPosition) {
+        <section class="regime-confirm-section fase2a-section">
+          <div class="section-header">
+            <mat-icon>schema</mat-icon>
+            <h2>Régimen — Confirmación Temporal + VIX Multi-nivel</h2>
+            <span class="section-badge badge-teal">Anti-whipsaw</span>
+          </div>
+          <p class="section-desc">
+            El régimen detectado no se aplica inmediatamente: debe confirmarse durante N días consecutivos
+            (BULL=3d, NEUTRAL=2d, BEAR/HIGH_VOL=1d) para filtrar cambios espurios. El régimen VIX actúa
+            como ajuste macro adicional de forma independiente al régimen estructural del activo.
+          </p>
+
+          <div class="regime-confirm-grid">
+
+            <!-- Régimen estructural -->
+            <div class="regime-confirm-card">
+              <div class="rc-title">Régimen Estructural del Activo</div>
+              <div class="rc-row">
+                <div class="rc-col">
+                  <div class="rc-sub">Raw (sin confirmar)</div>
+                  <div class="rc-badge"
+                    [style.background]="getRegimeColor(latestPosition.raw_regime)"
+                    [style.opacity]="regimeDiffersFromRaw ? 1 : 0.55">
+                    {{ latestPosition.raw_regime || '—' }}
+                  </div>
+                  <div class="rc-hint">Detección inmediata SMA50/SMA200 + VIX + drawdown</div>
+                </div>
+                <div class="rc-arrow">
+                  <mat-icon>{{ regimeDiffersFromRaw ? 'watch_later' : 'check_circle' }}</mat-icon>
+                  <span>{{ regimeDiffersFromRaw ? 'Pendiente' : 'Confirmado' }}</span>
+                </div>
+                <div class="rc-col">
+                  <div class="rc-sub">Confirmado (activo)</div>
+                  <div class="rc-badge" [style.background]="getRegimeColor(latestPosition.confirmed_regime ?? '')">
+                    {{ latestPosition.confirmed_regime || '—' }}
+                  </div>
+                  <div class="rc-hint">
+                    @if (regimeDiffersFromRaw) {
+                      El raw difiere → aún no cumple los días mínimos de confirmación
+                    } @else {
+                      Raw y confirmado coinciden — régimen estable
+                    }
+                  </div>
+                </div>
+              </div>
+
+              <div class="rc-confirmation-legend">
+                <span class="rc-leg-item"><span class="rc-leg-dot" style="background:#22c55e"></span>BULL — 3 días min.</span>
+                <span class="rc-leg-item"><span class="rc-leg-dot" style="background:#38bdf8"></span>NEUTRAL — 2 días min.</span>
+                <span class="rc-leg-item"><span class="rc-leg-dot" style="background:#f59e0b"></span>HIGH_VOL — 1 día min.</span>
+                <span class="rc-leg-item"><span class="rc-leg-dot" style="background:#ef4444"></span>BEAR — 1 día min.</span>
+              </div>
+            </div>
+
+            <!-- Régimen VIX -->
+            <div class="regime-confirm-card">
+              <div class="rc-title">Régimen VIX — Ajuste Macro Adicional</div>
+              <div class="vix-regime-display">
+                <span class="vix-regime-dot" [style.background]="vixRegimeColor"></span>
+                <span class="vix-regime-name" [style.color]="vixRegimeColor">
+                  {{ latestPosition.vix_regime_label || '—' }}
+                </span>
+              </div>
+              <div class="vix-regime-scale">
+                <div class="vix-scale-item" [class.active]="latestPosition.vix_regime_label === 'RISK_ON_STRONG'">
+                  <span class="vix-scale-dot" style="background:#22c55e"></span>
+                  <span>RISK_ON_STRONG <em>+7%</em></span>
+                </div>
+                <div class="vix-scale-item" [class.active]="latestPosition.vix_regime_label === 'RISK_ON'">
+                  <span class="vix-scale-dot" style="background:#4ade80"></span>
+                  <span>RISK_ON <em>+4%</em></span>
+                </div>
+                <div class="vix-scale-item" [class.active]="latestPosition.vix_regime_label === 'NEUTRAL'">
+                  <span class="vix-scale-dot" style="background:#38bdf8"></span>
+                  <span>NEUTRAL <em>0%</em></span>
+                </div>
+                <div class="vix-scale-item" [class.active]="latestPosition.vix_regime_label === 'RISK_OFF_MILD'">
+                  <span class="vix-scale-dot" style="background:#fbbf24"></span>
+                  <span>RISK_OFF_MILD <em>−5%</em></span>
+                </div>
+                <div class="vix-scale-item" [class.active]="latestPosition.vix_regime_label === 'RISK_OFF'">
+                  <span class="vix-scale-dot" style="background:#f97316"></span>
+                  <span>RISK_OFF <em>−8%</em></span>
+                </div>
+                <div class="vix-scale-item" [class.active]="latestPosition.vix_regime_label === 'FEAR'">
+                  <span class="vix-scale-dot" style="background:#ef4444"></span>
+                  <span>FEAR <em>−12%</em></span>
+                </div>
+                <div class="vix-scale-item" [class.active]="latestPosition.vix_regime_label === 'PANIC'">
+                  <span class="vix-scale-dot" style="background:#b91c1c"></span>
+                  <span>PANIC <em>−15%</em></span>
+                </div>
+              </div>
+              <div class="rc-hint" style="margin-top:12px">
+                El ajuste macro VIX se atenúa en un 60% cuando el régimen estructural es BULL
+                (principio de predominio de tendencia sobre pánico puntual).
+              </div>
+            </div>
+
+          </div>
+        </section>
+      }
+
+      <!-- ── SECCIÓN 5: Sentimiento — Dispersión y decaimiento exponencial ── -->
+      @if (latestPosition) {
+        <section class="sentiment-section fase2a-section">
+          <div class="section-header">
+            <mat-icon>sentiment_neutral</mat-icon>
+            <h2>Sentimiento — Decaimiento Exponencial + Dispersión</h2>
+            <span class="section-badge badge-pink">half-life = 2.5d</span>
+          </div>
+          <p class="section-desc">
+            Las noticias del día pesan más que las de hace una semana — el modelo pondera con
+            decaimiento exponencial (vida media = 2.5 días). La dispersión entre artículos
+            actúa como señal de incertidumbre: cuanto mayor la contradicción entre noticias,
+            menor la confianza del modelo en la señal de sentimiento.
+          </p>
+
+          <div class="disp-grid">
+
+            <div class="disp-main-card">
+              <div class="disp-header-row">
+                <span class="disp-label-big" [style.color]="dispersionColor">{{ dispersionLabel }}</span>
+                <span class="disp-pct">{{ (dispersionBarWidth()) }}%</span>
+              </div>
+              <div class="disp-bar-track">
+                <div class="disp-bar-fill"
+                  [style.width.%]="dispersionBarWidth()"
+                  [style.background]="dispersionColor">
+                </div>
+              </div>
+              <div class="disp-scale-labels">
+                <span>0% — Unanimidad</span>
+                <span>50%</span>
+                <span>100% — Contradicción total</span>
+              </div>
+            </div>
+
+            <div class="disp-legend-card">
+              <div class="disp-leg-item">
+                <span class="disp-leg-dot" style="background:#22c55e"></span>
+                <div>
+                  <strong>Consenso (&lt;30%)</strong>
+                  <p>Artículos apuntan en la misma dirección. Sentimiento con alta confianza.</p>
+                </div>
+              </div>
+              <div class="disp-leg-item">
+                <span class="disp-leg-dot" style="background:#f59e0b"></span>
+                <div>
+                  <strong>Divergencia moderada (30–60%)</strong>
+                  <p>Señales mixtas. El modelo reduce levemente el peso del componente sentimiento.</p>
+                </div>
+              </div>
+              <div class="disp-leg-item">
+                <span class="disp-leg-dot" style="background:#ef4444"></span>
+                <div>
+                  <strong>Alta contradicción (&gt;60%)</strong>
+                  <p>Artículos contradictorios — penalización de confianza aplicada. El modelo confía más en prob_up bayesiano y en señales técnicas.</p>
+                </div>
+              </div>
+              <div class="disp-tech-note">
+                <mat-icon>info_outline</mat-icon>
+                <span>Dispersión = varianza ponderada de los scores de sentimiento · Decaimiento: <code>w_t = exp(−Δt / 2.5)</code></span>
+              </div>
+            </div>
+
+          </div>
+        </section>
+      }
+
+    }<!-- /positionsTimeline -->
+
+    @if (!loadingPositions && positionsTimeline.length === 0 && !loading) {
+      <div class="no-data fase2a-empty">
+        <mat-icon>science</mat-icon>
+        <p>No hay datos de Motor Fase 2A para <strong>{{ selectedTicker }}</strong>. Ejecuta el bootstrap con Fase 2A activa para poblar el endpoint <code>/exposure/positions</code>.</p>
+      </div>
     }
 
   }<!-- /!loading && !error -->

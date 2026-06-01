@@ -71,3 +71,173 @@ code { background: var(--bg-elevated); padding: 1px 5px; border-radius: 4px; fon
 .compare-table tr:last-child td { border-bottom: none; }
 .compare-table tr:hover td { background: var(--bg-base); }
 .regime-badge { display: inline-block; padding: 2px 8px; border-radius: var(--r-pill); font-size: 11px; font-weight: 700; color: white; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   FASE 2A — Motor Probabilístico de Exposición
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Badge variants */
+.badge-blue   { background: rgba(96,165,250,.15); color: #60a5fa !important; }
+.badge-purple { background: rgba(167,139,250,.15); color: #a78bfa !important; }
+.badge-amber  { background: rgba(245,158,11,.15);  color: #f59e0b !important; }
+.badge-teal   { background: rgba(52,211,153,.15);  color: #34d399 !important; }
+.badge-pink   { background: rgba(244,114,182,.15); color: #f472b6 !important; }
+
+/* Fase 2A sections inherit chart-section base, add a subtle left accent */
+.fase2a-section {
+  border-left: 3px solid rgba(96,165,250,.4);
+}
+
+/* Divider between Fase 1 and Fase 2A */
+.fase2a-divider {
+  display: flex; align-items: center; gap: 12px;
+  margin: 32px 0 20px;
+}
+.fase2a-line { flex: 1; height: 1px; background: linear-gradient(90deg, transparent, rgba(96,165,250,.4), transparent); }
+.fase2a-label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: #60a5fa; white-space: nowrap;
+  mat-icon { font-size: 14px; height: 14px; width: 14px; }
+}
+
+/* Legend row for VT chart */
+.legend-tech-row {
+  display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 4px;
+}
+.legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--slate-500); }
+.legend-dot  { width: 16px; height: 3px; border-radius: 2px; border: 2px solid transparent; flex-shrink: 0; }
+
+/* ── Sección 2: Decomposición KPI ──────────────────────────────────── */
+.decomp-section { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); padding: 20px; margin-bottom: 20px; }
+.decomp-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px; margin-bottom: 16px;
+}
+.decomp-card {
+  border: 1px solid var(--border); border-radius: var(--r-md); padding: 16px;
+  display: flex; gap: 12px; align-items: flex-start;
+  background: var(--bg-base);
+  transition: transform .15s;
+  &:hover { transform: translateY(-2px); }
+  mat-icon { font-size: 20px; height: 20px; width: 20px; flex-shrink: 0; margin-top: 2px; }
+}
+.card-blue   { border-top: 3px solid #60a5fa; mat-icon { color: #60a5fa; } }
+.card-orange { border-top: 3px solid #f59e0b; mat-icon { color: #f59e0b; } }
+.card-green  { border-top: 3px solid #34d399; mat-icon { color: #34d399; } }
+.card-slate  { border-top: 3px solid #94a3b8; mat-icon { color: #94a3b8; } }
+
+.decomp-body { flex: 1; }
+.decomp-label    { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--slate-500); margin-bottom: 4px; }
+.decomp-value    { font-size: 28px; font-weight: 700; color: var(--slate-900); letter-spacing: -.02em; line-height: 1.1; margin-bottom: 4px; }
+.decomp-formula  { font-size: 11px; color: var(--slate-400); margin-bottom: 8px; code { font-size: 11px; } }
+.decomp-rationale { font-size: 12px; color: var(--slate-500); line-height: 1.5; }
+
+.delta-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px; background: var(--bg-base); border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+}
+.delta-label { font-size: 12px; color: var(--slate-500); }
+.delta-value { font-size: 16px; font-weight: 700; }
+.delta-pos   { color: #22c55e; }
+.delta-neg   { color: #ef4444; }
+.delta-hint  { font-size: 11px; color: var(--slate-400); font-style: italic; }
+
+/* ── Sección 3: Volatilidad ────────────────────────────────────────── */
+.vol-section { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); padding: 20px; margin-bottom: 20px; }
+.vol-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.vol-metric-card {
+  background: var(--bg-base); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 16px;
+}
+.vol-metric-header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.vol-metric-name   { font-size: 12px; font-weight: 700; color: var(--slate-700); }
+.vol-metric-badge  { font-size: 10px; font-weight: 600; padding: 1px 7px; background: rgba(245,158,11,.12); color: #f59e0b; border-radius: var(--r-pill); }
+.vol-metric-value  { font-size: 32px; font-weight: 700; color: var(--slate-900); letter-spacing: -.02em; line-height: 1; margin-bottom: 4px; }
+.vol-metric-unit   { font-size: 12px; font-weight: 400; color: var(--slate-400); vertical-align: bottom; margin-left: 4px; }
+.vol-metric-hint   { font-size: 11.5px; color: var(--slate-400); line-height: 1.5; margin-top: 8px; strong { color: var(--slate-600); } }
+.vol-ratio-label-row { display: flex; align-items: center; gap: 10px; margin: 6px 0 8px; }
+.vol-ratio-badge {
+  font-size: 11px; font-weight: 700; padding: 2px 10px; border-radius: var(--r-pill);
+  color: white; white-space: nowrap;
+}
+.vol-ratio-bar-wrap {
+  flex: 1; height: 6px; background: var(--border); border-radius: 4px; overflow: hidden;
+}
+.vol-ratio-bar { height: 6px; border-radius: 4px; transition: width .4s; }
+
+/* ── Sección 4: Regime confirmation ────────────────────────────────── */
+.regime-confirm-section { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); padding: 20px; margin-bottom: 20px; }
+.regime-confirm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.regime-confirm-card { background: var(--bg-base); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 16px; }
+.rc-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--slate-500); margin-bottom: 14px; }
+.rc-row   { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.rc-col   { flex: 1; text-align: center; }
+.rc-sub   { font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--slate-400); margin-bottom: 6px; }
+.rc-badge {
+  display: inline-block; padding: 5px 14px; border-radius: var(--r-pill);
+  font-size: 13px; font-weight: 700; color: white; margin-bottom: 6px;
+}
+.rc-hint  { font-size: 11px; color: var(--slate-400); line-height: 1.4; }
+.rc-arrow {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  color: var(--slate-400); font-size: 10px; font-weight: 600; text-transform: uppercase;
+  mat-icon { font-size: 20px; height: 20px; width: 20px; }
+}
+.rc-confirmation-legend {
+  display: flex; flex-wrap: wrap; gap: 8px; padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.rc-leg-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--slate-500); }
+.rc-leg-dot  { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+.vix-regime-display  { display: flex; align-items: center; gap: 10px; margin: 10px 0 14px; }
+.vix-regime-dot      { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; }
+.vix-regime-name     { font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+.vix-regime-scale    { display: flex; flex-direction: column; gap: 5px; }
+.vix-scale-item {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--slate-400); padding: 3px 6px;
+  border-radius: var(--r-sm); transition: background .15s;
+  em { font-style: normal; font-size: 11px; font-weight: 700; margin-left: auto; }
+  &.active { background: rgba(255,255,255,.06); color: var(--slate-700); font-weight: 600; }
+}
+.vix-scale-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+
+/* ── Sección 5: Dispersión de sentimiento ─────────────────────────── */
+.sentiment-section { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--r-md); padding: 20px; margin-bottom: 20px; }
+.disp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 700px) { .disp-grid { grid-template-columns: 1fr; } }
+.disp-main-card {
+  background: var(--bg-base); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 20px;
+}
+.disp-header-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+.disp-label-big  { font-size: 20px; font-weight: 700; }
+.disp-pct        { font-size: 28px; font-weight: 700; color: var(--slate-600); }
+.disp-bar-track  { height: 12px; background: var(--border); border-radius: 6px; overflow: hidden; margin-bottom: 6px; }
+.disp-bar-fill   { height: 12px; border-radius: 6px; transition: width .5s, background .5s; }
+.disp-scale-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--slate-400); }
+
+.disp-legend-card { background: var(--bg-base); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.disp-leg-item { display: flex; gap: 10px; align-items: flex-start; }
+.disp-leg-dot  { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; margin-top: 3px; }
+.disp-leg-item div { flex: 1; }
+.disp-leg-item strong { font-size: 12px; color: var(--slate-800); display: block; margin-bottom: 2px; }
+.disp-leg-item p { font-size: 11.5px; color: var(--slate-500); margin: 0; line-height: 1.4; }
+.disp-tech-note {
+  display: flex; align-items: flex-start; gap: 6px;
+  padding: 8px 10px; background: rgba(52,211,153,.05); border: 1px solid rgba(52,211,153,.15);
+  border-radius: var(--r-sm); font-size: 11px; color: var(--slate-500); margin-top: 4px;
+  mat-icon { font-size: 14px; height: 14px; width: 14px; color: #34d399; flex-shrink: 0; margin-top: 1px; }
+  code { font-size: 11px; }
+}
+
+/* Fase 2A empty state */
+.fase2a-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 40px 24px; text-align: center;
+  mat-icon { font-size: 36px; height: 36px; width: 36px; color: #60a5fa; opacity: .5; }
+  p { font-size: 13px; color: var(--slate-400); max-width: 480px; }
+  strong { color: var(--slate-600); }
+  code { font-size: 12px; }
+}

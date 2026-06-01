@@ -1,4 +1,4 @@
-import { Component, OnInit, inject } from '@angular/core';
+import { Component, OnDestroy, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
@@ -8,8 +8,9 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatExpansionModule } from '@angular/material/expansion';
 import { NgxChartsModule } from '@swimlane/ngx-charts';
-import { switchMap } from 'rxjs';
+import { Subject, switchMap, takeUntil } from 'rxjs';
 import { ReportService } from '../../core/services/report.service';
+import { PipelineContextService } from '../../core/services/pipeline-context.service';
 import { DailyReport, TickerView, ReportDateEntry } from '../../core/models/report.model';
 import { ChartDataPoint } from '../../core/models/pipeline.model';
 
@@ -24,8 +25,10 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
   templateUrl: './dashboard.component.html',
   styleUrl: './dashboard.component.scss',
 })
-export class DashboardComponent implements OnInit {
+export class DashboardComponent implements OnInit, OnDestroy {
   private reportSvc = inject(ReportService);
+  private pipelineCtx = inject(PipelineContextService);
+  private destroy$ = new Subject<void>();
 
   loading = true;
   report: DailyReport | null = null;
@@ -63,14 +66,35 @@ export class DashboardComponent implements OnInit {
   get sellCount() { return this.tickerViews.filter(t => t.signal === 'SELL').length; }
   get holdCount() { return this.tickerViews.filter(t => t.signal === 'HOLD').length; }
 
-  ngOnInit() { this.loadDates(); }
+  get pipelineLabel(): string {
+    return this.pipelineCtx.selectedPipeline()?.label ?? '';
+  }
+
+  get initialCapital(): number {
+    return this.pipelineCtx.selectedPipeline()?.initialCapital ?? 10_000;
+  }
+
+  ngOnInit() {
+    this.pipelineCtx.pipelineChanged$.pipe(takeUntil(this.destroy$)).subscribe(() => {
+      this.reportSvc.clearCache();
+      this.loadDates();
+    });
+    this.loadDates();
+  }
+
+  ngOnDestroy() {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
 
   private loadDates() {
+    this.loading = true;
     this.reportSvc.listAvailableDates().pipe(
       switchMap(dates => {
         this.availableDates = dates;
         if (dates.length === 0) { this.loading = false; return []; }
-        this.selectedDate = dates[0].date;
+        const endDate = this.pipelineCtx.pipelineEndDate() ?? dates[0].date;
+        this.selectedDate = endDate;
         return this.reportSvc.loadReport(this.selectedDate);
       })
     ).subscribe({
