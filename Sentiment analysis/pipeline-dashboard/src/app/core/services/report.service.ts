@@ -5,6 +5,7 @@ import { PipelineContextService } from './pipeline-context.service';
 import {
   DailyReport, TickerView, ReportDateEntry,
   ExposureRecommendation, ConvictionLabel,
+  ExposureBacktestingMetrics, ExposureBacktestingDiagnostics,
 } from '../models/report.model';
 import { ChartDataPoint, ChartSeries } from '../models/pipeline.model';
 
@@ -75,6 +76,18 @@ export class ReportService {
       const exposure_recommendation = this.calcExposureRec(exposure_pct, prob_up);
       const conviction_label = this.calcConviction(expl?.signal ?? 'HOLD', prob_up);
 
+      // Métricas de exposición continua (backend _calc_exposure_backtesting)
+      const expBm:   ExposureBacktestingMetrics    = report.exposure_backtesting_metrics?.[ticker]   ?? {} as any;
+      const expDiag: ExposureBacktestingDiagnostics = report.exposure_backtesting_diagnostics?.[ticker] ?? {} as any;
+
+      // Si hay métricas de exposición, usarlas; si no, derivar desde las binarias
+      // (esto mantiene compatibilidad con reports antiguos sin exposure_backtesting_metrics)
+      const exp_cum_return = expBm.cumulative_return ?? bm?.cumulative_return ?? 0;
+      const exp_sharpe     = expBm.sharpe_ratio      ?? bm?.sharpe_ratio ?? 0;
+      const exp_drawdown   = expBm.max_drawdown      ?? bm?.max_drawdown ?? 0;
+      const exp_equity     = expBm.final_equity      ?? bm?.final_equity ?? 10000;
+      const avg_exp        = (expDiag.avg_exposure   ?? exposure_pct / 100) * 100; // → porcentaje
+
       return {
         ticker,
         signal:    expl?.signal ?? 'HOLD',
@@ -84,16 +97,26 @@ export class ReportService {
           sentiment: 'neutral', rsi: 'neutral',
           trend: 'uptrend', volatility: 'low',
         },
+        // Binario (referencia)
         cumulative_return:  bm?.cumulative_return ?? 0,
         sharpe_ratio:       bm?.sharpe_ratio ?? 0,
         max_drawdown:       bm?.max_drawdown ?? 0,
         final_equity:       bm?.final_equity ?? 10000,
+        // Exposición continua (primario)
+        exp_cumulative_return: exp_cum_return,
+        exp_sharpe_ratio:      exp_sharpe,
+        exp_max_drawdown:      exp_drawdown,
+        exp_final_equity:      exp_equity,
+        avg_exposure:          avg_exp,
+        regime_distribution:   expDiag.regime_distribution ?? {},
+        // Operaciones
         win_rate:           diag?.win_rate ?? 0,
         trades_closed:      diag?.trades_closed ?? 0,
         profit_factor:      diag?.profit_factor ?? 0,
         signals_count:      diag?.signals ?? { BUY: 0, SELL: 0, HOLD: 0 },
         alpha_vs_benchmark: bench?.alpha_vs_benchmark ?? 0,
         buy_hold_return:    bench?.buy_hold_cumulative_return ?? 0,
+        // Exposición actual (último día)
         exposure_pct,
         exposure_recommendation,
         conviction_label,
@@ -135,23 +158,32 @@ export class ReportService {
     return Object.entries(counts).filter(([, v]) => v > 0).map(([name, value]) => ({ name, value }));
   }
 
+  /** Comparativa de retorno: Exposición continua (IA) vs Buy & Hold */
   returnComparisonChart(views: TickerView[]): ChartSeries[] {
     return [
-      { name: 'Estrategia', series: views.map(v => ({ name: v.ticker, value: +(v.cumulative_return * 100).toFixed(2) })) },
-      { name: 'Buy & Hold', series: views.map(v => ({ name: v.ticker, value: +(v.buy_hold_return * 100).toFixed(2) })) },
+      { name: 'Estrategia (Exposición)', series: views.map(v => ({ name: v.ticker, value: +(v.exp_cumulative_return * 100).toFixed(2) })) },
+      { name: 'Buy & Hold',              series: views.map(v => ({ name: v.ticker, value: +(v.buy_hold_return * 100).toFixed(2) })) },
     ];
   }
 
   sharpeChart(views: TickerView[]): ChartDataPoint[] {
-    return views.map(v => ({ name: v.ticker, value: +v.sharpe_ratio.toFixed(3) }));
+    return views.map(v => ({ name: v.ticker, value: +v.exp_sharpe_ratio.toFixed(3) }));
   }
 
   drawdownChart(views: TickerView[]): ChartDataPoint[] {
-    return views.map(v => ({ name: v.ticker, value: +(Math.abs(v.max_drawdown) * 100).toFixed(2) }));
+    return views.map(v => ({ name: v.ticker, value: +(Math.abs(v.exp_max_drawdown) * 100).toFixed(2) }));
   }
 
   alphaChart(views: TickerView[]): ChartDataPoint[] {
-    return views.map(v => ({ name: v.ticker, value: +(v.alpha_vs_benchmark * 100).toFixed(2) }));
+    // Alpha de exposición vs Buy & Hold
+    return views.map(v => ({
+      name: v.ticker,
+      value: +((v.exp_cumulative_return - v.buy_hold_return) * 100).toFixed(2),
+    }));
+  }
+
+  avgExposureChart(views: TickerView[]): ChartDataPoint[] {
+    return views.map(v => ({ name: v.ticker, value: +v.avg_exposure.toFixed(1) }));
   }
 
   probUpChart(views: TickerView[]): ChartDataPoint[] {

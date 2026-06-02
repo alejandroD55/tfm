@@ -14,7 +14,7 @@
  */
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpHeaders, HttpParams } from '@angular/common/http';
-import { Observable } from 'rxjs';
+import { Observable, map } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { BayesianTrace, ModelConfigResponse } from '../models/trace.model';
 
@@ -294,6 +294,25 @@ export class ApiService {
     return this.http.get<OhlcvWeekResponse>(
       `${this.baseUrl}/ohlcv/${ticker.toUpperCase()}/week/${date}`,
       { headers: this.authHeaders });
+  }
+
+  /**
+   * Mes de precios OHLCV: reutiliza el endpoint de performance con limit=30
+   * y devuelve el mismo formato OhlcvWeekResponse para compatibilidad con el mini-chart.
+   */
+  getOhlcvMonth(ticker: string, date: string): Observable<OhlcvWeekResponse> {
+    const params = new HttpParams().set('limit', '30');
+    return this.http.get<TickerPerformanceResponse>(
+      `${this.baseUrl}/ohlcv/${ticker.toUpperCase()}/performance/${date}`,
+      { headers: this.authHeaders, params }
+    ).pipe(
+      map(resp => ({
+        ticker:      ticker.toUpperCase(),
+        target_date: date,
+        points:      (resp?.points ?? []) as OhlcvPoint[],
+        total:       (resp?.points ?? []).length,
+      }))
+    );
   }
 
   /** Histórico para Highcharts: OHLC, Bollinger, señales y rendimiento hasta la fecha elegida */

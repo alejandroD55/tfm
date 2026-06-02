@@ -17,7 +17,7 @@ import { PipelineContextService } from '../../core/services/pipeline-context.ser
 import { DailyReport, TickerView, ReportDateEntry } from '../../core/models/report.model';
 import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
 
-type BacktestHistoryMetric = 'ai_return' | 'buy_hold' | 'alpha' | 'sharpe' | 'drawdown' | 'final_equity';
+type BacktestHistoryMetric = 'ai_return' | 'buy_hold' | 'alpha' | 'sharpe' | 'drawdown' | 'final_equity' | 'avg_exposure';
 
 interface BacktestHistoryPoint {
   date: string;
@@ -28,6 +28,7 @@ interface BacktestHistoryPoint {
   sharpe: number;
   drawdown: number;
   final_equity: number;
+  avg_exposure: number;   // % de capital invertido en ese corte temporal
 }
 
 interface SignalCyclePoint {
@@ -71,23 +72,16 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
   historyRows: BacktestHistoryPoint[] = [];
   signalCycles: SignalCyclePoint[] = [];
   historyChartOptionsByMetric: Record<BacktestHistoryMetric, Highcharts.Options> = {
-    ai_return: {},
-    buy_hold: {},
-    alpha: {},
-    sharpe: {},
-    drawdown: {},
-    final_equity: {},
+    ai_return: {}, buy_hold: {}, alpha: {}, sharpe: {}, drawdown: {}, final_equity: {}, avg_exposure: {},
   };
   historyChartUpdates: Record<BacktestHistoryMetric, boolean> = {
-    ai_return: false,
-    buy_hold: false,
-    alpha: false,
-    sharpe: false,
-    drawdown: false,
-    final_equity: false,
+    ai_return: false, buy_hold: false, alpha: false, sharpe: false,
+    drawdown: false, final_equity: false, avg_exposure: false,
   };
   cyclesChartOptions: Highcharts.Options = {};
   cyclesChartUpdate = false;
+  exposureChartOptions: Highcharts.Options = {};
+  exposureChartUpdate = false;
   historyMetricOptions: { value: BacktestHistoryMetric; label: string; unit: '%' | 'number' | '$'; description: string }[] = [
     { value: 'ai_return', label: 'Rentabilidad IA', unit: '%', description: 'Retorno acumulado de la estrategia Long/Cash' },
     { value: 'buy_hold', label: 'Mercado (B&H)', unit: '%', description: 'Retorno de comprar y mantener el ETF' },
@@ -95,15 +89,18 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
     { value: 'sharpe', label: 'Ratio Sharpe', unit: 'number', description: 'Retorno ajustado por riesgo anualizado' },
     { value: 'drawdown', label: 'Caída Máx.', unit: '%', description: 'Peor caída desde máximos de la curva' },
     { value: 'final_equity', label: 'Capital Final', unit: '$', description: 'Valor final partiendo de $10,000' },
+    { value: 'avg_exposure', label: 'Capital Desplegado', unit: '%', description: 'Fracción media del capital invertido · arranca en 0% y escala según las señales' },
   ];
 
   /** Altura del host para barras horizontales (Sharpe / Drawdown): escala con nº de ETFs. */
   sharpeDrawdownChartHeight = 320;
 
   tableSource = new MatTableDataSource<TickerView>();
-  tableCols = ['ticker', 'signal', 'return', 'bh', 'alpha', 'sharpe', 'drawdown', 'equity', 'trades', 'winrate', 'pf'];
+  // Exposición continua como primario | métricas binarias como referencia secundaria
+  tableCols = ['ticker', 'exp_return', 'exp_sharpe', 'exp_drawdown', 'exp_equity', 'avg_exp', 'bh', 'alpha', 'winrate'];
 
   compareScheme: any  = { domain: ['#2563EB', '#94A3B8'] }; // Azul corporativo (IA) vs Gris neutro (B&H)
+  tripleScheme: any   = { domain: ['#1d4ed8', '#7c3aed', '#64748b'] }; // Exposición | Binario | B&H
   drawdownScheme: any = { domain: ['#EF4444'] }; // Rojo
   
   // Coloreado dinámico para Alpha (Verde si gana al mercado, Rojo si pierde)
@@ -189,13 +186,21 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
     }
 
     // MAPEO FORZADO PARA EL GRÁFICO AGRUPADO: Eje X = ETF, Eje Y = IA vs Mercado
-    this.returnChart = this.tickerViews.map(t => ({
-      name: t.ticker,
-      series: [
-        { name: 'Estrategia IA', value: t.cumulative_return * 100 },
-        { name: 'Mercado (Buy & Hold)', value: t.buy_hold_return * 100 }
-      ]
-    }));
+    // 3 series: Exposición continua (primario) | Binario Long/Cash | Buy & Hold
+    this.returnChart = [
+      {
+        name: 'Exposición Gradual (IA)',
+        series: this.tickerViews.map(t => ({ name: t.ticker, value: +(t.exp_cumulative_return * 100).toFixed(2) }))
+      },
+      {
+        name: 'Estrategia Binaria (BUY/SELL)',
+        series: this.tickerViews.map(t => ({ name: t.ticker, value: +(t.cumulative_return * 100).toFixed(2) }))
+      },
+      {
+        name: 'Mercado (Buy & Hold)',
+        series: this.tickerViews.map(t => ({ name: t.ticker, value: +(t.buy_hold_return * 100).toFixed(2) }))
+      },
+    ];
 
     this.sharpeChart   = this.reportSvc.sharpeChart(this.tickerViews);
     this.drawdownChart = this.reportSvc.drawdownChart(this.tickerViews);
@@ -225,12 +230,14 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
           rows.push({
             date,
             ticker: view.ticker,
-            ai_return: view.cumulative_return * 100,
-            buy_hold: view.buy_hold_return * 100,
-            alpha: view.alpha_vs_benchmark * 100,
-            sharpe: view.sharpe_ratio,
-            drawdown: view.max_drawdown * 100,
-            final_equity: view.final_equity,
+            // Exposición continua (primario — la IA solo usa datos pasados)
+            ai_return:    view.exp_cumulative_return * 100,
+            buy_hold:     view.buy_hold_return * 100,
+            alpha:        (view.exp_cumulative_return - view.buy_hold_return) * 100,
+            sharpe:       view.exp_sharpe_ratio,
+            drawdown:     view.exp_max_drawdown * 100,
+            final_equity: view.exp_final_equity,
+            avg_exposure: view.avg_exposure,   // % capital desplegado hasta esa fecha
           });
         }
         for (const explain of report.top_signal_explanations ?? []) {
@@ -247,6 +254,7 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
       this.historyLoading = false;
       this.refreshAllHistoryCharts();
       this.refreshCyclesChart();
+      this.refreshExposureChart();
     }, () => {
       this.historyLoading = false;
       this.historyError = 'No se pudo cargar la evolución histórica del backtesting.';
@@ -330,6 +338,70 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
       };
       this.historyChartUpdates[metric.value] = true;
     }
+  }
+
+  /** Gráfico de progresión de capital desplegado (% exposición) por ticker a lo largo del backtesting */
+  private refreshExposureChart() {
+    if (!this.historyRows.length) {
+      this.exposureChartOptions = {};
+      this.exposureChartUpdate = true;
+      return;
+    }
+
+    const toTs = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
+    const tickers = [...new Set(this.historyRows.map(r => r.ticker))].sort();
+
+    const colorMap: Record<string, string> = {
+      SPY: '#1d4ed8', QQQ: '#7c3aed', GLD: '#d97706',
+      IWM: '#16a34a', XLE: '#b91c1c', NVDA: '#0891b2',
+    };
+    const defaultColors = ['#1d4ed8','#7c3aed','#d97706','#16a34a','#b91c1c','#0891b2'];
+
+    const series = tickers.map((ticker, idx) => {
+      const rows = this.historyRows
+        .filter(r => r.ticker === ticker)
+        .sort((a, b) => a.date.localeCompare(b.date));
+      return {
+        type: 'line' as const,
+        name: ticker,
+        data: rows.map(r => [toTs(r.date), +(r.avg_exposure).toFixed(1)]),
+        color: colorMap[ticker] ?? defaultColors[idx % defaultColors.length],
+        lineWidth: 2.5,
+        marker: { enabled: false },
+      };
+    });
+
+    this.exposureChartOptions = {
+      chart: {
+        height: 280,
+        backgroundColor: 'transparent',
+        zooming: { type: 'x' },
+      },
+      title: { text: undefined },
+      credits: { enabled: false },
+      rangeSelector: { enabled: false },
+      navigator: { enabled: false },
+      scrollbar: { enabled: false },
+      legend: { enabled: true, align: 'right', verticalAlign: 'top' },
+      xAxis: { type: 'datetime' },
+      yAxis: {
+        title: { text: '% Capital desplegado' },
+        min: 0, max: 100,
+        plotLines: [
+          { value: 50, color: '#94a3b8', width: 1, dashStyle: 'Dash',
+            label: { text: 'Floor 50% (régimen NEUTRAL)', style: { color: '#94a3b8', fontSize: '10px' } } },
+          { value: 70, color: '#22c55e', width: 1, dashStyle: 'Dot',
+            label: { text: '70% — Alta convicción', style: { color: '#16a34a', fontSize: '10px' } } },
+        ],
+        labels: { formatter: function() { return `${this.value}%`; } },
+      },
+      tooltip: { valueSuffix: '%', valueDecimals: 1, shared: true },
+      plotOptions: {
+        series: { dataGrouping: { enabled: false } } as any,
+      },
+      series: series as any,
+    };
+    this.exposureChartUpdate = true;
   }
 
   private refreshCyclesChart() {

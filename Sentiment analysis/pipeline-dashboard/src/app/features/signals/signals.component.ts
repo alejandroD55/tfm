@@ -438,7 +438,7 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
   loadOhlcvWeek(ticker: string) {
     if (this.ohlcvWeekCache.has(ticker) || this.ohlcvWeekLoading.has(ticker)) return;
     this.ohlcvWeekLoading.add(ticker);
-    this.apiSvc.getOhlcvWeek(ticker, this.selectedDate).pipe(
+    this.apiSvc.getOhlcvMonth(ticker, this.selectedDate).pipe(
       catchError(() => of(null))
     ).subscribe(resp => {
       this.ohlcvWeekLoading.delete(ticker);

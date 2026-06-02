@@ -54,9 +54,28 @@ export interface SignalExplanation {
 
 export interface BacktestingMetrics {
   cumulative_return: number;
-  sharpe_ratio: number;
-  max_drawdown: number;
-  final_equity: number;
+  sharpe_ratio:      number;
+  max_drawdown:      number;
+  final_equity:      number;
+}
+
+/**
+ * Métricas del backtesting de exposición continua.
+ * Fórmula: portfolio_return_t = market_return_t × smoothed_exposure_t
+ * La IA no sabe el futuro — usa solo la señal del día calculada con datos pasados.
+ */
+export interface ExposureBacktestingMetrics {
+  cumulative_return: number;   // retorno acumulado con exposición modulada
+  sharpe_ratio:      number;
+  max_drawdown:      number;
+  final_equity:      number;   // capital final partiendo de 10.000 €
+}
+
+export interface ExposureBacktestingDiagnostics {
+  avg_exposure:       number;                     // exposición media durante el periodo
+  min_exposure:       number;
+  max_exposure:       number;
+  regime_distribution: Record<string, number>;    // días por régimen: BULL/NEUTRAL/HIGH_VOL/BEAR
 }
 
 export interface SignalDiagnostics {
@@ -87,14 +106,17 @@ export interface ReportSummary {
 // ─── Full report (maps to s3://tfm-unir-datalake/results/{DATE}/report.json) ──
 
 export interface DailyReport {
-  report_date: string;
-  data_period_days: number;
-  pipeline_health: PipelineHealth;
-  signal_diagnostics: Record<string, SignalDiagnostics>;
-  benchmark_comparison: Record<string, BenchmarkComparison>;
+  report_date:       string;
+  data_period_days:  number;
+  pipeline_health:   PipelineHealth;
+  signal_diagnostics:    Record<string, SignalDiagnostics>;
+  benchmark_comparison:  Record<string, BenchmarkComparison>;
   top_signal_explanations: SignalExplanation[];
-  backtesting_metrics: Record<string, BacktestingMetrics>;
-  summary: ReportSummary;
+  backtesting_metrics:   Record<string, BacktestingMetrics>;
+  summary:               ReportSummary;
+  // Backtesting de exposición continua (output primario)
+  exposure_backtesting_metrics?:     Record<string, ExposureBacktestingMetrics>;
+  exposure_backtesting_diagnostics?: Record<string, ExposureBacktestingDiagnostics>;
 }
 
 // ─── Enriched ticker view (joined from several sections) ─────────────────
@@ -105,18 +127,33 @@ export interface TickerView {
   prob_up:           number;
   prob_down:         number;
   evidence:          BayesianEvidence;
+
+  // ── Backtesting binario (referencia) ─────────────────────────────────────
   cumulative_return: number;
   sharpe_ratio:      number;
   max_drawdown:      number;
   final_equity:      number;
+
+  // ── Backtesting de exposición continua (PRIMARIO) ─────────────────────────
+  // La IA modula la posición día a día con datos solo del pasado.
+  // Comienza en 0% y escala gradualmente según señales bayesianas.
+  exp_cumulative_return: number;
+  exp_sharpe_ratio:      number;
+  exp_max_drawdown:      number;
+  exp_final_equity:      number;
+  avg_exposure:          number;   // % de exposición media durante el periodo
+  regime_distribution:   Record<string, number>;
+
+  // ── Diagnóstico de operaciones ────────────────────────────────────────────
   win_rate:          number;
   trades_closed:     number;
   profit_factor:     number;
   signals_count:     { BUY: number; SELL: number; HOLD: number };
   alpha_vs_benchmark:number;
   buy_hold_return:   number;
-  // ── Exposición continua (calculada desde prob_up con lógica backend) ──
-  exposure_pct:           number;               // 0–100 (smoothed_exposure × 100)
+
+  // ── Exposición actual (último día) ────────────────────────────────────────
+  exposure_pct:           number;
   exposure_recommendation:ExposureRecommendation;
   conviction_label:       ConvictionLabel;
 }
