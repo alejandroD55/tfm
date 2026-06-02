@@ -27,7 +27,7 @@ export interface PipelineHealth {
   batch_status: BatchStatus;
   tickers_expected: number;
   tickers_with_indicators: number;
-  tickers_with_signals: number;
+  tickers_with_recommendations: number;
   headlines_scored: number;
   coverage_ratio: number;
   stage_kpis: StageKpis;
@@ -42,9 +42,9 @@ export interface BayesianEvidence {
   volatility: VolatilityState;
 }
 
-export interface SignalExplanation {
+export interface RecommendationExplanation {
   ticker: string;
-  signal: TradingSignal;
+  exposure_recommendation: ExposureRecommendation;
   prob_up: number;
   prob_down: number;
   evidence: BayesianEvidence;
@@ -78,8 +78,14 @@ export interface ExposureBacktestingDiagnostics {
   regime_distribution: Record<string, number>;    // días por régimen: BULL/NEUTRAL/HIGH_VOL/BEAR
 }
 
-export interface SignalDiagnostics {
-  signals: { BUY: number; SELL: number; HOLD: number };
+export interface RecommendationDiagnostics {
+  recommendations: {
+    INCREASE_STRONG: number;
+    INCREASE_MILD: number;
+    MAINTAIN: number;
+    REDUCE_MILD: number;
+    REDUCE_STRONG: number;
+  };
   trades_closed: number;
   win_rate: number;
   avg_trade_return: number;
@@ -109,9 +115,9 @@ export interface DailyReport {
   report_date:       string;
   data_period_days:  number;
   pipeline_health:   PipelineHealth;
-  signal_diagnostics:    Record<string, SignalDiagnostics>;
+  recommendation_diagnostics:    Record<string, RecommendationDiagnostics>;
   benchmark_comparison:  Record<string, BenchmarkComparison>;
-  top_signal_explanations: SignalExplanation[];
+  top_recommendation_explanations: RecommendationExplanation[];
   backtesting_metrics:   Record<string, BacktestingMetrics>;
   summary:               ReportSummary;
   // Backtesting de exposición continua (output primario)
@@ -123,7 +129,6 @@ export interface DailyReport {
 
 export interface TickerView {
   ticker:            string;
-  signal:            TradingSignal;
   prob_up:           number;
   prob_down:         number;
   evidence:          BayesianEvidence;
@@ -148,7 +153,13 @@ export interface TickerView {
   win_rate:          number;
   trades_closed:     number;
   profit_factor:     number;
-  signals_count:     { BUY: number; SELL: number; HOLD: number };
+  recommendations_count: {
+    INCREASE_STRONG: number;
+    INCREASE_MILD: number;
+    MAINTAIN: number;
+    REDUCE_MILD: number;
+    REDUCE_STRONG: number;
+  };
   alpha_vs_benchmark:number;
   buy_hold_return:   number;
 

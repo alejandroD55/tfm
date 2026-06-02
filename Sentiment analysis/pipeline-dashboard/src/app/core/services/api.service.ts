@@ -643,7 +643,7 @@ export interface TickerPerformancePoint extends OhlcvPoint {
   bb_middle:        number | null;
   bb_upper:         number | null;
   bb_lower:         number | null;
-  signal:           'BUY' | 'SELL' | 'HOLD' | null;
+  exposure_recommendation: 'INCREASE_STRONG' | 'INCREASE_MILD' | 'MAINTAIN' | 'REDUCE_MILD' | 'REDUCE_STRONG' | null;
   prob_up:          number | null;
   position:         'LONG' | 'CASH';
   strategy_return:  number;
@@ -651,9 +651,9 @@ export interface TickerPerformancePoint extends OhlcvPoint {
   drawdown:         number;
 }
 
-export interface TickerPerformanceSignal {
+export interface TickerPerformanceRecommendation {
   date:    string;
-  signal:  'BUY' | 'SELL' | 'HOLD';
+  exposure_recommendation: 'INCREASE_STRONG' | 'INCREASE_MILD' | 'MAINTAIN' | 'REDUCE_MILD' | 'REDUCE_STRONG';
   prob_up: number | null;
 }
 
@@ -667,7 +667,7 @@ export interface TickerPerformanceResponse {
   ticker:       string;
   target_date:  string;
   points:       TickerPerformancePoint[];
-  signals:      TickerPerformanceSignal[];
+  recommendations:      TickerPerformanceRecommendation[];
   stages:       TickerPerformanceStage[];
   max_drawdown: {
     date:            string;

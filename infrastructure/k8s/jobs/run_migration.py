@@ -188,7 +188,25 @@ def list_migration_files():
     if env_dir:
         candidates.append(Path(env_dir))
     candidates.append(Path("/migration/migrations"))
-    candidates.append(Path(__file__).resolve().parents[3] / "migrations")
+
+    # Fallbacks robustos para ejecución local/CI con layouts distintos.
+    this_file = Path(__file__).resolve()
+    for parent in this_file.parents:
+        candidates.append(parent / "migrations")
+    candidates.append(Path.cwd() / "migrations")
+    if Path.cwd().name == "infrastructure":
+        candidates.append(Path.cwd().parent / "migrations")
+
+    # Deduplicar conservando orden.
+    seen = set()
+    unique_candidates = []
+    for c in candidates:
+        s = str(c)
+        if s in seen:
+            continue
+        seen.add(s)
+        unique_candidates.append(c)
+    candidates = unique_candidates
 
     migrations_dir = None
     for candidate in candidates:

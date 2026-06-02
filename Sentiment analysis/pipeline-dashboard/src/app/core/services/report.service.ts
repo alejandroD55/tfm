@@ -62,11 +62,17 @@ export class ReportService {
   // ─── Construye TickerView[] para todos los tickers ────────────────
   buildTickerViews(report: DailyReport): TickerView[] {
     const tickers = Object.keys(report.backtesting_metrics);
+    const recommendationDiagnostics = (report as any).recommendation_diagnostics
+      ?? (report as any).signal_diagnostics
+      ?? {};
+    const recommendationExplanations = (report as any).top_recommendation_explanations
+      ?? (report as any).top_signal_explanations
+      ?? [];
     return tickers.map(ticker => {
       const bm    = report.backtesting_metrics[ticker];
-      const diag  = report.signal_diagnostics[ticker];
+      const diag  = recommendationDiagnostics[ticker];
       const bench = report.benchmark_comparison[ticker];
-      const expl  = report.top_signal_explanations.find(e => e.ticker === ticker);
+      const expl  = recommendationExplanations.find((e: any) => e.ticker === ticker);
 
       const prob_up = expl?.prob_up ?? 0.5;
 
@@ -74,7 +80,7 @@ export class ReportService {
       // Floors NEUTRAL: [0.50, 0.85]. Rango de referencia prob_up: [0.30, 0.75].
       const exposure_pct = this.calcExposurePct(prob_up);
       const exposure_recommendation = this.calcExposureRec(exposure_pct, prob_up);
-      const conviction_label = this.calcConviction(expl?.signal ?? 'HOLD', prob_up);
+      const conviction_label = this.calcConviction(prob_up);
 
       // Métricas de exposición continua (backend _calc_exposure_backtesting)
       const expBm:   ExposureBacktestingMetrics    = report.exposure_backtesting_metrics?.[ticker]   ?? {} as any;
@@ -90,7 +96,6 @@ export class ReportService {
 
       return {
         ticker,
-        signal:    expl?.signal ?? 'HOLD',
         prob_up,
         prob_down: expl?.prob_down ?? 0.5,
         evidence:  expl?.evidence ?? {
@@ -113,7 +118,13 @@ export class ReportService {
         win_rate:           diag?.win_rate ?? 0,
         trades_closed:      diag?.trades_closed ?? 0,
         profit_factor:      diag?.profit_factor ?? 0,
-        signals_count:      diag?.signals ?? { BUY: 0, SELL: 0, HOLD: 0 },
+        recommendations_count: diag?.recommendations ?? {
+          INCREASE_STRONG: 0,
+          INCREASE_MILD: 0,
+          MAINTAIN: 0,
+          REDUCE_MILD: 0,
+          REDUCE_STRONG: 0,
+        },
         alpha_vs_benchmark: bench?.alpha_vs_benchmark ?? 0,
         buy_hold_return:    bench?.buy_hold_cumulative_return ?? 0,
         // Exposición actual (último día)
@@ -140,21 +151,25 @@ export class ReportService {
     return 'REDUCE_STRONG';
   }
 
-  /** Convicción aproximada desde la recomendación base y distancia al umbral */
-  private calcConviction(signal: string, prob_up: number): ConvictionLabel {
-    const dist = signal === 'BUY'  ? prob_up - 0.52
-               : signal === 'SELL' ? 0.28 - prob_up
-               : Math.min(Math.abs(prob_up - 0.52), Math.abs(0.28 - prob_up));
-    if (dist >= 0.15) return 'high';
-    if (dist >= 0.05) return 'medium';
+  /** Convicción aproximada desde distancia a la zona de incertidumbre. */
+  private calcConviction(prob_up: number): ConvictionLabel {
+    const dist = Math.abs(prob_up - 0.5);
+    if (dist >= 0.20) return 'high';
+    if (dist >= 0.10) return 'medium';
     return 'low';
   }
 
   // ─── Charts ───────────────────────────────────────────────────────
 
   signalDistributionChart(views: TickerView[]): ChartDataPoint[] {
-    const counts = { BUY: 0, SELL: 0, HOLD: 0 };
-    for (const v of views) counts[v.signal as keyof typeof counts]++;
+    const counts: Record<string, number> = {
+      INCREASE_STRONG: 0,
+      INCREASE_MILD: 0,
+      MAINTAIN: 0,
+      REDUCE_MILD: 0,
+      REDUCE_STRONG: 0,
+    };
+    for (const v of views) counts[v.exposure_recommendation] = (counts[v.exposure_recommendation] ?? 0) + 1;
     return Object.entries(counts).filter(([, v]) => v > 0).map(([name, value]) => ({ name, value }));
   }
 
@@ -197,11 +212,11 @@ export class ReportService {
       report_date: '', data_period_days: 90,
       pipeline_health: {
         batch_status: 'UNKNOWN', tickers_expected: 0,
-        tickers_with_indicators: 0, tickers_with_signals: 0,
+        tickers_with_indicators: 0, tickers_with_recommendations: 0,
         headlines_scored: 0, coverage_ratio: 0, stage_kpis: {},
       },
-      signal_diagnostics: {}, benchmark_comparison: {},
-      top_signal_explanations: [], backtesting_metrics: {},
+      recommendation_diagnostics: {}, benchmark_comparison: {},
+      top_recommendation_explanations: [], backtesting_metrics: {},
       summary: {
         total_tickers: 0, avg_cumulative_return: 0,
         avg_sharpe_ratio: 0, avg_max_drawdown: 0, total_closed_trades: 0,

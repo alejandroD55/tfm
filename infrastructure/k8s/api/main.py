@@ -1020,7 +1020,7 @@ def get_regime_report(
 
 
 @app.get("/analytics/stability/{date}", tags=["Quant Audit"])
-def get_signal_stability_report(
+def get_recommendation_stability_report(
     date: str,
     ticker: Optional[str] = Query(default=None),
     days_back: int = Query(default=365, ge=30, le=1500),
@@ -1028,7 +1028,7 @@ def get_signal_stability_report(
 ):
     """Estabilidad de recomendaciones, whipsaws y distancia a bordes de decisión/exposición."""
     return _audit_section(
-        date, "signal_stability_report", days_back, ticker=ticker, x_api_key=x_api_key
+        date, "recommendation_stability_report", days_back, ticker=ticker, x_api_key=x_api_key
     )
 
 
@@ -1071,7 +1071,7 @@ def get_contributions_for_date(
                 "_id": 0,
                 "batch_date": 1,
                 "ticker": 1,
-                "signal": 1,
+                "inference.exposure_recommendation": 1,
                 "prob_up": 1,
                 "contribution_analysis": 1,
             },
@@ -1105,7 +1105,7 @@ def get_contribution_for_ticker(
             "_id": 0,
             "batch_date": 1,
             "ticker": 1,
-            "signal": 1,
+            "inference.exposure_recommendation": 1,
             "prob_up": 1,
             "inference": 1,
             "contribution_analysis": 1,
@@ -1165,29 +1165,32 @@ def get_audit_replay(
         )
     }
     days = []
-    previous_signal = None
+    previous_recommendation = None
     for doc in docs:
         doc_s = _serialize_doc(doc)
         inference = doc_s.get("inference") or {}
         macro_context = inference.get("macro_context") or macro_docs.get(doc_s.get("batch_date"), {})
-        signal = doc_s.get("signal") or inference.get("signal")
+        recommendation = (
+            inference.get("exposure_recommendation")
+            or doc_s.get("exposure_recommendation")
+        )
+        if not recommendation:
+            recommendation = "MAINTAIN"
         days.append(
             {
                 "date": doc_s.get("batch_date"),
                 "ticker": ticker_u,
                 "prob_up": doc_s.get("prob_up") or inference.get("prob_up"),
-                "signal": signal,
-                "raw_signal": inference.get("raw_signal"),
-                "signal_changed": previous_signal is not None and signal != previous_signal,
-                "previous_signal": previous_signal,
-                "hysteresis_status": inference.get("hysteresis_status"),
-                "threshold_used": doc_s.get("threshold_used") or inference.get("threshold_used"),
+                "exposure_recommendation": recommendation,
+                "raw_exposure_recommendation": inference.get("raw_exposure_recommendation"),
+                "recommendation_changed": previous_recommendation is not None and recommendation != previous_recommendation,
+                "previous_recommendation": previous_recommendation,
                 "macro_context": macro_context,
                 "contribution_analysis": doc_s.get("contribution_analysis", {}),
                 "reasoning": doc_s.get("reasoning"),
             }
         )
-        previous_signal = signal
+        previous_recommendation = recommendation
 
     return {
         "event": event or "custom_window",
@@ -1744,13 +1747,13 @@ def get_ticker_performance_history(
             db["bayesian_reports"]
             .find(
                 {"ticker": ticker_u, "batch_date": {"$gte": first_date, "$lte": end_s}},
-                {"_id": 0, "batch_date": 1, "signal": 1, "prob_up": 1},
+                {"_id": 0, "batch_date": 1, "inference.exposure_recommendation": 1, "prob_up": 1},
             )
             .sort("batch_date", 1)
         )
         signals = {
             str(doc.get("batch_date"))[:10]: {
-                "signal": doc.get("signal") or "HOLD",
+                "exposure_recommendation": ((doc.get("inference") or {}).get("exposure_recommendation") or "MAINTAIN"),
                 "prob_up": float(doc.get("prob_up") or 0),
             }
             for doc in signal_docs
@@ -1774,14 +1777,14 @@ def get_ticker_performance_history(
 
         for i, row in enumerate(rows):
             d = row["date"]
-            sig = signals.get(d, {"signal": "HOLD", "prob_up": None})
+            sig = signals.get(d, {"exposure_recommendation": "MAINTAIN", "prob_up": None})
 
             if i > 0:
                 prev = rows[i - 1]
-                prev_sig = signals.get(prev["date"], {"signal": "HOLD"})
-                if prev_sig.get("signal") == "BUY":
+                prev_sig = signals.get(prev["date"], {"exposure_recommendation": "MAINTAIN"})
+                if str(prev_sig.get("exposure_recommendation")).startswith("INCREASE"):
                     position = 1
-                elif prev_sig.get("signal") == "SELL":
+                elif str(prev_sig.get("exposure_recommendation")).startswith("REDUCE"):
                     position = 0
 
                 stage_name = "LONG" if position else "CASH"
@@ -1821,7 +1824,7 @@ def get_ticker_performance_history(
                 "bb_middle": round(bb_middle, 6) if bb_middle is not None else None,
                 "bb_upper": round(bb_upper, 6) if bb_upper is not None else None,
                 "bb_lower": round(bb_lower, 6) if bb_lower is not None else None,
-                "signal": sig.get("signal"),
+                "exposure_recommendation": sig.get("exposure_recommendation"),
                 "prob_up": sig.get("prob_up"),
                 "position": "LONG" if position else "CASH",
                 "strategy_return": round(strategy_return, 6),
@@ -1835,8 +1838,8 @@ def get_ticker_performance_history(
             "ticker": ticker_u,
             "target_date": date,
             "points": points,
-            "signals": [
-                {"date": d, "signal": v["signal"], "prob_up": v["prob_up"]}
+            "recommendations": [
+                {"date": d, "exposure_recommendation": v["exposure_recommendation"], "prob_up": v["prob_up"]}
                 for d, v in sorted(signals.items())
                 if first_date <= d <= end_s
             ],
@@ -2228,15 +2231,15 @@ def mongo_news_detail(date: str, ticker: str, x_api_key: str = Header(default=""
 def mongo_bayesian_history(
     ticker: str,
     limit: int = Query(default=30, ge=1, le=365),
-    signal: str = Query(default=None),
+    exposure_recommendation: str = Query(default=None),
     x_api_key: str = Header(default=""),
 ):
     """Historial de reportes bayesianos para un ticker."""
     check_api_key(x_api_key)
     db = _require_mongo()
     query: dict = {"ticker": ticker.upper()}
-    if signal:
-        query["signal"] = signal.upper()
+    if exposure_recommendation:
+        query["inference.exposure_recommendation"] = exposure_recommendation.upper()
     docs = [_serialize_doc(d) for d in
             db["bayesian_reports"].find(query).sort("batch_date", -1).limit(limit)]
     return {"ticker": ticker.upper(), "total": len(docs), "results": docs}
@@ -2263,7 +2266,7 @@ def mongo_reports(
     check_api_key(x_api_key)
     db = _require_mongo()
     docs = [_serialize_doc(d) for d in
-            db["reports"].find({}, {"top_signal_explanations": 0})
+            db["reports"].find({}, {"top_recommendation_explanations": 0})
                          .sort("report_date", -1).skip(skip).limit(limit)]
     total = db["reports"].count_documents({})
     return {"total": total, "skip": skip, "limit": limit, "results": docs}
@@ -2295,7 +2298,7 @@ def mongo_ticker_analytics(
         {"$match": {"ticker": ticker.upper(), "batch_date": {"$gte": since}}},
         {"$sort": {"batch_date": 1}},
         {"$project": {
-            "batch_date": 1, "signal": 1, "prob_up": 1, "prob_down": 1,
+            "batch_date": 1, "inference.exposure_recommendation": 1, "prob_up": 1, "prob_down": 1,
             "rsi_14": "$raw_values.rsi_14",
             "sma_spread": "$raw_values.sma_spread",
             "bb_width": "$raw_values.bb_width_ratio",
@@ -2306,12 +2309,14 @@ def mongo_ticker_analytics(
         }},
     ]
     docs = [_serialize_doc(d) for d in db["bayesian_reports"].aggregate(pipeline)]
-    signal_dist = {"BUY": 0, "SELL": 0, "HOLD": 0}
+    recommendation_dist = {
+        "INCREASE_STRONG": 0, "INCREASE_MILD": 0, "MAINTAIN": 0, "REDUCE_MILD": 0, "REDUCE_STRONG": 0
+    }
     for d in docs:
-        s = d.get("signal", "HOLD")
-        signal_dist[s] = signal_dist.get(s, 0) + 1
+        rec = ((d.get("inference") or {}).get("exposure_recommendation") or "MAINTAIN")
+        recommendation_dist[rec] = recommendation_dist.get(rec, 0) + 1
     return {"ticker": ticker.upper(), "period_days": days, "since": since,
-            "total_records": len(docs), "signal_distribution": signal_dist, "timeline": docs}
+            "total_records": len(docs), "recommendation_distribution": recommendation_dist, "timeline": docs}
 
 
 @app.get("/mongo/stats", tags=["MongoDB"])
@@ -2362,7 +2367,7 @@ def mongo_setup_indexes(x_api_key: str = Header(default="")):
     db["bayesian_reports"].create_index(
         [("batch_date", ASCENDING), ("ticker", ASCENDING)], unique=True)
     db["bayesian_reports"].create_index([("ticker", ASCENDING), ("batch_date", DESCENDING)])
-    db["bayesian_reports"].create_index([("signal", ASCENDING)])
+    db["bayesian_reports"].create_index([("inference.exposure_recommendation", ASCENDING)])
     created.append("bayesian_reports: 3 indices (1 unico)")
     db["reports"].create_index([("report_date", ASCENDING)], unique=True)
     created.append("reports: 1 indice unico")

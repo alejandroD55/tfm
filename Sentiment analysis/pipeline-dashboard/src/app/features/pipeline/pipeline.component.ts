@@ -17,7 +17,7 @@ interface BatchSummary {
   date: string;
   status: string;
   tickers_expected: number;
-  tickers_with_signals: number;
+  tickers_with_recommendations: number;
   headlines_scored: number;
   coverage_ratio: number;
   stage_kpis: Record<string, any>;
@@ -118,7 +118,7 @@ export class PipelineComponent implements OnInit, OnDestroy {
             date: r.report_date,
             status: r.pipeline_health.batch_status,
             tickers_expected: r.pipeline_health.tickers_expected,
-            tickers_with_signals: r.pipeline_health.tickers_with_signals,
+            tickers_with_recommendations: r.pipeline_health.tickers_with_recommendations,
             headlines_scored: r.pipeline_health.headlines_scored,
             coverage_ratio: r.pipeline_health.coverage_ratio,
             stage_kpis: stage_kpis, // Ahora incluye la Lambda 5
@@ -162,7 +162,7 @@ export class PipelineComponent implements OnInit, OnDestroy {
   // 4. Gráfico de Recomendaciones Emitidas
     this.signalsChart = sortedBatches.map(b => ({
       name: b.date.slice(5),
-      value: b.tickers_with_signals,
+      value: b.tickers_with_recommendations,
     }));
   }
 

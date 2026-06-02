@@ -183,7 +183,16 @@ def normalize_signal_rows(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]
         prob_up = row.get("prob_up")
         if prob_up is None:
             prob_up = inference.get("prob_up")
-        signal = row.get("signal") or inference.get("signal") or "HOLD"
+        recommendation = (
+            row.get("exposure_recommendation")
+            or inference.get("exposure_recommendation")
+            or "MAINTAIN"
+        )
+        signal = (
+            "BUY" if recommendation in ("INCREASE_STRONG", "INCREASE_MILD")
+            else "SELL" if recommendation in ("REDUCE_STRONG", "REDUCE_MILD")
+            else "HOLD"
+        )
         ticker = row.get("ticker")
         if not ticker:
             continue
@@ -255,11 +264,21 @@ def normalize_outcome_rows(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any
         ticker = row.get("ticker")
         if not ticker:
             continue
+        recommendation = (
+            row.get("exposure_recommendation")
+            or "MAINTAIN"
+        )
+        signal = (
+            "BUY" if recommendation in ("INCREASE_STRONG", "INCREASE_MILD")
+            else "SELL" if recommendation in ("REDUCE_STRONG", "REDUCE_MILD")
+            else "HOLD"
+        )
         out.append(
             {
                 "batch_date": _date_str(row.get("batch_date")),
                 "ticker": str(ticker).upper(),
-                "signal": str(row.get("signal") or "HOLD").upper(),
+                "signal": signal,
+                "exposure_recommendation": recommendation,
                 "prob_up": _float_or_none(row.get("prob_up")),
                 "outcome_d1": row.get("outcome_d1"),
                 "outcome_d3": row.get("outcome_d3"),

@@ -117,6 +117,10 @@ NEWSAPI_UNLIMITED_HISTORY = os.getenv("NEWSAPI_UNLIMITED_HISTORY", "").lower() i
     "on",
 )
 
+# Motor discriminativo opcional (LightGBM).
+# Si no está inicializado/disponible, la inferencia cae automáticamente al camino bayesiano.
+_disc_engine = None
+
 DEBUG_NEWS = os.getenv("BOOTSTRAP_DEBUG_NEWS", "").lower() in ("1", "true", "yes", "on")
 DEBUG_NEWS_HEADLINES = int(os.getenv("BOOTSTRAP_DEBUG_NEWS_HEADLINES", "3"))
 REFRESH_NEWS_CACHE = os.getenv("BOOTSTRAP_REFRESH_NEWS_CACHE", "").lower() in (
@@ -125,6 +129,9 @@ REFRESH_NEWS_CACHE = os.getenv("BOOTSTRAP_REFRESH_NEWS_CACHE", "").lower() in (
     "yes",
     "on",
 )
+# Cuando una fuente no publica exactamente en el dia objetivo, reutilizamos
+# articulos de dias inmediatamente anteriores para evitar gaps artificiales.
+TICKER_NEWS_LOOKBACK_DAYS = int(os.getenv("BOOTSTRAP_TICKER_NEWS_LOOKBACK_DAYS", "3"))
 
 DB_CONFIG = {
     "host": os.getenv("POSTGRES_HOST", "localhost"),
@@ -1321,6 +1328,40 @@ def merge_ticker_articles(
     return merged
 
 
+def _get_ticker_articles_for_day(
+    source_by_day: Dict[str, List[Dict]],
+    target_date_str: str,
+    lookback_days: int = 0,
+) -> Tuple[List[Dict], int]:
+    """
+    Devuelve articulos para el dia objetivo; si no hay, busca hacia atras
+    hasta lookback_days para mejorar cobertura en historico.
+    Retorna (articles, age_days), donde age_days=0 significa fecha exacta.
+    """
+    if not source_by_day:
+        return [], -1
+
+    direct = source_by_day.get(target_date_str, [])
+    if direct:
+        return direct, 0
+
+    if lookback_days <= 0:
+        return [], -1
+
+    try:
+        target_date = datetime.strptime(target_date_str, "%Y-%m-%d").date()
+    except Exception:
+        return [], -1
+
+    for age in range(1, lookback_days + 1):
+        prior = (target_date - timedelta(days=age)).strftime("%Y-%m-%d")
+        arts = source_by_day.get(prior, [])
+        if arts:
+            return arts, age
+
+    return [], -1
+
+
 def fetch_vix_historical(start_d: date, end_d: date) -> pd.Series:
     df = yf.download(
         "^VIX",
@@ -2469,9 +2510,21 @@ def _process_ticker_day(
         thread_conn.commit()
 
         # ── Ingesta multi-fuente ─────────────────────────────────────────────
-        finnhub_arts = news_all.get(ticker, {}).get(date_str, [])
-        alphavantage_arts = alphavantage_news.get(ticker, {}).get(date_str, [])
-        newsapi_arts = newsapi_ticker_news.get(ticker, {}).get(date_str, [])
+        finnhub_arts, finnhub_age = _get_ticker_articles_for_day(
+            news_all.get(ticker, {}),
+            date_str,
+            lookback_days=TICKER_NEWS_LOOKBACK_DAYS,
+        )
+        alphavantage_arts, alphavantage_age = _get_ticker_articles_for_day(
+            alphavantage_news.get(ticker, {}),
+            date_str,
+            lookback_days=TICKER_NEWS_LOOKBACK_DAYS,
+        )
+        newsapi_arts, newsapi_age = _get_ticker_articles_for_day(
+            newsapi_ticker_news.get(ticker, {}),
+            date_str,
+            lookback_days=TICKER_NEWS_LOOKBACK_DAYS,
+        )
         yfinance_arts = fetch_yfinance_ticker_news(ticker, date_str)
         articles = merge_ticker_articles(
             finnhub_arts, alphavantage_arts, newsapi_arts, yfinance_arts
@@ -2483,6 +2536,17 @@ def _process_ticker_day(
             f"NewsAPI={len(newsapi_arts)} "
             f"YFinance={len(yfinance_arts)} merged={len(articles)}"
         )
+        if DEBUG_NEWS:
+            for source_name, age in (
+                ("Finnhub", finnhub_age),
+                ("AlphaVantage", alphavantage_age),
+                ("NewsAPI", newsapi_age),
+            ):
+                if age > 0:
+                    logger.info(
+                        f"[news-lookback] {date_str} {ticker} {source_name}: "
+                        f"usando articulos de D-{age}"
+                    )
         if DEBUG_NEWS:
             for source_name, source_articles in (
                 ("Finnhub", finnhub_arts),

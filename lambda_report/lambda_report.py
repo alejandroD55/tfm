@@ -44,6 +44,22 @@ MODEL_AUDIT_CONFIG = {
 }
 
 
+def classify_exposure_recommendation_from_prob(prob_up: float) -> str:
+    """Clasificación en 5 niveles de exposición a partir de prob_up."""
+    t = (float(prob_up) - 0.30) / (0.75 - 0.30)
+    t = max(0.0, min(1.0, t))
+    pct = (0.50 + t * (0.85 - 0.50)) * 100.0
+    if pct >= 75:
+        return "INCREASE_STRONG"
+    if pct >= 62:
+        return "INCREASE_MILD"
+    if pct >= 52 and float(prob_up) >= 0.48:
+        return "MAINTAIN"
+    if pct >= 50:
+        return "REDUCE_MILD"
+    return "REDUCE_STRONG"
+
+
 def resolve_batch_date(event):
     raw_date = (event or {}).get("batch_date") or (event or {}).get("date")
     if raw_date:
@@ -122,7 +138,7 @@ def get_trading_data(connection, report_date, days_back=DAYS_BACK):
         end_date = pd.to_datetime(report_date).date()
         start_date = end_date - timedelta(days=days_back)
         query = """
-            SELECT ts.batch_date, ts.ticker, ts.signal, ts.prob_up, ts.prob_down,
+            SELECT ts.batch_date, ts.ticker, ts.exposure_recommendation, ts.prob_up, ts.prob_down,
                    ti.close_price, ti.rsi_14, ti.sma_20, ti.sma_50,
                    ti.bb_upper, ti.bb_middle, ti.bb_lower
             FROM trading_signals ts
@@ -134,7 +150,7 @@ def get_trading_data(connection, report_date, days_back=DAYS_BACK):
         signals_df = pd.DataFrame(
             cursor.fetchall(),
             columns=[
-                "batch_date", "ticker", "signal", "prob_up", "prob_down",
+                "batch_date", "ticker", "exposure_recommendation", "prob_up", "prob_down",
                 "close_price", "rsi_14", "sma_20", "sma_50",
                 "bb_upper", "bb_middle", "bb_lower"
             ],
@@ -152,7 +168,7 @@ def get_signal_outcomes(connection, report_date, days_back=DAYS_BACK):
         start_date = end_date - timedelta(days=days_back)
         cursor.execute(
             """
-            SELECT batch_date, ticker, signal, prob_up, outcome_d1, outcome_d3,
+            SELECT batch_date, ticker, exposure_recommendation, prob_up, outcome_d1, outcome_d3,
                    outcome_d5, correct_d1, correct_d3, correct_d5
             FROM signal_outcomes
             WHERE batch_date >= %s AND batch_date <= %s
@@ -161,7 +177,7 @@ def get_signal_outcomes(connection, report_date, days_back=DAYS_BACK):
             (start_date, end_date),
         )
         cols = [
-            "batch_date", "ticker", "signal", "prob_up", "outcome_d1",
+            "batch_date", "ticker", "exposure_recommendation", "prob_up", "outcome_d1",
             "outcome_d3", "outcome_d5", "correct_d1", "correct_d3", "correct_d5",
         ]
         rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
@@ -199,26 +215,28 @@ def calculate_backtesting_metrics(signals_df):
             trades_returns = []
             days_invested = 0
 
-            signals_count = ticker_signals["signal"].value_counts().to_dict()
+            recommendations_count = ticker_signals["exposure_recommendation"].value_counts().to_dict()
 
             for idx, row in ticker_signals.iterrows():
                 current_price = float(row["close_price"]) if row["close_price"] else 0.0
                 if current_price == 0:
                     continue
 
-                signal = row["signal"]
+                recommendation = classify_exposure_recommendation_from_prob(
+                    float(row["prob_up"]) if row["prob_up"] is not None else 0.5
+                )
 
-                if signal == "BUY":
+                if recommendation in ("INCREASE_STRONG", "INCREASE_MILD"):
                     if current_position == 0:  # Entrar en el mercado (Comprar)
                         current_position = 1
                         entry_price = current_price
-                elif signal == "SELL":
+                elif recommendation in ("REDUCE_STRONG", "REDUCE_MILD"):
                     if current_position == 1:  # Salir del mercado (Vender a liquidez)
                         trade_return = (current_price - entry_price) / entry_price
                         current_capital *= 1 + trade_return
                         trades_returns.append(float(trade_return))
                         current_position = 0
-                # HOLD: no opera. Mantiene la posición actual (LONG o CASH).
+                # MAINTAIN: no opera. Mantiene la posición actual (LONG o CASH).
 
                 # Para dibujar la curva de capital diaria de forma realista, calculamos el valor 
                 # de mercado (Mark-to-Market) si estamos invertidos.
@@ -274,10 +292,12 @@ def calculate_backtesting_metrics(signals_df):
             )
 
             diagnostics[ticker] = {
-                "signals": {
-                    "BUY": int(signals_count.get("BUY", 0)),
-                    "SELL": int(signals_count.get("SELL", 0)),
-                    "HOLD": int(signals_count.get("HOLD", 0)),
+                "recommendations": {
+                    "INCREASE_STRONG": int(recommendations_count.get("INCREASE_STRONG", 0)),
+                    "INCREASE_MILD": int(recommendations_count.get("INCREASE_MILD", 0)),
+                    "MAINTAIN": int(recommendations_count.get("MAINTAIN", 0)),
+                    "REDUCE_MILD": int(recommendations_count.get("REDUCE_MILD", 0)),
+                    "REDUCE_STRONG": int(recommendations_count.get("REDUCE_STRONG", 0)),
                 },
                 "trades_closed": len(trades_returns),
                 "win_rate": (
@@ -322,7 +342,7 @@ def get_pipeline_health(connection, report_date, run_id):
         "SELECT COUNT(DISTINCT ticker) FROM trading_signals WHERE batch_date = %s",
         (report_date,),
     )
-    signal_tickers = cursor.fetchone()[0]
+    recommendation_tickers = cursor.fetchone()[0]
     cursor.execute(
         "SELECT COUNT(*) FROM sentiment_scores WHERE batch_date = %s", (report_date,)
     )
@@ -345,10 +365,10 @@ def get_pipeline_health(connection, report_date, run_id):
         "batch_status": batch_row[1] if batch_row else "UNKNOWN",
         "tickers_expected": tickers_expected,
         "tickers_with_indicators": int(indicator_tickers or 0),
-        "tickers_with_signals": int(signal_tickers or 0),
+        "tickers_with_recommendations": int(recommendation_tickers or 0),
         "headlines_scored": int(headlines or 0),
         "coverage_ratio": (
-            round(float((signal_tickers or 0) / tickers_expected), 4)
+            round(float((recommendation_tickers or 0) / tickers_expected), 4)
             if tickers_expected
             else 0.0
         ),
@@ -360,7 +380,7 @@ def get_explanations_sample(connection, report_date, limit=10):
     cursor = connection.cursor()
     cursor.execute(
         """
-        SELECT e.ticker, ts.signal, ts.prob_up, ts.prob_down, e.sentiment_state, e.rsi_state, e.trend_state, e.volatility_state
+        SELECT e.ticker, ts.exposure_recommendation, ts.prob_up, ts.prob_down, e.sentiment_state, e.rsi_state, e.trend_state, e.volatility_state
         FROM signal_explanations e JOIN trading_signals ts ON ts.batch_date = e.batch_date AND ts.ticker = e.ticker
         WHERE e.batch_date = %s ORDER BY ts.prob_up DESC LIMIT %s
     """,
@@ -371,7 +391,7 @@ def get_explanations_sample(connection, report_date, limit=10):
     return [
         {
             "ticker": r[0],
-            "signal": r[1],
+            "exposure_recommendation": r[1],
             "prob_up": round(float(r[2]), 4) if r[2] is not None else None,
             "prob_down": round(float(r[3]), 4) if r[3] is not None else None,
             "evidence": {
@@ -446,27 +466,30 @@ def _outcome(price_d0: float, price_dn: float | None) -> str | None:
     return "FLAT"
 
 
-def _is_correct(signal: str, outcome: str | None) -> bool | None:
-    """Devuelve True si la señal predijo correctamente la dirección."""
+def _is_correct(recommendation: str, outcome: str | None) -> bool | None:
+    """Devuelve True si la recomendación predijo correctamente la dirección."""
     if outcome is None:
         return None
-    if signal == "BUY"  and outcome == "UP":   return True
-    if signal == "SELL" and outcome == "DOWN": return True
-    if signal == "HOLD" and outcome == "FLAT": return True
+    if recommendation in ("INCREASE_STRONG", "INCREASE_MILD") and outcome == "UP":
+        return True
+    if recommendation in ("REDUCE_STRONG", "REDUCE_MILD") and outcome == "DOWN":
+        return True
+    if recommendation == "MAINTAIN" and outcome == "FLAT":
+        return True
     return False
 
 
 def upsert_signal_outcomes(connection, batch_date: str, signals_df: pd.DataFrame,
                            explanations_raw: list, run_id: str):
     """
-    Persiste señales del día en signal_outcomes (paso 1: precio D0, nodos Y MACRO).
+    Persiste recomendaciones del día en signal_outcomes (paso 1: precio D0, nodos Y MACRO).
     Además actualiza outcomes de días anteriores (D+1, D+3, D+5).
     """
     cursor = connection.cursor()
 
     # ── Paso 1: insertar señales de hoy (AHORA INCLUYE JOIN MACRO) ────────────
     cursor.execute("""
-        SELECT ts.ticker, ts.signal, ts.prob_up, ts.prob_down,
+        SELECT ts.ticker, ts.exposure_recommendation, ts.prob_up, ts.prob_down,
                se.sentiment_state, se.rsi_state, se.trend_state, se.volatility_state,
                ms.macro_sentiment, mr.risk_regime, mr.macro_adjustment
         FROM trading_signals ts
@@ -478,16 +501,16 @@ def upsert_signal_outcomes(connection, batch_date: str, signals_df: pd.DataFrame
     rows = cursor.fetchall()
 
     for row in rows:
-        ticker, signal, prob_up, prob_down, sent, rsi, trend, vol, macro_sent, risk_reg, macro_adj = row
+        ticker, rec, prob_up, prob_down, sent, rsi, trend, vol, macro_sent, risk_reg, macro_adj = row
         price_d0 = get_close_price(ticker, batch_date)
         cursor.execute("""
             INSERT INTO signal_outcomes
-                (batch_date, ticker, run_id, signal, prob_up, prob_down,
+                (batch_date, ticker, run_id, exposure_recommendation, prob_up, prob_down,
                  sentiment_state, rsi_state, trend_state, volatility_state, price_d0,
                  macro_sentiment, risk_regime, macro_adjustment)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (batch_date, ticker) DO UPDATE SET
-                signal           = EXCLUDED.signal,
+                exposure_recommendation = EXCLUDED.exposure_recommendation,
                 prob_up          = EXCLUDED.prob_up,
                 prob_down        = EXCLUDED.prob_down,
                 sentiment_state  = EXCLUDED.sentiment_state,
@@ -499,7 +522,7 @@ def upsert_signal_outcomes(connection, batch_date: str, signals_df: pd.DataFrame
                 risk_regime      = EXCLUDED.risk_regime,
                 macro_adjustment = EXCLUDED.macro_adjustment,
                 updated_at       = CURRENT_TIMESTAMP
-        """, (batch_date, ticker, run_id, signal,
+        """, (batch_date, ticker, run_id, rec,
               float(prob_up) if prob_up else None,
               float(prob_down) if prob_down else None,
               sent, rsi, trend, vol, price_d0, 
@@ -514,16 +537,16 @@ def upsert_signal_outcomes(connection, batch_date: str, signals_df: pd.DataFrame
     ]:
         target_date = str(today - timedelta(days=days_ago))
         cursor.execute(f"""
-            SELECT ticker, signal, price_d0
+            SELECT ticker, exposure_recommendation, price_d0
             FROM signal_outcomes
             WHERE batch_date = %s AND price_d0 IS NOT NULL AND {col_outcome} IS NULL
         """, (target_date,))
         pending = cursor.fetchall()
 
-        for ticker, signal, price_d0 in pending:
+        for ticker, rec, price_d0 in pending:
             price_dn = get_close_price(ticker, batch_date)
             outcome  = _outcome(price_d0, price_dn)
-            correct  = _is_correct(signal, outcome)
+            correct  = _is_correct(rec, outcome)
             if outcome:
                 cursor.execute(f"""
                     UPDATE signal_outcomes
@@ -534,7 +557,7 @@ def upsert_signal_outcomes(connection, batch_date: str, signals_df: pd.DataFrame
 
     connection.commit()
     cursor.close()
-    logger.info(f"signal_outcomes: {len(rows)} señales de hoy insertadas, históricos actualizados.")
+    logger.info(f"signal_outcomes: {len(rows)} recomendaciones de hoy insertadas, históricos actualizados.")
 
 
 def upsert_pipeline_kpi(connection, batch_date, run_id, trigger_type, stage, metrics):
@@ -585,7 +608,7 @@ def handler(event, context):
             "data_period_days": DAYS_BACK,
             "generated_at": datetime.now().isoformat(),
             "pipeline_health": pipeline_health,
-            "signal_diagnostics": diagnostics,
+            "recommendation_diagnostics": diagnostics,
             "benchmark_comparison": {
                 ticker: {
                     "strategy_cumulative_return": backtest_metrics[ticker][
@@ -600,7 +623,7 @@ def handler(event, context):
                 }
                 for ticker in backtest_metrics
             },
-            "top_signal_explanations": explanations,
+            "top_recommendation_explanations": explanations,
             "backtesting_metrics": backtest_metrics,
             "summary": {
                 "total_tickers": len(backtest_metrics),
@@ -642,7 +665,7 @@ def handler(event, context):
                 "period_days": DAYS_BACK,
                 "strategy_type": "Long/Cash",
                 "sharpe_annualized": True,
-                "limitation": "El backtesting asume ejecucion al cierre. Estrategia Long/Cash: BUY entra al mercado, SELL cierra posicion y HOLD mantiene el estado actual.",
+                "limitation": "El backtesting asume ejecucion al cierre. Estrategia Long/Cash: recomendaciones de incremento abren posición, reducción cierra posición y mantener conserva el estado actual.",
             },
             "trace_artifact": f"mongo:bayesian_traces/{today}",
             "quant_audit_artifact": f"mongo:quant_audit_reports/{today}",

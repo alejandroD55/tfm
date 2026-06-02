@@ -699,7 +699,7 @@
                         <span class="dec-val">{{ translateState(row.evidence.volatility) | uppercase }}</span>
                       </div>
                       <span class="dec-arrow">→</span>
-                      <div class="dec-result {{ row.signal.toLowerCase() }}">
+                      <div class="dec-result {{ expRecClass(row.exposure_recommendation) }}">
                         <span class="dec-cap">Decisión Final</span>
                         <span class="dec-val">{{ expRecLabel(row.exposure_recommendation) }}</span>
                         <span class="dec-sub">Confianza Alcista: {{ (row.prob_up*100)|number:'1.1-1' }}%</span>
@@ -886,8 +886,8 @@
             <article class="signal-card" role="listitem" [attr.aria-label]="'Recomendación para ' + row.ticker">
               <header class="signal-card-head">
                 <span class="ticker-name">{{ row.ticker }}</span>
-                <span class="signal-pill {{ row.signal.toLowerCase() }}">
-                  <mat-icon>{{ signalIcon(row.signal) }}</mat-icon>
+                <span class="signal-pill {{ expRecClass(row.exposure_recommendation) }}">
+                  <mat-icon>{{ signalIcon(row.exposure_recommendation) }}</mat-icon>
                   {{ expRecLabel(row.exposure_recommendation) }}
                 </span>
               </header>

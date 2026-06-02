@@ -160,6 +160,18 @@ MODEL_CONFIG = {
             "Evita salidas falsas por una noticia bearish puntual en tendencia alcista."
         ),
     },
+    "exposure_recommendation_policy": {
+        "description": (
+            "Decision policy primario basado en exposición objetivo/constrain. "
+            "BUY/HOLD/SELL se conserva solo como derivación legacy para compatibilidad."
+        ),
+        "bands_pct": {
+            "INCREASE_STRONG_min": 75.0,
+            "INCREASE_MILD_min": 62.0,
+            "MAINTAIN_min": 52.0,
+            "REDUCE_MILD_min": 50.0,
+        },
+    },
     "known_limitations": [
         "El confidence score de FinBERT no entra en la inferencia (solo se guarda)",
         "Se usa voto mayoritario de los titulares",
@@ -455,7 +467,52 @@ def infer_signal(model, evidence_states, macro_context: dict = None):
     }
 
 
-def build_reasoning(evidence_states, prob_up, signal):
+def classify_exposure_recommendation(
+    *,
+    constrained_exposure: float | None = None,
+    target_exposure: float | None = None,
+    prob_up: float | None = None,
+) -> tuple[str, float | None]:
+    """
+    Clasificación primaria en 5 niveles de exposición.
+    Prioriza constrained_exposure; luego target_exposure; fallback a prob_up.
+    """
+    exposure = constrained_exposure
+    if exposure is None:
+        exposure = target_exposure
+
+    if exposure is not None:
+        pct = max(0.0, min(100.0, float(exposure) * 100.0))
+    elif prob_up is not None:
+        # Fallback consistente con frontend actual para evitar huecos sin constraints.
+        t = (float(prob_up) - 0.30) / (0.75 - 0.30)
+        t = max(0.0, min(1.0, t))
+        pct = (0.50 + t * (0.85 - 0.50)) * 100.0
+    else:
+        return "MAINTAIN", None
+
+    bands = MODEL_CONFIG["exposure_recommendation_policy"]["bands_pct"]
+    if pct >= bands["INCREASE_STRONG_min"]:
+        return "INCREASE_STRONG", round(pct, 2)
+    if pct >= bands["INCREASE_MILD_min"]:
+        return "INCREASE_MILD", round(pct, 2)
+    if pct >= bands["MAINTAIN_min"] and (prob_up is None or float(prob_up) >= 0.48):
+        return "MAINTAIN", round(pct, 2)
+    if pct >= bands["REDUCE_MILD_min"]:
+        return "REDUCE_MILD", round(pct, 2)
+    return "REDUCE_STRONG", round(pct, 2)
+
+
+def recommendation_to_legacy_signal(recommendation: str) -> str:
+    """Compatibilidad temporal con contratos legacy en Aurora/reporting."""
+    if recommendation in ("INCREASE_STRONG", "INCREASE_MILD"):
+        return "BUY"
+    if recommendation == "MAINTAIN":
+        return "HOLD"
+    return "SELL"
+
+
+def build_reasoning(evidence_states, prob_up, recommendation):
     parts = []
     s, r, t, v = (
         evidence_states.get(k) for k in ("Sentiment", "RSI", "Trend", "Volatility")
@@ -480,19 +537,9 @@ def build_reasoning(evidence_states, prob_up, signal):
     if v == "high":
         parts.append("alta volatilidad")
 
-    th = (
-        MODEL_CONFIG["signal_thresholds"]["BUY"]["prob_up_above"]
-        if signal == "BUY"
-        else (
-            MODEL_CONFIG["signal_thresholds"]["SELL"]["prob_up_below"]
-            if signal == "SELL"
-            else MODEL_CONFIG["signal_thresholds"]["HOLD"]["range"]
-        )
-    )
-
     return (
         f"Evidencias: {', '.join(parts) if parts else 'mixtas'}. "
-        f"P(subida)={prob_up:.2%} -> senal {signal} (umbral: {th})."
+        f"P(subida)={prob_up:.2%} -> recomendación {recommendation}."
     )
 
 
@@ -720,7 +767,7 @@ def handler(event, context):
         else:
             logger.info("Sin contexto macro disponible — ajuste = 0.0")
 
-        tickers_trace, signals_processed, skipped = {}, 0, []
+        tickers_trace, recommendations_processed, skipped = {}, 0, []
 
         for ticker in tickers:
             cursor = None
@@ -762,31 +809,16 @@ def handler(event, context):
                     if _mongo_read_feature_snapshot
                     else None
                 )
-                raw_signal, prob_up, prob_down, macro_info = infer_signal(
+                _, prob_up, prob_down, macro_info = infer_signal(
                     model, evidence_states, macro_context
                 )
                 contribution_analysis = build_contribution_analysis(
                     model, evidence_states, macro_context
                 )
 
-                # ── Hysteresis: consultar historial y confirmar señal ─────────
-                recent_sigs = get_recent_signals(
-                    connection, ticker, latest_date, SELL_CONFIRMATION_DAYS
-                )
-                confirmed_signal, hysteresis_status = apply_signal_hysteresis(
-                    raw_signal, recent_sigs
-                )
-                if confirmed_signal != raw_signal:
-                    logger.info(
-                        f"[HYSTERESIS] {ticker}: raw={raw_signal} "
-                        f"→ confirmed={confirmed_signal} ({hysteresis_status})"
-                    )
-                signal = confirmed_signal  # downstream usa siempre la señal confirmada
-
-                reasoning = build_reasoning(evidence_states, prob_up, signal)
-
                 feature_ref = f"feature_snapshots/{latest_date}/{ticker.upper()}"
                 exposure_constraints = {}
+                target_exp = None
                 if apply_exposure_constraints and prob_to_exposure:
                     macro_detail = (macro_context or {}).get("detail") or {}
                     vix = macro_detail.get("vix")
@@ -821,6 +853,16 @@ def handler(event, context):
                             latest_date, ticker, feature_snapshot
                         )
 
+                constrained_exp = exposure_constraints.get("constrained_exposure")
+                raw_recommendation, recommendation_exposure_pct = classify_exposure_recommendation(
+                    constrained_exposure=constrained_exp,
+                    target_exposure=target_exp,
+                    prob_up=prob_up,
+                )
+                recommendation = raw_recommendation
+
+                reasoning = build_reasoning(evidence_states, prob_up, recommendation)
+
                 upsert_signal_explanation(
                     connection, latest_date, ticker, evidence_states
                 )
@@ -828,10 +870,14 @@ def handler(event, context):
                 cursor = connection.cursor()
                 cursor.execute(
                     """
-                    INSERT INTO trading_signals (batch_date, ticker, signal, prob_up, prob_down) VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (batch_date, ticker) DO UPDATE SET signal=EXCLUDED.signal, prob_up=EXCLUDED.prob_up, prob_down=EXCLUDED.prob_down
+                    INSERT INTO trading_signals (batch_date, ticker, exposure_recommendation, prob_up, prob_down)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (batch_date, ticker) DO UPDATE SET
+                      exposure_recommendation=EXCLUDED.exposure_recommendation,
+                      prob_up=EXCLUDED.prob_up,
+                      prob_down=EXCLUDED.prob_down
                 """,
-                    (latest_date, ticker, signal, prob_up, prob_down),
+                    (latest_date, ticker, recommendation, prob_up, prob_down),
                 )
                 connection.commit()
 
@@ -860,18 +906,9 @@ def handler(event, context):
                     "inference": {
                         "prob_up":           prob_up,
                         "prob_down":         prob_down,
-                        "signal":            signal,
-                        "raw_signal":        raw_signal,
-                        "hysteresis_status": hysteresis_status,
-                        "threshold_used": (
-                            MODEL_CONFIG["signal_thresholds"]["BUY"]["prob_up_above"]
-                            if signal == "BUY"
-                            else (
-                                MODEL_CONFIG["signal_thresholds"]["SELL"]["prob_up_below"]
-                                if signal == "SELL"
-                                else MODEL_CONFIG["signal_thresholds"]["HOLD"]["range"]
-                            )
-                        ),
+                        "exposure_recommendation": recommendation,
+                        "raw_exposure_recommendation": raw_recommendation,
+                        "recommendation_exposure_pct": recommendation_exposure_pct,
                         "macro_context": macro_info,
                     },
                     "contribution_analysis": contribution_analysis,
@@ -887,7 +924,7 @@ def handler(event, context):
                         tickers_trace[ticker],
                         MODEL_CONFIG["version"],
                     )
-                signals_processed += 1
+                recommendations_processed += 1
             except Exception as e:
                 # Si una operación SQL falla, hay que limpiar la transacción para
                 # que el siguiente ticker no herede el estado "aborted".
@@ -907,14 +944,14 @@ def handler(event, context):
             "trigger_type": ctx["trigger_type"],
             "batch_date": latest_date,
             "tickers_attempted": len(tickers),
-            "signals_generated": signals_processed,
+            "recommendations_generated": recommendations_processed,
             "tickers_skipped": len(skipped),
             "skipped_detail": skipped,
         }
         if not tickers_trace:
             execution_meta["warning"] = "no_signals_generated"
             logger.warning(
-                f"bayesian {latest_date}: 0 senales; "
+                f"bayesian {latest_date}: 0 recomendaciones; "
                 f"attempted={len(tickers)} skipped={len(skipped)}"
             )
         trace_key = save_bayesian_trace(latest_date, tickers_trace, execution_meta)
@@ -926,7 +963,7 @@ def handler(event, context):
             "bayesian",
             {
                 "tickers_with_sentiment": len(tickers),
-                "signals_generated": signals_processed,
+                "recommendations_generated": recommendations_processed,
                 "tickers_skipped": len(skipped),
                 "trace_storage": "mongo",
                 "trace_ref": trace_key,
@@ -940,7 +977,7 @@ def handler(event, context):
             "body": json.dumps(
                 {
                     "message": "Bayesian inference completed",
-                    "signals": signals_processed,
+                    "recommendations": recommendations_processed,
                     "trace_key": trace_key,
                 }
             ),

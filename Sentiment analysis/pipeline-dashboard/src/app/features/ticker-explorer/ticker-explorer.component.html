@@ -286,9 +286,9 @@
       </div>
       @if (tickerTrace) {
         <div
-          class="tb-signal {{ tickerTrace.inference.signal.toLowerCase() }}"
+          class="tb-signal {{ tickerTrace.inference.exposure_recommendation.toLowerCase() }}"
         >
-          {{ tickerTrace.inference.signal }}
+          {{ tickerTrace.inference.exposure_recommendation }}
         </div>
         <div class="tb-prob">
           <div class="tbp-label">P(subida)</div>
@@ -436,7 +436,7 @@
                   (tickerTrace?.sentiment_detail?.dominant?.confidence ||
                     0) * 100 | number: '1.0-0'
                 }}% confidence) → señal
-                <strong>{{ tickerTrace?.inference?.signal }}</strong>
+                <strong>{{ tickerTrace?.inference?.exposure_recommendation }}</strong>
               </div>
             </div>
           }
@@ -655,10 +655,10 @@
             </div>
             <div
               class="result-signal {{
-                tickerTrace.inference.signal.toLowerCase()
+                tickerTrace.inference.exposure_recommendation.toLowerCase()
               }}"
             >
-              {{ tickerTrace.inference.signal }}
+              {{ tickerTrace.inference.exposure_recommendation }}
             </div>
             <div class="result-probs">
               <div>
@@ -678,9 +678,11 @@
                 >
               </div>
             </div>
-            <div class="result-threshold">
-              Umbral: {{ tickerTrace.inference.threshold_used }}
-            </div>
+            @if (tickerTrace.inference.recommendation_exposure_pct != null) {
+              <div class="result-threshold">
+                Exposición implícita: {{ tickerTrace.inference.recommendation_exposure_pct | number: '1.1-1' }}%
+              </div>
+            }
           </div>
         </div>
       </section>

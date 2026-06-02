@@ -240,11 +240,16 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
             avg_exposure: view.avg_exposure,   // % capital desplegado hasta esa fecha
           });
         }
-        for (const explain of report.top_signal_explanations ?? []) {
+        for (const explain of report.top_recommendation_explanations ?? []) {
+          const signal = explain.exposure_recommendation.startsWith('INCREASE')
+            ? 'BUY'
+            : explain.exposure_recommendation.startsWith('REDUCE')
+              ? 'SELL'
+              : 'HOLD';
           cycles.push({
             date,
             ticker: explain.ticker,
-            signal: explain.signal,
+            signal: signal as 'BUY' | 'SELL' | 'HOLD',
           });
         }
       });

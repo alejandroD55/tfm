@@ -92,8 +92,9 @@ export interface MacroContext {
 export interface TickerInference {
   prob_up:        number;
   prob_down:      number;
-  signal:         string;
-  threshold_used: number | number[];
+  exposure_recommendation: string;
+  raw_exposure_recommendation?: string;
+  recommendation_exposure_pct?: number;
   macro_context?: MacroContext;
 }
 
@@ -112,7 +113,7 @@ export interface ExecutionMeta {
   finished_at:       string;
   duration_seconds:  number;
   tickers_attempted: number;
-  signals_generated: number;
+  recommendations_generated: number;
   tickers_skipped:   number;
   skipped_detail:    { ticker: string; reason: string }[];
 }

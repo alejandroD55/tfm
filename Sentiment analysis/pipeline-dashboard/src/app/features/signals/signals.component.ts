@@ -303,24 +303,24 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     }));
 
     // Flags del gráfico de precio — traducimos la recomendación interna BN a lenguaje de exposición
-    const flagColor = (signal: string) =>
-      signal === 'BUY' ? '#16a34a' : signal === 'SELL' ? '#7c3aed' : '#94a3b8';
-    const flagTitle = (signal: string) =>
-      signal === 'BUY' ? '↑' : signal === 'SELL' ? '↓' : '→';
-    const flagText  = (signal: string, probUp: number | null) => {
+    const flagColor = (rec: string) =>
+      rec.startsWith('INCREASE') ? '#16a34a' : rec.startsWith('REDUCE') ? '#7c3aed' : '#94a3b8';
+    const flagTitle = (rec: string) =>
+      rec === 'INCREASE_STRONG' ? '↑↑' : rec === 'INCREASE_MILD' ? '↑' : rec === 'REDUCE_STRONG' ? '↓↓' : rec === 'REDUCE_MILD' ? '↓' : '→';
+    const flagText  = (rec: string, probUp: number | null) => {
       const pct = probUp != null ? ` · P(↑) ${(probUp * 100).toFixed(1)}%` : '';
-      return signal === 'BUY'  ? `Aumentar exposición${pct}`
-           : signal === 'SELL' ? `Reducir exposición${pct}`
+      return rec.startsWith('INCREASE')  ? `Aumentar exposición${pct}`
+           : rec.startsWith('REDUCE') ? `Reducir exposición${pct}`
            : `Mantener exposición${pct}`;
     };
 
-    const signalFlags = resp.signals
-      .filter(s => s.signal !== 'HOLD')
+    const signalFlags = resp.recommendations
+      .filter(s => s.exposure_recommendation !== 'MAINTAIN')
       .map(s => ({
         x: toTs(s.date),
-        title: flagTitle(s.signal),
-        text:  flagText(s.signal, s.prob_up),
-        fillColor: flagColor(s.signal),
+        title: flagTitle(s.exposure_recommendation),
+        text:  flagText(s.exposure_recommendation, s.prob_up),
+        fillColor: flagColor(s.exposure_recommendation),
       }));
 
     return {
@@ -639,8 +639,8 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     return 'yellow'; 
   }
 
-  signalIcon(s: string) {
-    return ({ BUY: 'arrow_upward', SELL: 'arrow_downward', HOLD: 'remove' } as Record<string, string>)[s] ?? 'remove';
+  signalIcon(rec: string) {
+    return this.expRecIcon(rec);
   }
 
   // ── Helpers de exposición ─────────────────────────────────────────────────

@@ -63,17 +63,18 @@ CREATE TABLE IF NOT EXISTS trading_signals (
     id SERIAL PRIMARY KEY,
     batch_date DATE NOT NULL,
     ticker VARCHAR(10) NOT NULL,
-    signal VARCHAR(10) NOT NULL,
+    exposure_recommendation VARCHAR(24) NOT NULL,
+    signal VARCHAR(10),
     prob_up FLOAT,
     prob_down FLOAT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT signal_check CHECK (signal IN ('BUY', 'SELL', 'HOLD')),
+    CONSTRAINT exposure_recommendation_check CHECK (exposure_recommendation IN ('INCREASE_STRONG','INCREASE_MILD','MAINTAIN','REDUCE_MILD','REDUCE_STRONG')),
     CONSTRAINT probability_check CHECK (prob_up >= 0 AND prob_up <= 1 AND prob_down >= 0 AND prob_down <= 1),
     UNIQUE(batch_date, ticker)
 );
 
 CREATE INDEX IF NOT EXISTS idx_signals_date_ticker ON trading_signals(batch_date, ticker);
-CREATE INDEX IF NOT EXISTS idx_signals_signal ON trading_signals(signal);
+CREATE INDEX IF NOT EXISTS idx_signals_exposure_recommendation ON trading_signals(exposure_recommendation);
 
 -- Tabla de explicabilidad de señales
 CREATE TABLE IF NOT EXISTS signal_explanations (
@@ -123,7 +124,7 @@ CREATE OR REPLACE VIEW latest_signals AS
 SELECT
     ts.batch_date,
     ts.ticker,
-    ts.signal,
+    ts.exposure_recommendation,
     ts.prob_up,
     ts.prob_down,
     ss.sentiment,
@@ -142,7 +143,7 @@ CREATE OR REPLACE VIEW signal_history AS
 SELECT
     ts.batch_date,
     ts.ticker,
-    ts.signal,
+    ts.exposure_recommendation,
     ts.prob_up,
     COUNT(*) OVER (PARTITION BY ts.ticker ORDER BY ts.batch_date ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) as consecutive_signals
 FROM trading_signals ts

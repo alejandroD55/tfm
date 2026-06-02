@@ -137,12 +137,18 @@ export class AuditComponent implements OnInit, OnDestroy {
   }
 
   // Clase CSS para la recomendación de exposición
-  signalClass(signal: string): string {
-    return signal === 'BUY' ? 'signal-buy' : signal === 'SELL' ? 'signal-sell' : 'signal-hold';
+  signalClass(recommendation: string): string {
+    if (recommendation?.startsWith('INCREASE')) return 'signal-buy';
+    if (recommendation?.startsWith('REDUCE')) return 'signal-sell';
+    return 'signal-hold';
   }
 
-  signalLabel(signal: string): string {
-    return signal === 'BUY' ? '↑ Incrementar' : signal === 'SELL' ? '↓ Reducir' : '→ Mantener';
+  signalLabel(recommendation: string): string {
+    if (recommendation === 'INCREASE_STRONG') return '↑↑ Incrementar fuerte';
+    if (recommendation === 'INCREASE_MILD') return '↑ Incrementar';
+    if (recommendation === 'REDUCE_STRONG') return '↓↓ Reducir fuerte';
+    if (recommendation === 'REDUCE_MILD') return '↓ Reducir';
+    return '→ Mantener';
   }
 
   get buyThresholdPct(): number {
