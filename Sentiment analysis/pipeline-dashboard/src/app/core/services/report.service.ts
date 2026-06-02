@@ -4,6 +4,7 @@ import { ApiService } from './api.service';
 import { PipelineContextService } from './pipeline-context.service';
 import {
   DailyReport, TickerView, ReportDateEntry,
+  ExposureRecommendation, ConvictionLabel,
 } from '../models/report.model';
 import { ChartDataPoint, ChartSeries } from '../models/pipeline.model';
 
@@ -66,10 +67,18 @@ export class ReportService {
       const bench = report.benchmark_comparison[ticker];
       const expl  = report.top_signal_explanations.find(e => e.ticker === ticker);
 
+      const prob_up = expl?.prob_up ?? 0.5;
+
+      // Calcula exposición continua con la misma lógica del backend (NEUTRAL regime).
+      // Floors NEUTRAL: [0.50, 0.85]. Rango de referencia prob_up: [0.30, 0.75].
+      const exposure_pct = this.calcExposurePct(prob_up);
+      const exposure_recommendation = this.calcExposureRec(exposure_pct, prob_up);
+      const conviction_label = this.calcConviction(expl?.signal ?? 'HOLD', prob_up);
+
       return {
         ticker,
         signal:    expl?.signal ?? 'HOLD',
-        prob_up:   expl?.prob_up ?? 0.5,
+        prob_up,
         prob_down: expl?.prob_down ?? 0.5,
         evidence:  expl?.evidence ?? {
           sentiment: 'neutral', rsi: 'neutral',
@@ -85,8 +94,37 @@ export class ReportService {
         signals_count:      diag?.signals ?? { BUY: 0, SELL: 0, HOLD: 0 },
         alpha_vs_benchmark: bench?.alpha_vs_benchmark ?? 0,
         buy_hold_return:    bench?.buy_hold_cumulative_return ?? 0,
+        exposure_pct,
+        exposure_recommendation,
+        conviction_label,
       } as TickerView;
     });
+  }
+
+  /** Calcula el % de exposición objetivo (réplica del backend prob_to_exposure, régimen NEUTRAL) */
+  private calcExposurePct(prob_up: number): number {
+    const floor = 0.50; const ceiling = 0.85;
+    const t = Math.max(0, Math.min(1, (prob_up - 0.30) / (0.75 - 0.30)));
+    return Math.round((floor + t * (ceiling - floor)) * 1000) / 10; // → 0–100 con 1 decimal
+  }
+
+  /** Deriva la recomendación de exposición en 5 niveles desde el % */
+  private calcExposureRec(pct: number, prob_up: number): ExposureRecommendation {
+    if (pct >= 75) return 'INCREASE_STRONG';
+    if (pct >= 62) return 'INCREASE_MILD';
+    if (pct >= 52 && prob_up >= 0.48) return 'MAINTAIN';
+    if (pct >= 50) return 'REDUCE_MILD';
+    return 'REDUCE_STRONG';
+  }
+
+  /** Convicción aproximada desde la señal y distancia al umbral */
+  private calcConviction(signal: string, prob_up: number): ConvictionLabel {
+    const dist = signal === 'BUY'  ? prob_up - 0.52
+               : signal === 'SELL' ? 0.28 - prob_up
+               : Math.min(Math.abs(prob_up - 0.52), Math.abs(0.28 - prob_up));
+    if (dist >= 0.15) return 'high';
+    if (dist >= 0.05) return 'medium';
+    return 'low';
   }
 
   // ─── Charts ───────────────────────────────────────────────────────

@@ -59,8 +59,8 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
   // 1. SOLUCIÓN: Declaramos la variable que el HTML está buscando para los Smart Donuts
   tickerViews: TickerView[] = [];
 
-  // Nombres Limpios y en Castellano para la Tabla
-  displayedColumns = ['ticker', 'signal', 'prob_up', 'evidence', 'trades', 'winrate', 'return', 'alpha', 'expand'];
+  // Exposición primero, señal bayesiana como referencia secundaria
+  displayedColumns = ['ticker', 'exposure', 'signal', 'evidence', 'winrate', 'return', 'alpha', 'expand'];
   dataSource = new MatTableDataSource<TickerView>();
 
   // Gráficos de Resumen
@@ -553,6 +553,39 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
 
   signalIcon(s: string) {
     return ({ BUY: 'arrow_upward', SELL: 'arrow_downward', HOLD: 'remove' } as Record<string, string>)[s] ?? 'remove';
+  }
+
+  // ── Helpers de exposición ─────────────────────────────────────────────────
+  expRecLabel(rec: string): string {
+    const m: Record<string, string> = {
+      INCREASE_STRONG: '↑↑ Aumentar fuerte',
+      INCREASE_MILD:   '↑  Aumentar',
+      MAINTAIN:        '→  Mantener posición',
+      REDUCE_MILD:     '↓  Reducir',
+      REDUCE_STRONG:   '↓↓ Reducir fuerte',
+    };
+    return m[rec] ?? rec;
+  }
+
+  expRecIcon(rec: string): string {
+    const m: Record<string, string> = {
+      INCREASE_STRONG: 'arrow_upward',
+      INCREASE_MILD:   'trending_up',
+      MAINTAIN:        'remove',
+      REDUCE_MILD:     'trending_down',
+      REDUCE_STRONG:   'arrow_downward',
+    };
+    return m[rec] ?? 'remove';
+  }
+
+  expBarClass(pct: number): string {
+    if (pct >= 72) return 'exp-high';
+    if (pct >= 58) return 'exp-mid';
+    return 'exp-low';
+  }
+
+  expRecClass(rec: string): string {
+    return (rec ?? '').toLowerCase().replace(/_/g, '-');
   }
   sentimentIcon(s: SentimentState) {
     return ({ bullish: 'sentiment_very_satisfied', bearish: 'sentiment_very_dissatisfied', neutral: 'sentiment_neutral' })[s];

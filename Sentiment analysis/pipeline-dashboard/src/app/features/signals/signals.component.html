@@ -494,10 +494,32 @@
           </td>
         </ng-container>
 
-        <ng-container matColumnDef="signal">
-          <th mat-header-cell *matHeaderCellDef mat-sort-header>Decisión</th>
+        <!-- ── Exposición (output primario) ── -->
+        <ng-container matColumnDef="exposure">
+          <th mat-header-cell *matHeaderCellDef mat-sort-header="exposure_pct">Exposición</th>
           <td mat-cell *matCellDef="let row">
-            <span class="signal-pill {{ row.signal.toLowerCase() }}">
+            <div class="exposure-cell">
+              <div class="exp-bar-track-sm">
+                <div [class]="'exp-bar-fill-sm ' + expBarClass(row.exposure_pct)"
+                     [style.width.%]="row.exposure_pct">
+                </div>
+                <div class="exp-floor-line-sm" matTooltip="Floor mínimo 50%"></div>
+              </div>
+              <span [class]="'exp-pct-sm ' + expBarClass(row.exposure_pct)">{{ row.exposure_pct | number:'1.0-1' }}%</span>
+              <span [class]="'exp-rec-icon-pill ' + expRecClass(row.exposure_recommendation)"
+                    [matTooltip]="expRecLabel(row.exposure_recommendation)">
+                <mat-icon>{{ expRecIcon(row.exposure_recommendation) }}</mat-icon>
+              </span>
+            </div>
+          </td>
+        </ng-container>
+
+        <!-- ── Señal BN (referencia secundaria) ── -->
+        <ng-container matColumnDef="signal">
+          <th mat-header-cell *matHeaderCellDef mat-sort-header>Señal BN</th>
+          <td mat-cell *matCellDef="let row">
+            <span [class]="'signal-pill-sm ' + row.signal.toLowerCase()"
+                  [matTooltip]="'P(↑) ' + (row.prob_up*100 | number: '1.0-0') + '%' + ' · Señal bayesiana de referencia'">
               <mat-icon>{{ signalIcon(row.signal) }}</mat-icon>
               {{ row.signal === 'BUY' ? 'COMPRAR' : row.signal === 'SELL' ? 'CASH' : 'MANTENER' }}
             </span>

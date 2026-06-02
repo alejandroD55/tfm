@@ -1572,12 +1572,34 @@ def calculate_indicators_for_date(
     if len(df) < 50:
         return None
 
-    close = df["Close"]
-    rsi = ta.rsi(close, length=14)
+    close  = df["Close"]
+    high   = df["High"]  if "High"  in df.columns else close
+    low_s  = df["Low"]   if "Low"   in df.columns else close
+
+    rsi    = ta.rsi(close, length=14)
     sma_20 = ta.sma(close, length=20)
     sma_50 = ta.sma(close, length=50)
-    sma_200 = ta.sma(close, length=200)
+    sma_200= ta.sma(close, length=200)
     bbands = ta.bbands(close, length=20, std=2)
+
+    # ── Nuevos indicadores técnicos ────────────────────────────────────────────
+    # EMA-55: media exponencial de 55 sesiones (feature #1 más predictiva en literatura)
+    ema_55 = ta.ema(close, length=55)
+    # ADX-14: fuerza de la tendencia (> 25 = tendencia real, < 15 = lateral/ruidoso)
+    try:
+        adx_df = ta.adx(high, low_s, close, length=14)
+        adx_val = _sf(adx_df.iloc[-1, 0]) if adx_df is not None and not adx_df.empty else None
+    except Exception:
+        adx_val = None
+    # Momentum: retorno precio en ventanas de 5 y 20 sesiones
+    mom_20d = None
+    mom_5d  = None
+    if len(close) >= 21:
+        p0_20 = float(close.iloc[-21])
+        mom_20d = round((float(close.iloc[-1]) - p0_20) / p0_20, 4) if p0_20 != 0 else None
+    if len(close) >= 6:
+        p0_5  = float(close.iloc[-6])
+        mom_5d  = round((float(close.iloc[-1]) - p0_5)  / p0_5,  4) if p0_5  != 0 else None
 
     def last(s):
         return _sf(s.iloc[-1]) if s is not None and len(s) > 0 else None
@@ -1585,35 +1607,43 @@ def calculate_indicators_for_date(
     bb_upper = bb_mid = bb_lower = None
     if bbands is not None and not bbands.empty and len(bbands.columns) >= 3:
         bb_lower = _sf(bbands.iloc[-1, 0])
-        bb_mid = _sf(bbands.iloc[-1, 1])
+        bb_mid   = _sf(bbands.iloc[-1, 1])
         bb_upper = _sf(bbands.iloc[-1, 2])
 
-    cl = _sf(close.iloc[-1])
-    s20, s50 = last(sma_20), last(sma_50)
-    s200 = last(sma_200)
+    cl  = _sf(close.iloc[-1])
+    s20, s50  = last(sma_20), last(sma_50)
+    s200      = last(sma_200)
+    e55       = last(ema_55)
     sma_spread = round(float(s20) - float(s50), 4) if s20 and s50 else None
-    bb_width = (
+    bb_width   = (
         round((float(bb_upper) - float(bb_lower)) / float(cl), 6)
-        if bb_upper and bb_lower and cl
-        else None
+        if bb_upper and bb_lower and cl else None
     )
+    # % desviación del precio respecto a EMA-55 (+ = por encima, - = por debajo)
+    ema_55_pct = round((float(cl) - float(e55)) / float(e55), 4) if e55 and e55 != 0 and cl else None
 
     # Drawdown desde máximo histórico disponible en la ventana de datos
     ath = _sf(close.max())
     drawdown_from_ath = round((float(cl) - float(ath)) / float(ath), 4) if cl and ath and ath > 0 else None
 
     return {
-        "close": cl,
-        "rsi_14": last(rsi),
-        "sma_20": s20,
-        "sma_50": s50,
-        "sma_200": s200,
-        "sma_spread": sma_spread,
-        "bb_upper": bb_upper,
-        "bb_middle": bb_mid,
-        "bb_lower": bb_lower,
-        "bb_width": bb_width,
-        "drawdown_from_ath": drawdown_from_ath,
+        "close":            cl,
+        "rsi_14":           last(rsi),
+        "sma_20":           s20,
+        "sma_50":           s50,
+        "sma_200":          s200,
+        "sma_spread":       sma_spread,
+        "bb_upper":         bb_upper,
+        "bb_middle":        bb_mid,
+        "bb_lower":         bb_lower,
+        "bb_width":         bb_width,
+        "drawdown_from_ath":drawdown_from_ath,
+        # Nuevos indicadores
+        "ema_55":           e55,
+        "ema_55_pct":       ema_55_pct,
+        "adx_14":           adx_val,
+        "momentum_20d":     mom_20d,
+        "momentum_5d":      mom_5d,
     }
 
 
@@ -1678,29 +1708,71 @@ def get_bn_model():
     return model
 
 
-def run_bayesian_inference(evidence: Dict, macro_adj: float) -> Tuple[str, float]:
+def run_bayesian_inference(
+    evidence:      Dict,
+    macro_adj:     float,
+    macro_context: Optional[Dict] = None,
+    extra:         Optional[Dict] = None,
+) -> Tuple[str, float]:
+    """
+    Inferencia de señal. Usa el motor discriminativo (Camino B) si está disponible;
+    en caso contrario cae a la Red Bayesiana (Camino A / fallback).
+
+    extra puede contener features adicionales para el discriminador:
+        prob_up_bn, signal_streak, rsi_continuous, adx_14, ema_55_pct,
+        momentum_20d, momentum_5d, vol_20d, vol_ratio, sentiment_dispersion
+    """
+    # ── Camino B: LightGBM discriminativo ─────────────────────────────────────
+    if _disc_engine is not None and getattr(_disc_engine, "available", False):
+        try:
+            mc = macro_context or {"macro_adjustment": macro_adj}
+            if "macro_adjustment" not in mc:
+                mc = dict(mc); mc["macro_adjustment"] = macro_adj
+
+            from pgmpy.inference import VariableElimination as _VE
+            _result_bn = _VE(get_bn_model()).query(
+                variables=["MarketDirection"], evidence=evidence, show_progress=False
+            )
+            extra_ctx = dict(extra or {})
+            extra_ctx["prob_up_bn"] = float(_result_bn.values[1])
+
+            prob_up = _disc_engine.infer(evidence, mc, extra_ctx)
+
+            _DISC_BUY  = 0.55
+            _DISC_SELL = 0.50
+            signal = (
+                "BUY"  if prob_up >= _DISC_BUY  else
+                "SELL" if prob_up <= _DISC_SELL else
+                "HOLD"
+            )
+            logger.debug(
+                f"[DiscEngine] prob_up={prob_up:.4f} → {signal} "
+                f"(buy≥{_DISC_BUY}, sell≤{_DISC_SELL})"
+            )
+            return signal, prob_up
+        except Exception as _exc:
+            logger.debug(f"[DiscEngine] fallback a BN: {_exc}")
+
+    # ── Fallback: Red Bayesiana (Camino A) ────────────────────────────────────
     from pgmpy.inference import VariableElimination
 
-    infer = VariableElimination(get_bn_model())
+    infer  = VariableElimination(get_bn_model())
     result = infer.query(
         variables=["MarketDirection"], evidence=evidence, show_progress=False
     )
     prob_up_raw = float(result.values[1])
 
     # En tendencia alcista confirmada, amortiguamos el macro_adj negativo al 40%
-    # para evitar que una noticia hawkish/macro saque al modelo de un uptrend válido.
-    # El macro_adj positivo se aplica completo (no penalizamos la info alcista).
     effective_macro_adj = macro_adj
     if evidence.get("Trend") == "uptrend" and macro_adj < 0:
         effective_macro_adj = macro_adj * 0.40
 
     prob_up_adj = round(max(0.0, min(1.0, prob_up_raw + effective_macro_adj)), 4)
-    if prob_up_adj >= BUY_THRESHOLD:
-        signal = "BUY"
-    elif prob_up_adj <= SELL_THRESHOLD:
-        signal = "SELL"
-    else:
-        signal = "HOLD"
+    signal = (
+        "BUY"  if prob_up_adj >= BUY_THRESHOLD  else
+        "SELL" if prob_up_adj <= SELL_THRESHOLD else
+        "HOLD"
+    )
     return signal, prob_up_adj
 
 
@@ -2204,6 +2276,119 @@ def compute_benchmark(signals_df):
 
 
 # =============================================================================
+# 4b-aux. NARRATIVA DE SEÑAL
+# =============================================================================
+
+def _build_signal_narrative(
+    ticker: str,
+    evidence: Dict,
+    rsi_state_ext: str,
+    adx_state: str,
+    momentum_20d: Optional[float],
+    momentum_crowding: bool,
+    prob_up: float,
+    market_regime: str,
+    smoothed_exposure: float,
+    exposure_delta: float,
+    exposure_recommendation: str,
+    conviction_label: str,
+    effects: Dict,
+    macro_sentiment: str,
+    risk_regime: str,
+) -> str:
+    """
+    Genera una narrativa accionable en lenguaje natural basada en todos los indicadores.
+    Sustituye el texto plano 'HOLD' por una descripción útil de la situación.
+    """
+    lines = []
+
+    # ── Exposición actual ──────────────────────────────────────────────────────
+    exp_pct = round(smoothed_exposure * 100, 1)
+    delta_pct = round(exposure_delta * 100, 1)
+    delta_str = f"+{delta_pct}%" if delta_pct > 0 else f"{delta_pct}%"
+    rec_map = {
+        "INCREASE_STRONG": "↑↑ Aumentar agresivamente",
+        "INCREASE_MILD":   "↑  Aumentar moderadamente",
+        "MAINTAIN":        "→  Mantener posición",
+        "REDUCE_MILD":     "↓  Reducir moderadamente",
+        "REDUCE_STRONG":   "↓↓ Reducir significativamente",
+    }
+    lines.append(
+        f"Exposición: {exp_pct}% ({delta_str} respecto ayer) | "
+        f"Régimen: {market_regime} | Convicción: {conviction_label.upper()}"
+    )
+    lines.append(f"Recomendación: {rec_map.get(exposure_recommendation, exposure_recommendation)}")
+
+    # ── Indicadores técnicos ───────────────────────────────────────────────────
+    tech_parts = []
+    trend = evidence.get("Trend", "")
+    if trend == "uptrend":
+        tech_parts.append("✅ Tendencia alcista (SMA20 > SMA50)")
+    else:
+        tech_parts.append("⚠️ Tendencia bajista (SMA20 < SMA50)")
+
+    rsi_desc = {
+        "very_oversold":   "RSI muy sobrevendido (<20) — zona de rebote potencial",
+        "oversold":        "RSI sobrevendido (20-40) — presión compradora posible",
+        "neutral":         "RSI neutro (40-60) — sin señal de extremo",
+        "overbought":      "RSI sobrecomprado (60-75) — cautela en nuevas entradas",
+        "very_overbought": "RSI extremadamente sobrecomprado (>75) — riesgo de reversión",
+    }
+    tech_parts.append(rsi_desc.get(rsi_state_ext, f"RSI: {rsi_state_ext}"))
+
+    if adx_state == "trending":
+        tech_parts.append("📈 ADX >25 — tendencia confirmada y robusta")
+    elif adx_state == "lateral":
+        tech_parts.append("↔️ ADX <15 — mercado lateral, señales técnicas poco fiables")
+    elif adx_state == "moderate":
+        tech_parts.append("ADX moderado — tendencia en formación")
+
+    if momentum_20d is not None:
+        mom_pct = round(momentum_20d * 100, 1)
+        if momentum_crowding:
+            tech_parts.append(
+                f"⚠️ CROWDING: momentum 20d = {mom_pct:+.1f}% con RSI sobrecomprado — "
+                f"riesgo de reversión brusca si cambia el flujo"
+            )
+        elif abs(mom_pct) > 10:
+            direction = "alcista" if mom_pct > 0 else "bajista"
+            tech_parts.append(f"Momentum 20d: {mom_pct:+.1f}% ({direction} sostenido)")
+        else:
+            tech_parts.append(f"Momentum 20d: {mom_pct:+.1f}% (movimiento moderado)")
+
+    lines.append("Técnicos: " + " | ".join(tech_parts))
+
+    # ── Fuerzas dominantes (contribution analysis) ─────────────────────────────
+    if effects:
+        sorted_eff = sorted(
+            [(k, v.get("delta_prob_up", 0)) for k, v in effects.items() if v.get("applicable")],
+            key=lambda x: abs(x[1]), reverse=True
+        )
+        if sorted_eff:
+            top = sorted_eff[:2]
+            drivers = []
+            for name, delta in top:
+                if abs(delta) < 0.01:
+                    continue
+                direction = "empuja ↑" if delta > 0 else "arrastra ↓"
+                drivers.append(f"{name} ({delta:+.2f}) {direction}")
+            if drivers:
+                lines.append("Drivers: " + " | ".join(drivers))
+
+    # ── Macro ──────────────────────────────────────────────────────────────────
+    if risk_regime not in ("NEUTRAL", None):
+        lines.append(f"Macro: régimen {risk_regime} | sentimiento {macro_sentiment}")
+
+    # ── Probabilidad ──────────────────────────────────────────────────────────
+    lines.append(
+        f"P(subida)={prob_up:.0%} | "
+        f"{'Señal probabilística: mercado favorable' if prob_up > 0.55 else 'Señal probabilística: mercado adverso' if prob_up < 0.45 else 'Señal probabilística: incertidumbre elevada'}"
+    )
+
+    return "\n".join(lines)
+
+
+# =============================================================================
 # 4b. WORKER POR TICKER (thread-safe, conexión PG propia)
 # =============================================================================
 def _process_ticker_day(
@@ -2379,25 +2564,147 @@ def _process_ticker_day(
             sentiment_samples
         )
 
+        # ══════════════════════════════════════════════════════════════════════
+        # CONSTRUCCIÓN DE EVIDENCIAS PARA LA RED BAYESIANA
+        # Objetivo: maximizar la calidad informativa de cada variable discreta
+        # que entra a la BN, usando todos los indicadores disponibles.
+        # ══════════════════════════════════════════════════════════════════════
+
+        _rsi_val  = ind["rsi_14"]  or 50.0
+        _adx      = ind.get("adx_14")
+        _mom20    = ind.get("momentum_20d") or 0.0
+        _mom5     = ind.get("momentum_5d")  or 0.0
+        _ema55pct = ind.get("ema_55_pct")   # % desviación precio vs EMA-55
+
+        # ── ADX state (calculado primero porque lo usan otras evidencias) ─────
+        if _adx is None:
+            adx_state = "unknown"
+        elif _adx > 25:
+            adx_state = "trending"
+        elif _adx > 15:
+            adx_state = "moderate"
+        else:
+            adx_state = "lateral"
+
+        # ── Evidencia SENTIMENT (mejorada con fallback a momentum) ────────────
+        # Problema identificado: cuando no hay noticias disponibles, FinBERT
+        # devuelve "neutral" por defecto, coartando la discriminación de la BN.
+        # Solución: si no hay artículos y el momentum es claro, usarlo como
+        # proxy de sentimiento implícito del mercado.
+        if dom_sent == "neutral" and best_conf == 0:
+            # Sin noticias: inferir sentimiento implícito desde momentum
+            if _mom20 > 0.05 and _mom5 > 0.01:
+                dom_sent = "bullish"
+                sentiment_detail = {
+                    **sentiment_detail,
+                    "proxy": f"momentum_20d={_mom20*100:.1f}% → bullish implícito (sin noticias)",
+                }
+            elif _mom20 < -0.05 and _mom5 < -0.01:
+                dom_sent = "bearish"
+                sentiment_detail = {
+                    **sentiment_detail,
+                    "proxy": f"momentum_20d={_mom20*100:.1f}% → bearish implícito (sin noticias)",
+                }
+            # else: mantener neutral (momentum insuficiente para señal)
+
+        # ── RSI 5 niveles (disc engine) con umbrales adaptados al mercado real ─
+        # Los umbrales estándar 30/70 dejan el 80%+ de los días en "neutral".
+        # Umbrales ajustados capturan más señal sin perder rigor estadístico.
+        if _rsi_val < 20:
+            rsi_state_ext = "very_oversold"
+        elif _rsi_val < 40:
+            rsi_state_ext = "oversold"
+        elif _rsi_val <= 60:
+            rsi_state_ext = "neutral"
+        elif _rsi_val <= 75:
+            rsi_state_ext = "overbought"
+        else:
+            rsi_state_ext = "very_overbought"
+
+        # RSI para la BN (3 niveles, manteniendo los umbrales originales del modelo)
+        rsi_state_bn = (
+            "oversold"    if _rsi_val < 30
+            else "overbought" if _rsi_val > 70
+            else "neutral"
+        )
+
+        # ── Evidencia TREND (mejorada con EMA-55 y validación ADX) ────────────
+        # Problema: SMA20/SMA50 genera crossovers tardíos y falsos en mercado lateral.
+        # Mejora: usar EMA-55 como referencia principal (más robusta, reacciona
+        # más rápido que SMA-50 y es la feature #1 en literatura académica).
+        # Además, si ADX < 15 (mercado lateral sin tendencia), la señal de trend
+        # no es fiable — reducimos su impacto dejando que la BN use su prior.
+        _sma20 = ind.get("sma_20"); _sma50 = ind.get("sma_50")
+        _cl    = ind.get("close")
+
+        if adx_state == "lateral":
+            # Mercado sin tendencia: usar EMA-55 si disponible, si no SMA-based
+            if _ema55pct is not None:
+                # EMA-55 como árbitro cuando no hay tendencia SMA clara
+                trend_state_bn = "uptrend" if _ema55pct > 0.01 else "downtrend"
+                trend_quality  = "ema55_validated"
+            else:
+                # Sin EMA-55, mantener SMA pero marcar baja confianza
+                trend_state_bn = "uptrend" if (_sma20 and _sma50 and _sma20 > _sma50) else "downtrend"
+                trend_quality  = "sma_low_confidence"
+        elif _ema55pct is not None and _sma20 and _sma50:
+            # EMA-55 y SMA disponibles: usamos EMA-55 como señal principal
+            # La coherencia entre ambas aumenta la confianza
+            ema55_up  = _ema55pct > 0.0
+            sma_up    = _sma20 > _sma50
+            if ema55_up == sma_up:
+                trend_state_bn = "uptrend" if ema55_up else "downtrend"
+                trend_quality  = "ema55_sma_agree"       # máxima confianza
+            else:
+                # Divergencia: EMA-55 manda (más robusta y feature #1)
+                trend_state_bn = "uptrend" if ema55_up else "downtrend"
+                trend_quality  = "ema55_diverges_sma"    # baja confianza
+        else:
+            # Fallback: SMA20/SMA50 clásico
+            trend_state_bn = "uptrend" if (_sma20 and _sma50 and _sma20 > _sma50) else "downtrend"
+            trend_quality  = "sma_only"
+
+        # ── Evidencia VOLATILITY (mejorada con confirmación momentum) ──────────
+        # BB Width captura volatilidad de precio. Complementamos con la
+        # aceleración del precio (momentum_5d) para distinguir volatilidad
+        # de expansión real vs ruido lateral.
+        _bbw = ind.get("bb_width")
+        vol_state_bn = "high" if (_bbw and _bbw > 0.05) else "low"
+
+        # ── Momentum crowding flag ────────────────────────────────────────────
+        # Momentum > 15% en 20d con RSI overbought = riesgo de reversión brusca
+        momentum_crowding = abs(_mom20) > 0.15 and rsi_state_ext in ("overbought", "very_overbought")
+
+        # ── Evidencias finales para la BN ─────────────────────────────────────
         evidence = {
-            "Sentiment": dom_sent,
-            "RSI": (
-                "oversold"
-                if ind["rsi_14"] < 30
-                else ("overbought" if ind["rsi_14"] > 70 else "neutral")
-            ),
-            "Trend": (
-                "uptrend"
-                if (ind["sma_20"] and ind["sma_50"] and ind["sma_20"] > ind["sma_50"])
-                else "downtrend"
-            ),
-            "Volatility": (
-                "high" if (ind["bb_width"] and ind["bb_width"] > 0.05) else "low"
-            ),
+            "Sentiment":  dom_sent,
+            "RSI":        rsi_state_bn,
+            "Trend":      trend_state_bn,
+            "Volatility": vol_state_bn,
         }
 
-        # ── Inferencia bayesiana ─────────────────────────────────────────────
-        raw_signal, prob_up = run_bayesian_inference(evidence, macro_adj)
+        # ── Inferencia (Camino B / Camino A) ────────────────────────────────
+        _macro_ctx = {
+            "macro_adjustment": macro_adj,
+            "macro_sentiment":  macro_sentiment,
+            "risk_regime":      risk_regime,
+        }
+        # Features extendidas para el motor discriminativo
+        _disc_extra = {
+            "rsi_continuous":      ind.get("rsi_14"),
+            "adx_14":              ind.get("adx_14"),
+            "ema_55_pct":          ind.get("ema_55_pct"),
+            "momentum_20d":        ind.get("momentum_20d"),
+            "momentum_5d":         ind.get("momentum_5d"),
+            "sentiment_dispersion":(
+                sentiment_detail.get("dispersion")
+                if isinstance(sentiment_detail, dict) else None
+            ),
+            "signal_streak": len(signal_history),
+        }
+        raw_signal, prob_up = run_bayesian_inference(
+            evidence, macro_adj, macro_context=_macro_ctx, extra=_disc_extra
+        )
 
         try:
             contribution_analysis = compute_contribution_analysis(
@@ -2462,24 +2769,87 @@ def _process_ticker_day(
         except Exception as exc:
             logger.warning(f"[EXPOSURE] position_state upsert falló {ticker} {date_str}: {exc}")
 
+        # ── Conviction score ──────────────────────────────────────────────────
+        # Mide si los indicadores apuntan en la misma dirección o se contradicen.
+        # Alto = señal clara. Bajo = fuerzas opuestas, posición incierta.
+        _effects = (contribution_analysis or {}).get("effects", {})
+        _deltas = [v.get("delta_prob_up", 0) for v in _effects.values()
+                   if v.get("applicable")]
+        if len(_deltas) >= 2:
+            _pos = sum(1 for d in _deltas if d > 0.02)
+            _neg = sum(1 for d in _deltas if d < -0.02)
+            _dom = max(_pos, _neg)
+            conviction_score = round(_dom / len(_deltas), 2)
+            conviction_label = (
+                "high"   if conviction_score >= 0.75 else
+                "medium" if conviction_score >= 0.50 else
+                "low"
+            )
+        else:
+            conviction_score = 0.5
+            conviction_label = "unknown"
+
+        # ── Exposure recommendation (5 niveles, sustitye señal binaria) ────────
+        _exp = smoothed_exposure
+        _delta_exp = exposure_delta
+        if _exp >= 0.75 and _delta_exp >= -0.01:
+            exposure_recommendation = "INCREASE_STRONG"
+        elif _exp >= 0.60:
+            exposure_recommendation = "INCREASE_MILD"
+        elif _exp >= 0.45 and abs(_delta_exp) <= 0.02:
+            exposure_recommendation = "MAINTAIN"
+        elif _exp >= 0.30:
+            exposure_recommendation = "REDUCE_MILD"
+        else:
+            exposure_recommendation = "REDUCE_STRONG"
+
+        # ── Signal narrative (texto accionable en lenguaje natural) ────────────
+        signal_narrative = _build_signal_narrative(
+            ticker=ticker,
+            evidence=evidence,
+            rsi_state_ext=rsi_state_ext,
+            adx_state=adx_state,
+            momentum_20d=ind.get("momentum_20d"),
+            momentum_crowding=momentum_crowding,
+            prob_up=prob_up,
+            market_regime=market_regime_exp,
+            smoothed_exposure=smoothed_exposure,
+            exposure_delta=exposure_delta,
+            exposure_recommendation=exposure_recommendation,
+            conviction_label=conviction_label,
+            effects=_effects,
+            macro_sentiment=macro_sentiment,
+            risk_regime=risk_regime,
+        )
+
         # ── Trace + persistencia ─────────────────────────────────────────────
         trace_data = {
             "raw_values": {
-                "close_price": ind["close"],
-                "rsi_14": ind["rsi_14"],
-                "sma_20": ind["sma_20"],
-                "sma_50": ind["sma_50"],
-                "bb_upper": ind["bb_upper"],
-                "bb_lower": ind["bb_lower"],
-                "bb_width_ratio": ind["bb_width"],
+                "close_price":   ind["close"],
+                "rsi_14":        ind["rsi_14"],
+                "sma_20":        ind["sma_20"],
+                "sma_50":        ind["sma_50"],
+                "bb_upper":      ind["bb_upper"],
+                "bb_lower":      ind["bb_lower"],
+                "bb_width_ratio":ind["bb_width"],
+                # Nuevos indicadores
+                "ema_55":        ind.get("ema_55"),
+                "ema_55_pct":    ind.get("ema_55_pct"),
+                "adx_14":        ind.get("adx_14"),
+                "momentum_20d":  ind.get("momentum_20d"),
+                "momentum_5d":   ind.get("momentum_5d"),
             },
             "discretization": {
-                "sentiment_raw": dom_sent,
-                "sentiment_conf": best_conf,
-                "sentiment_state": evidence["Sentiment"],
-                "rsi_state": evidence["RSI"],
-                "trend_state": evidence["Trend"],
+                "sentiment_raw":    dom_sent,
+                "sentiment_conf":   best_conf,
+                "sentiment_state":  evidence["Sentiment"],
+                "rsi_state":        evidence["RSI"],        # 3 niveles (BN)
+                "rsi_state_ext":    rsi_state_ext,          # 5 niveles (disc engine)
+                "trend_state":      evidence["Trend"],
+                "trend_quality":    trend_quality,          # calidad de la evidencia de trend
                 "volatility_state": evidence["Volatility"],
+                "adx_state":        adx_state,
+                "momentum_crowding":momentum_crowding,
             },
             "sentiment_detail": sentiment_detail,
             "inference": {
@@ -2501,12 +2871,20 @@ def _process_ticker_day(
             },
             "contribution_analysis": contribution_analysis,
             "reasoning": reasoning,
+            # ── Output primario: exposición continua ──────────────────────────
             "exposure_management": {
-                "market_regime": market_regime_exp,
-                "target_exposure": target_exposure,
-                "smoothed_exposure": smoothed_exposure,
-                "exposure_delta": exposure_delta,
-                "previous_exposure": previous_exposure,
+                "market_regime":          market_regime_exp,
+                "target_exposure":        target_exposure,
+                "smoothed_exposure":      smoothed_exposure,
+                "exposure_delta":         exposure_delta,
+                "previous_exposure":      previous_exposure,
+                "exposure_recommendation":exposure_recommendation,
+            },
+            # ── Interpretación de señal ────────────────────────────────────────
+            "signal_quality": {
+                "conviction_score": conviction_score,
+                "conviction_label": conviction_label,
+                "narrative":        signal_narrative,
             },
         }
         upsert_bayesian_report(date_str, ticker, trace_data, MODEL_CONFIG["version"])
@@ -2538,34 +2916,51 @@ def _process_ticker_day(
         thread_conn.commit()
 
         signal_record = {
-            "batch_date": date_str,
-            "ticker": ticker,
-            "run_id": run_id,
-            "signal": signal,
-            "prob_up": prob_up,
-            "prob_down": round(1 - prob_up, 4),
-            "close_price": ind["close"],
+            "batch_date":   date_str,
+            "ticker":       ticker,
+            "run_id":       run_id,
+            # ── Output primario: exposición continua (no señal binaria) ────────
+            "exposure_recommendation": exposure_recommendation,
+            "smoothed_exposure":       smoothed_exposure,
+            "target_exposure":         target_exposure,
+            "exposure_delta":          exposure_delta,
+            "market_regime":           market_regime_exp,
+            # ── Señal bayesiana (referencia) ────────────────────────────────────
+            "signal":          signal,
+            "prob_up":         prob_up,
+            "prob_down":       round(1 - prob_up, 4),
+            "close_price":     ind["close"],
+            # ── Discretización de indicadores ───────────────────────────────────
             "sentiment_state": evidence["Sentiment"],
-            "rsi_state": evidence["RSI"],
-            "trend_state": evidence["Trend"],
-            "volatility_state": evidence["Volatility"],
+            "rsi_state":       evidence["RSI"],
+            "rsi_state_ext":   rsi_state_ext,
+            "trend_state":     evidence["Trend"],
+            "volatility_state":evidence["Volatility"],
+            "adx_state":       adx_state,
+            # ── Contexto macro ──────────────────────────────────────────────────
             "macro_sentiment": macro_sentiment,
-            "risk_regime": risk_regime,
-            "macro_adjustment": macro_adj,
-            # Fase 1: exposición continua
-            "market_regime": market_regime_exp,
-            "target_exposure": target_exposure,
-            "smoothed_exposure": smoothed_exposure,
+            "risk_regime":     risk_regime,
+            "macro_adjustment":macro_adj,
+            # ── Calidad de la señal ─────────────────────────────────────────────
+            "conviction_score": conviction_score,
+            "conviction_label": conviction_label,
+            # ── Nuevos indicadores técnicos ─────────────────────────────────────
+            "adx_14":           ind.get("adx_14"),
+            "ema_55_pct":       ind.get("ema_55_pct"),
+            "momentum_20d":     ind.get("momentum_20d"),
+            "momentum_5d":      ind.get("momentum_5d"),
+            "momentum_crowding":momentum_crowding,
         }
 
         return {
-            "ticker": ticker,
-            "trace_data": trace_data,
-            "signal_record": signal_record,
-            "new_history": new_history,
-            "kpis": kpis,
-            "smoothed_exposure": smoothed_exposure,   # para actualizar exposure_history_per_ticker
-            "market_regime": market_regime_exp,
+            "ticker":          ticker,
+            "trace_data":      trace_data,
+            "signal_record":   signal_record,
+            "new_history":     new_history,
+            "kpis":            kpis,
+            "smoothed_exposure": smoothed_exposure,
+            "market_regime":   market_regime_exp,
+            "new_conf_state":  None,
         }
 
     except Exception as e:

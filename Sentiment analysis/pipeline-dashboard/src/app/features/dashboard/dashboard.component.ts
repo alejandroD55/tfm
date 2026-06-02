@@ -11,7 +11,7 @@ import { NgxChartsModule } from '@swimlane/ngx-charts';
 import { Subject, switchMap, takeUntil } from 'rxjs';
 import { ReportService } from '../../core/services/report.service';
 import { PipelineContextService } from '../../core/services/pipeline-context.service';
-import { DailyReport, TickerView, ReportDateEntry } from '../../core/models/report.model';
+import { DailyReport, TickerView, ReportDateEntry, ExposureRecommendation, SentimentState, TrendState } from '../../core/models/report.model';
 import { ChartDataPoint } from '../../core/models/pipeline.model';
 
 @Component({
@@ -139,5 +139,65 @@ export class DashboardComponent implements OnInit, OnDestroy {
     if (s >= 1)  return 'Bueno';
     if (s >= 0)  return 'Aceptable';
     return 'Deficiente';
+  }
+
+  // ── Helpers de exposición ─────────────────────────────────────────────────
+
+  expRecClass(rec: ExposureRecommendation): string {
+    return (rec ?? '').toLowerCase().replace(/_/g, '-');
+  }
+
+  expRecLabel(rec: ExposureRecommendation): string {
+    const map: Record<ExposureRecommendation, string> = {
+      INCREASE_STRONG: '↑↑ Aumentar fuerte',
+      INCREASE_MILD:   '↑  Aumentar',
+      MAINTAIN:        '→  Mantener',
+      REDUCE_MILD:     '↓  Reducir',
+      REDUCE_STRONG:   '↓↓ Reducir fuerte',
+    };
+    return map[rec] ?? rec;
+  }
+
+  expRecIcon(rec: ExposureRecommendation): string {
+    const map: Record<ExposureRecommendation, string> = {
+      INCREASE_STRONG: 'arrow_upward',
+      INCREASE_MILD:   'trending_up',
+      MAINTAIN:        'remove',
+      REDUCE_MILD:     'trending_down',
+      REDUCE_STRONG:   'arrow_downward',
+    };
+    return map[rec] ?? 'remove';
+  }
+
+  expBarClass(pct: number): string {
+    if (pct >= 72) return 'exp-high';
+    if (pct >= 58) return 'exp-mid';
+    return 'exp-low';
+  }
+
+  sentimentClass(s: SentimentState): string {
+    if (s === 'bullish') return 'chip-bull';
+    if (s === 'bearish') return 'chip-bear';
+    return 'chip-neu';
+  }
+
+  sentimentIcon(s: SentimentState): string {
+    if (s === 'bullish') return 'sentiment_very_satisfied';
+    if (s === 'bearish') return 'sentiment_very_dissatisfied';
+    return 'sentiment_neutral';
+  }
+
+  trendClass(t: TrendState): string {
+    return t === 'uptrend' ? 'chip-bull' : 'chip-bear';
+  }
+
+  translateState(s: string): string {
+    const m: Record<string, string> = {
+      bullish: 'Alcista', bearish: 'Bajista', neutral: 'Neutral',
+      oversold: 'Sobrevendido', overbought: 'Sobrecomprado',
+      uptrend: 'Tendencia ↑', downtrend: 'Tendencia ↓',
+      low: 'Baja vol.', high: 'Alta vol.',
+    };
+    return m[s] ?? s;
   }
 }

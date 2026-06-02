@@ -33,56 +33,41 @@ export class SidebarComponent {
       label:       'Portfolio',
       icon:        'space_dashboard',
       route:       '/dashboard',
-      description: 'Resumen general · KPIs · señales activas',
+      description: 'Exposición actual por activo · KPIs de rendimiento · resumen ejecutivo',
     },
     {
-      label:       'Señales',
+      label:       'Análisis de Activos',
       icon:        'psychology',
       route:       '/signals',
-      description: 'BUY / SELL / HOLD · cadena de decisión bayesiana',
+      description: 'Por qué cada activo tiene ese % de exposición · cadena de decisión bayesiana · noticias',
       badge:       'AI',
     },
     {
       label:       'Backtesting',
       icon:        'insights',
       route:       '/backtesting',
-      description: 'Sharpe · Drawdown · Alpha vs Buy & Hold',
+      description: 'Sharpe · Drawdown · Alpha vs Buy & Hold · rendimiento histórico validado',
     },
     {
       label:       'Exposición',
       icon:        'area_chart',
       route:       '/exposure',
-      description: 'Exposición continua · Régimen de mercado · Binario vs Probabilístico',
-      badge:       'NEW',
-    },
-    {
-      label:       'Explorador',
-      icon:        'search',
-      route:       '/explorer',
-      description: 'Noticias raw · OHLCV · decisión por ticker · lanzar pipeline',
-      badge:       'NEW',
-    },
-    {
-      label:       'Cartera',
-      icon:        'bookmark',
-      route:       '/watchlist',
-      description: 'Instrumentos de seguimiento · cobertura · pipeline por cartera',
+      description: 'Evolución de exposición continua · Régimen de mercado · Probabilístico vs Binario',
     },
   ];
 
   infraNav: NavItem[] = [
     {
+      label:       'Auditoría del Modelo',
+      icon:        'manage_search',
+      route:       '/audit',
+      description: 'Trazabilidad completa · CPT bayesiana · decisiones implícitas · explicabilidad',
+    },
+    {
       label:       'Pipeline',
       icon:        'account_tree',
       route:       '/pipeline',
-      description: 'Estado de las 5 Lambdas y batches diarios',
-    },
-    {
-      label:       'Auditoría',
-      icon:        'manage_search',
-      route:       '/audit',
-      description: 'Trazabilidad completa · CPT · decisiones implícitas',
-      badge:       'NEW',
+      description: 'Estado interno de las etapas de procesamiento de datos',
     },
   ];
 }

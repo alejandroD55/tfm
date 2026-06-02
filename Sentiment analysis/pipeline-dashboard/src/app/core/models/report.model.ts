@@ -1,11 +1,21 @@
 // ─── Tipos primitivos ─────────────────────────────────────────────────────
 
-export type TradingSignal    = 'BUY' | 'SELL' | 'HOLD';
-export type BatchStatus      = 'STARTED' | 'COMPLETED' | 'FAILED' | 'UNKNOWN';
-export type SentimentState   = 'bullish' | 'bearish' | 'neutral';
-export type RsiState         = 'oversold' | 'neutral' | 'overbought';
-export type TrendState       = 'uptrend' | 'downtrend';
-export type VolatilityState  = 'low' | 'high';
+export type TradingSignal         = 'BUY' | 'SELL' | 'HOLD';
+export type BatchStatus           = 'STARTED' | 'COMPLETED' | 'FAILED' | 'UNKNOWN';
+export type SentimentState        = 'bullish' | 'bearish' | 'neutral';
+export type RsiState              = 'oversold' | 'neutral' | 'overbought';
+export type TrendState            = 'uptrend' | 'downtrend';
+export type VolatilityState       = 'low' | 'high';
+
+/** Recomendación de exposición continua (5 niveles, sustituye BUY/HOLD/SELL) */
+export type ExposureRecommendation =
+  | 'INCREASE_STRONG'
+  | 'INCREASE_MILD'
+  | 'MAINTAIN'
+  | 'REDUCE_MILD'
+  | 'REDUCE_STRONG';
+
+export type ConvictionLabel = 'high' | 'medium' | 'low' | 'unknown';
 
 // ─── Pipeline health ──────────────────────────────────────────────────────
 
@@ -90,21 +100,25 @@ export interface DailyReport {
 // ─── Enriched ticker view (joined from several sections) ─────────────────
 
 export interface TickerView {
-  ticker: string;
-  signal: TradingSignal;
-  prob_up: number;
-  prob_down: number;
-  evidence: BayesianEvidence;
+  ticker:            string;
+  signal:            TradingSignal;
+  prob_up:           number;
+  prob_down:         number;
+  evidence:          BayesianEvidence;
   cumulative_return: number;
-  sharpe_ratio: number;
-  max_drawdown: number;
-  final_equity: number;
-  win_rate: number;
-  trades_closed: number;
-  profit_factor: number;
-  signals_count: { BUY: number; SELL: number; HOLD: number };
-  alpha_vs_benchmark: number;
-  buy_hold_return: number;
+  sharpe_ratio:      number;
+  max_drawdown:      number;
+  final_equity:      number;
+  win_rate:          number;
+  trades_closed:     number;
+  profit_factor:     number;
+  signals_count:     { BUY: number; SELL: number; HOLD: number };
+  alpha_vs_benchmark:number;
+  buy_hold_return:   number;
+  // ── Exposición continua (calculada desde prob_up con lógica backend) ──
+  exposure_pct:           number;               // 0–100 (smoothed_exposure × 100)
+  exposure_recommendation:ExposureRecommendation;
+  conviction_label:       ConvictionLabel;
 }
 
 // ─── S3 index entry ───────────────────────────────────────────────────────

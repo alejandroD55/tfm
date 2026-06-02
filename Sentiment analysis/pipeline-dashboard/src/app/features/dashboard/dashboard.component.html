@@ -42,16 +42,16 @@
       </mat-expansion-panel-header>
       <div class="glossary-content">
         <div class="g-col">
-          <strong>Estrategia IA vs Mercado:</strong> Compara el rendimiento de nuestra IA frente a la estrategia pasiva "Comprar y Mantener" (Buy & Hold). La IA busca preservar el capital estando en liquidez (cash) ante el peligro.
+          <strong>Exposición (%):</strong> Fracción del capital asignado a cada activo. La IA no entra o sale bruscamente — modula la exposición de forma continua (0–100%) según el régimen de mercado y las señales bayesianas. Empezamos en 0% y escalamos gradualmente.
         </div>
         <div class="g-col">
-          <strong>Ratio de Sharpe:</strong> Mide la calidad de la inversión. Relaciona la rentabilidad obtenida con el riesgo asumido. Un valor superior a 1.0 indica un comportamiento excelente ajustado al riesgo.
+          <strong>Recomendación de posición:</strong> En lugar de BUY/SELL, el sistema emite 5 niveles: <em>Aumentar fuerte · Aumentar · Mantener · Reducir · Reducir fuerte</em>. Nunca sale completamente salvo condición de mercado extrema (VIX > 45).
         </div>
         <div class="g-col">
-          <strong>Caída Máxima:</strong> El mayor porcentaje de dinero que la cartera llegó a perder desde su pico más alto. Un valor cercano a 0% demuestra que el sistema es extremadamente seguro.
+          <strong>Ratio de Sharpe:</strong> Mide la calidad de la inversión ajustada al riesgo. Un valor superior a 1.0 indica rentabilidad por encima del mercado para el riesgo asumido. > 2.0 es excelente.
         </div>
         <div class="g-col">
-          <strong>Probabilidad Alcista P(↑):</strong> Confianza matemática de la IA sobre si el ETF subirá. Si es ≥ 65% compramos; si es ≤ 35% pasamos a liquidez (Cash); y en el rango medio mantenemos.
+          <strong>Caída Máxima:</strong> El mayor porcentaje de pérdida desde un máximo histórico. El sistema de exposición continua amortigua caídas reduciendo gradualmente la posición cuando detecta deterioro del régimen.
         </div>
       </div>
     </mat-expansion-panel>
@@ -121,54 +121,70 @@
 
     </section>
 
-    <section class="row portfolio-main-row">
-      
-      <div class="card chart-card span-4">
+    <!-- ── Exposición actual por activo (OUTPUT PRIMARIO) ─────────────────── -->
+    <section class="row">
+      <div class="card chart-card span-12">
         <div class="card-head">
-          <div class="card-title"><mat-icon>donut_large</mat-icon> <span>Decisiones de IA (Hoy)</span></div>
+          <div class="card-title">
+            <mat-icon>area_chart</mat-icon>
+            <span>Exposición Actual por Activo</span>
+          </div>
+          <span class="card-sub">
+            Fracción del capital asignado a cada ETF hoy · La IA modula continuamente en función del régimen de mercado y las señales bayesianas
+          </span>
         </div>
-        
-        <div class="donut-container">
-          <div class="donut-chart-wrapper">
-            <ngx-charts-pie-chart
-              [results]="signalPieChart"
-              [legend]="false"
-              [labels]="false"
-              [doughnut]="true"
-              [arcWidth]="0.35"
-              [customColors]="customSignalColors"
-              [view]="[220, 220]">
-            </ngx-charts-pie-chart>
-            <div class="donut-center">
-              <div class="dc-num">{{ tickerViews.length }}</div>
-              <div class="dc-lbl">ETFs</div>
+
+        <div class="exposure-grid">
+          @for (tv of tickerViews; track tv.ticker) {
+            <div class="exp-ticker-card">
+              <div class="exp-ticker-header">
+                <span class="exp-ticker-name">{{ tv.ticker }}</span>
+                <span [class]="'exp-rec-badge ' + expRecClass(tv.exposure_recommendation)"
+                      [matTooltip]="expRecLabel(tv.exposure_recommendation)">
+                  <mat-icon>{{ expRecIcon(tv.exposure_recommendation) }}</mat-icon>
+                  {{ expRecLabel(tv.exposure_recommendation) }}
+                </span>
+              </div>
+
+              <div class="exp-bar-row">
+                <div class="exp-bar-track">
+                  <div [class]="'exp-bar-fill ' + expBarClass(tv.exposure_pct)"
+                       [style.width.%]="tv.exposure_pct">
+                  </div>
+                  <!-- Marker de floor (50%) -->
+                  <div class="exp-floor-marker" matTooltip="Floor mínimo (50% régimen NEUTRAL)"></div>
+                </div>
+                <span class="exp-pct-label" [ngClass]="expBarClass(tv.exposure_pct)">
+                  {{ tv.exposure_pct | number:'1.0-1' }}%
+                </span>
+              </div>
+
+              <div class="exp-ticker-meta">
+                <span class="ev-chip {{ sentimentClass(tv.evidence.sentiment) }}" matTooltip="Sentimiento FinBERT">
+                  <mat-icon>{{ sentimentIcon(tv.evidence.sentiment) }}</mat-icon>
+                  {{ translateState(tv.evidence.sentiment) }}
+                </span>
+                <span class="ev-chip {{ trendClass(tv.evidence.trend) }}" matTooltip="Tendencia técnica">
+                  <mat-icon>{{ tv.evidence.trend === 'uptrend' ? 'trending_up' : 'trending_down' }}</mat-icon>
+                  {{ tv.evidence.trend === 'uptrend' ? 'Alcista' : 'Bajista' }}
+                </span>
+                <span class="exp-prob" matTooltip="Probabilidad bayesiana de subida">
+                  P(↑) {{ (tv.prob_up * 100) | number:'1.0-0' }}%
+                </span>
+              </div>
             </div>
-          </div>
-          
-          <div class="custom-legend">
-            <div class="cl-item">
-              <span class="cl-color" style="background-color: #22C55E;"></span>
-              <span class="cl-label">COMPRAR</span>
-              <span class="cl-value">{{ buyCount }}</span>
-            </div>
-            <div class="cl-item">
-              <span class="cl-color" style="background-color: #7C3AED;"></span>
-              <span class="cl-label">CASH</span>
-              <span class="cl-value">{{ sellCount }}</span>
-            </div>
-            <div class="cl-item">
-              <span class="cl-color" style="background-color: #F59E0B;"></span>
-              <span class="cl-label">MANTENER</span>
-              <span class="cl-value">{{ holdCount }}</span>
-            </div>
-          </div>
+          }
         </div>
       </div>
+    </section>
 
-      <div class="card chart-card span-8">
+    <!-- ── Win Rate + P(up) ──────────────────────────────────────────────── -->
+    <section class="row portfolio-main-row">
+
+      <div class="card chart-card span-6">
         <div class="card-head">
-          <div class="card-title"><mat-icon>track_changes</mat-icon> <span>Tasa de Acierto (Win Rate) Histórica por ETF</span></div>
-          <span class="card-sub">Efectividad de las operaciones cerradas en el último año</span>
+          <div class="card-title"><mat-icon>track_changes</mat-icon> <span>Tasa de Acierto por ETF</span></div>
+          <span class="card-sub">Efectividad de los ciclos cerrados en el periodo</span>
         </div>
         <div class="chart-host">
           <ngx-charts-bar-vertical
@@ -181,29 +197,27 @@
         </div>
       </div>
 
-    </section>
-
-    <section class="row">
-      <div class="card chart-card span-12">
+      <div class="card chart-card span-6">
         <div class="card-head">
-          <div class="card-title"><mat-icon>bar_chart</mat-icon> <span>Probabilidad Alcista P(↑) por ETF</span></div>
-          <span class="card-sub">Confianza matemática calculada por la Red Bayesiana</span>
+          <div class="card-title"><mat-icon>psychology</mat-icon> <span>Confianza Bayesiana P(↑) por ETF</span></div>
+          <span class="card-sub">Probabilidad de subida calculada por la Red Bayesiana · condicionada por noticias, RSI y tendencia</span>
         </div>
         <div class="chart-host">
           <ngx-charts-bar-vertical
             [results]="probUpChart"
             [xAxis]="true" [yAxis]="true" [showGridLines]="true"
             [customColors]="customProbColors"
-            yAxisLabel="Probabilidad (%)" [showYAxisLabel]="true"
+            yAxisLabel="P(subida) (%)" [showYAxisLabel]="true"
             [showDataLabel]="true" [yScaleMax]="100" [barPadding]="4" [roundEdges]="true">
           </ngx-charts-bar-vertical>
         </div>
         <div class="thresholds">
-          <span class="th-buy">COMPRAR ≥ 65%</span>
-          <span class="th-hold">MANTENER 35–65%</span>
-          <span class="th-sell">CASH ≤ 35%</span>
+          <span class="th-buy">Alta confianza ≥ 65%</span>
+          <span class="th-hold">Incertidumbre 35–65%</span>
+          <span class="th-sell">Baja confianza ≤ 35%</span>
         </div>
       </div>
+
     </section>
 
   } @else {
