@@ -840,24 +840,10 @@
   display: flex; flex-direction: column; gap: 6px;
 }
 
-.week-svg {
-  width: 100%; height: auto;
-  display: block; overflow: visible;
-}
-
-/* SVG text styles (applied via CSS class on SVG text elements) */
-.week-svg .svg-axis-label {
-  font-size: 9px; fill: var(--slate-400);
-  font-family: inherit;
-}
-.week-svg .svg-axis-target {
-  fill: var(--brand-600); font-weight: 700; font-size: 9.5px;
-}
-.week-svg .svg-price-highlight {
-  font-size: 9px; fill: white; font-weight: 700; font-family: inherit;
-}
-.week-svg .svg-price-label {
-  font-size: 8px; fill: var(--slate-400); font-family: inherit;
+.week-hc-chart {
+  display: block;
+  width: 100%;
+  min-height: 280px;
 }
 
 .wcs-legend {

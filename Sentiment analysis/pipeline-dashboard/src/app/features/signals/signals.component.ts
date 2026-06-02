@@ -85,6 +85,7 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
   // ── OHLCV Week chart ──────────────────────────────────────────────────────
   ohlcvWeekCache   = new Map<string, OhlcvPoint[]>();
   ohlcvWeekLoading = new Set<string>();
+  weekChartOptionsCache = new Map<string, Highcharts.Options>();
 
   // ── Highcharts performance chart ──────────────────────────────────────────
   performanceTicker = '';
@@ -156,6 +157,7 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     this.tickerTraceCache.clear();
     this.ohlcvWeekCache.clear();
     this.ohlcvWeekLoading.clear();
+    this.weekChartOptionsCache.clear();
     this.performanceCache.clear();
     this.performanceChartOptions = {};
     this.performanceError = '';
@@ -454,51 +456,118 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     return this.ohlcvWeekLoading.has(ticker);
   }
 
-  /** Returns SVG-ready data for the weekly price mini-chart */
-  getWeekSvgData(ticker: string): {
-    points: { x: number; y: number; date: string; close: number; isTarget: boolean }[];
-    path:     string;
-    areaPath: string;
-    minClose: number;
-    maxClose: number;
-  } {
-    const pts = this.ohlcvWeekCache.get(ticker) ?? [];
-    if (pts.length === 0) return { points: [], path: '', areaPath: '', minClose: 0, maxClose: 0 };
-
-    const W = 560, H = 140, padX = 44, padY = 18, bottomPad = 28;
-    const chartW = W - padX * 2;
-    const chartH = H - padY - bottomPad;
-
-    const closes = pts.map(p => p.close);
-    const minC   = Math.min(...closes);
-    const maxC   = Math.max(...closes);
-    const range  = maxC - minC || minC * 0.02 || 1;
-
-    const xOf = (i: number) => pts.length > 1 ? padX + (i / (pts.length - 1)) * chartW : W / 2;
-    const yOf = (c: number) => padY + (1 - (c - minC) / range) * chartH;
-    const bottomY = padY + chartH;
-
-    const svgPoints = pts.map((p, i) => ({
-      x: xOf(i),
-      y: yOf(p.close),
-      date:     p.date,
-      close:    p.close,
-      isTarget: p.date === this.selectedDate,
-    }));
-
-    const path     = svgPoints.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
-    const last     = svgPoints[svgPoints.length - 1];
-    const first    = svgPoints[0];
-    const areaPath = `${path} L${last.x.toFixed(1)},${bottomY} L${first.x.toFixed(1)},${bottomY} Z`;
-
-    return { points: svgPoints, path, areaPath, minClose: minC, maxClose: maxC };
+  hasWeekChartData(ticker: string): boolean {
+    return (this.ohlcvWeekCache.get(ticker)?.length ?? 0) > 0;
   }
 
-  /** Formats "2024-06-15" → "15/06" */
-  formatDateShort(dateStr: string): string {
-    if (!dateStr) return '';
-    const parts = dateStr.split('-');
-    return parts.length === 3 ? `${parts[2]}/${parts[1]}` : dateStr;
+  getWeekChartOptions(ticker: string): Highcharts.Options {
+    const cached = this.weekChartOptionsCache.get(ticker);
+    if (cached) return cached;
+    const opts = this.buildWeekChartOptions(ticker);
+    if (opts.series && (opts.series as any[]).length) {
+      this.weekChartOptionsCache.set(ticker, opts);
+    }
+    return opts;
+  }
+
+  private buildWeekChartOptions(ticker: string): Highcharts.Options {
+    const pts = this.ohlcvWeekCache.get(ticker) ?? [];
+    if (pts.length === 0) return {};
+
+    const toTs = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
+    const targetTs = toTs(this.selectedDate);
+
+    const data = pts.map(p => {
+      const isTarget = p.date === this.selectedDate;
+      return {
+        x: toTs(p.date),
+        y: p.close,
+        marker: isTarget
+          ? { enabled: true, radius: 6, fillColor: '#2563eb', lineColor: '#ffffff', lineWidth: 2 }
+          : { enabled: true, radius: 3, fillColor: '#ffffff', lineColor: '#2563eb', lineWidth: 1.5 },
+      };
+    });
+
+    return {
+      chart: {
+        type: 'area',
+        height: 280,
+        backgroundColor: 'transparent',
+        spacing: [16, 16, 12, 8],
+        style: { fontFamily: 'inherit' },
+      },
+      title: { text: undefined },
+      credits: { enabled: false },
+      legend: { enabled: false },
+      rangeSelector: { enabled: false, inputEnabled: false, buttonTheme: { visibility: 'hidden' }, labelStyle: { visibility: 'hidden' } } as any,
+      navigator: { enabled: false },
+      scrollbar: { enabled: false },
+      xAxis: {
+        type: 'datetime',
+        tickPixelInterval: 90,
+        lineColor: 'rgba(148,163,184,.3)',
+        tickColor: 'rgba(148,163,184,.3)',
+        labels: {
+          style: { fontSize: '11px', color: '#94a3b8' },
+          format: '{value:%d %b}',
+        },
+        plotLines: [{
+          value: targetTs,
+          color: '#2563eb',
+          width: 1.5,
+          dashStyle: 'Dash',
+          zIndex: 5,
+          label: {
+            text: `Día analizado`,
+            rotation: 0,
+            y: 14,
+            x: 6,
+            style: { color: '#2563eb', fontWeight: '600', fontSize: '10px' },
+          },
+        }],
+      },
+      yAxis: {
+        title: { text: undefined },
+        gridLineColor: 'rgba(148,163,184,.18)',
+        labels: {
+          style: { fontSize: '11px', color: '#94a3b8' },
+          formatter: function () { return '$' + (this.value as number).toFixed(2); },
+        },
+      },
+      tooltip: {
+        backgroundColor: 'rgba(15,23,42,.92)',
+        borderWidth: 0,
+        borderRadius: 6,
+        shadow: false,
+        style: { color: '#f8fafc', fontSize: '12px' },
+        headerFormat: '<span style="font-size:10px;color:#94a3b8">{point.key}</span><br/>',
+        pointFormat: '<b style="color:#60a5fa">${point.y:.2f}</b>',
+        xDateFormat: '%A, %d %b %Y',
+        useHTML: true,
+      },
+      plotOptions: {
+        area: {
+          lineWidth: 2.2,
+          lineColor: '#2563eb',
+          color: '#2563eb',
+          fillColor: {
+            linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+            stops: [
+              [0, 'rgba(37,99,235,0.28)'],
+              [1, 'rgba(37,99,235,0)'],
+            ],
+          },
+          states: { hover: { lineWidth: 2.6 } },
+          marker: { symbol: 'circle' },
+          dataGrouping: { enabled: false } as any,
+        },
+      },
+      series: [{
+        type: 'area',
+        name: 'Precio cierre',
+        data,
+      }],
+    };
   }
 
   loadTickerTrace(ticker: string) {

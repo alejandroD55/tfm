@@ -324,50 +324,6 @@
       </div>
     </section>
 
-    <!-- ── Progresión de Exposición durante el Backtesting ───────────────── -->
-    <section class="card chart-card" style="margin-bottom: 16px">
-      <div class="card-head">
-        <div class="card-title">
-          <mat-icon>stacked_line_chart</mat-icon>
-          <span>Progresión de Capital Desplegado</span>
-        </div>
-        <span class="card-sub">
-          Cómo la IA fue aumentando el capital invertido en cada activo ·
-          Arranca en 0% el primer día · Sube según régimen de mercado y señales
-          bayesianas
-        </span>
-      </div>
-      @if (historyLoading) {
-        <div class="history-loading">
-          <mat-spinner diameter="24"></mat-spinner>
-        </div>
-      } @else if (historyRows.length > 0) {
-        <div class="chart-host chart-host-tall">
-          <highcharts-chart
-            [Highcharts]="Highcharts"
-            [constructorType]="'stockChart'"
-            [options]="exposureChartOptions"
-            [(update)]="exposureChartUpdate"
-            style="display: block; width: 100%; height: 280px"
-          >
-          </highcharts-chart>
-        </div>
-        <div class="thresholds" style="margin-top: 8px">
-          <span class="th-buy">≥ 70% — Alta convicción alcista</span>
-          <span class="th-hold"
-            >50–70% — Posición moderada (régimen NEUTRAL)</span
-          >
-          <span class="th-sell"
-            >≤ 50% — Capital protegido (régimen adverso)</span
-          >
-        </div>
-      } @else {
-        <p style="padding: 24px; color: var(--slate-400); text-align: center">
-          Sin datos históricos disponibles aún.
-        </p>
-      }
-    </section>
-
     <section class="card history-card">
       <div class="card-head history-head">
         <div>
