@@ -40,7 +40,7 @@
           <strong>2. Distribuciones Prior:</strong> Los sesgos matemáticos base. Antes de analizar ningún ETF, la IA asume estas probabilidades estadísticas (ej: Asume que el mercado está en tendencia alcista el 50% de las veces).
         </div>
         <div class="g-col">
-          <strong>3. Walkthrough Real:</strong> Para cada activo del día seleccionado, muestra paso a paso el camino completo: datos crudos → discretización → titulares FinBERT → ajuste macro → probabilidad final → decisión.
+          <strong>3. Walkthrough Real:</strong> Para cada activo del día seleccionado, muestra paso a paso el camino completo: datos crudos → discretización → titulares FinBERT → ajuste macro → probabilidad final → recomendación de exposición.
         </div>
         <div class="g-col">
           <strong>4. Matriz CPT (Tabla Condicional):</strong> El núcleo de la IA. Muestra las 36 combinaciones posibles del mercado y qué probabilidad exacta de subida se le asigna a cada escenario.
@@ -81,7 +81,7 @@
             <mat-icon>route</mat-icon>
             <span>Walkthrough de Decisión — {{ selectedDate }}</span>
           </div>
-          <span class="card-sub">Trazabilidad completa paso a paso: cómo cada dato crudo del día se convirtió en una señal de inversión.</span>
+          <span class="card-sub">Trazabilidad completa paso a paso: cómo cada dato crudo del día se convierte en una recomendación de exposición.</span>
         </div>
 
         <!-- Pestañas de tickers -->
@@ -278,12 +278,12 @@
 
             <div class="wt-arrow">▼</div>
 
-            <!-- PASO 5: Inferencia Bayesiana → Señal -->
+            <!-- PASO 5: Inferencia Bayesiana → Recomendación de exposición -->
             <div class="wt-step wt-step-final">
               <div class="wt-step-header">
                 <div class="wt-step-num">5</div>
                 <div class="wt-step-title">
-                  <span>Inferencia Bayesiana → Decisión Final</span>
+                  <span>Inferencia Bayesiana → Recomendación Final</span>
                   <small>Variable Elimination sobre la Red Bayesiana con las 4 evidencias + ajuste macro</small>
                 </div>
               </div>
@@ -307,7 +307,7 @@
                     </span>
                   </div>
                   <div class="inf-threshold">
-                    <span class="inf-th-label">Umbral BUY &gt; 58% · SELL &lt; 42%</span>
+                    <span class="inf-th-label">Umbral INCREMENTAR ≥ {{ buyThresholdPct | number:'1.0-0' }}% · REDUCIR ≤ {{ sellThresholdPct | number:'1.0-0' }}%</span>
                   </div>
                   <div class="inf-signal-final">
                     <span class="signal-badge-big {{ signalClass(tt.inference.signal) }}">
@@ -363,20 +363,20 @@
         </div>
 
         <div class="config-box">
-          <h4 class="config-box-title"><mat-icon>call_split</mat-icon> Umbrales de Inversión</h4>
+          <h4 class="config-box-title"><mat-icon>call_split</mat-icon> Umbrales de Recomendación de Exposición</h4>
           <div class="config-rows">
             <div class="cr">
-              <span class="signal-badge buy">COMPRAR</span>
-              <span class="cr-val">Si Confianza &gt; {{ (model?.signal_thresholds?.BUY?.prob_up_above || 0.65) * 100 }}%</span>
+              <span class="signal-badge buy">INCREMENTAR</span>
+              <span class="cr-val">Si P(↑) ≥ {{ (model?.signal_thresholds?.BUY?.prob_up_above || 0.65) * 100 }}%</span>
             </div>
             <div class="cr">
-              <span class="signal-badge sell">CASH (CORTOS)</span>
-              <span class="cr-val">Si Confianza &lt; {{ (model?.signal_thresholds?.SELL?.prob_up_below || 0.35) * 100 }}%</span>
+              <span class="signal-badge sell">REDUCIR</span>
+              <span class="cr-val">Si P(↑) ≤ {{ (model?.signal_thresholds?.SELL?.prob_up_below || 0.35) * 100 }}%</span>
             </div>
             <div class="cr">
               <span class="signal-badge hold">MANTENER</span>
               <span class="cr-val">
-                Si Confianza entre {{ (model?.signal_thresholds?.HOLD?.range?.[0] || 0.35) * 100 }}% y {{ (model?.signal_thresholds?.HOLD?.range?.[1] || 0.65) * 100 }}%
+                Si P(↑) entre {{ (model?.signal_thresholds?.HOLD?.range?.[0] || 0.35) * 100 }}% y {{ (model?.signal_thresholds?.HOLD?.range?.[1] || 0.65) * 100 }}%
               </span>
             </div>
           </div>
@@ -462,21 +462,21 @@
                     <div class="pb-wrap">
                       <div class="pb-fill"
                            [style.width.%]="row.prob_up * 100"
-                           [class.high]="row.prob_up >= 0.65"
-                           [class.mid]="row.prob_up > 0.35 && row.prob_up < 0.65"
-                           [class.low]="row.prob_up <= 0.35"></div>
+                           [class.high]="row.prob_up >= buyThreshold"
+                           [class.mid]="row.prob_up > sellThreshold && row.prob_up < buyThreshold"
+                           [class.low]="row.prob_up <= sellThreshold"></div>
                     </div>
                     <span class="prob-pct-text"
-                          [class.txt-green]="row.prob_up >= 0.65"
-                          [class.txt-yellow]="row.prob_up > 0.35 && row.prob_up < 0.65"
-                          [class.txt-purple]="row.prob_up <= 0.35">
+                          [class.txt-green]="row.prob_up >= buyThreshold"
+                          [class.txt-yellow]="row.prob_up > sellThreshold && row.prob_up < buyThreshold"
+                          [class.txt-purple]="row.prob_up <= sellThreshold">
                       {{ (row.prob_up * 100) | number:'1.0-0' }}%
                     </span>
                   </div>
                 </td>
                 <td>
-                  @if (row.prob_up >= 0.65) { <span class="signal-badge buy">COMPRAR</span> }
-                  @else if (row.prob_up <= 0.35) { <span class="signal-badge sell">CASH</span> }
+                  @if (row.prob_up >= buyThreshold) { <span class="signal-badge buy">INCREMENTAR</span> }
+                  @else if (row.prob_up <= sellThreshold) { <span class="signal-badge sell">REDUCIR</span> }
                   @else { <span class="signal-badge hold">MANTENER</span> }
                 </td>
               </tr>

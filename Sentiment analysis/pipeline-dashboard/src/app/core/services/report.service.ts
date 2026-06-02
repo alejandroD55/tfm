@@ -140,7 +140,7 @@ export class ReportService {
     return 'REDUCE_STRONG';
   }
 
-  /** Convicción aproximada desde la señal y distancia al umbral */
+  /** Convicción aproximada desde la recomendación base y distancia al umbral */
   private calcConviction(signal: string, prob_up: number): ConvictionLabel {
     const dist = signal === 'BUY'  ? prob_up - 0.52
                : signal === 'SELL' ? 0.28 - prob_up

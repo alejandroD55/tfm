@@ -14,7 +14,7 @@
           Simulación con capital inicial <strong>10.000 €</strong> por activo ·
         }
         La IA empieza en <strong>0% invertido</strong> y aumenta gradualmente la
-        exposición según las señales bayesianas.
+        exposición según las recomendaciones bayesianas.
       </p>
     </div>
     <div class="snapshot-pill">
@@ -43,7 +43,7 @@
           <mat-icon>stacked_bar_chart</mat-icon>
           <span>Distribución de Recomendaciones por Fecha</span>
         </div>
-        <span class="card-sub">Cómo evolucionaron las recomendaciones de exposición a lo largo del periodo · sin señales binarias</span>
+        <span class="card-sub">Cómo evolucionaron las recomendaciones de exposición a lo largo del periodo · sin decisiones binarias</span>
       </div>
       @if (historyRows.length > 0) {
         <div class="exposure-dist-summary">
@@ -79,7 +79,7 @@
         </div>
         <span class="card-sub">
           Cómo la IA fue aumentando el capital invertido en cada activo ·
-          Arranca en 0% el primer día · Sube según régimen de mercado y señales
+          Arranca en 0% el primer día · Sube según régimen de mercado y recomendaciones
           bayesianas
         </span>
       </div>
@@ -343,14 +343,14 @@
 
         <!-- ══ Exposición continua (PRIMARIO) ══════════════════════════════ -->
         <!-- La IA modula la posición diariamente usando solo datos pasados.    -->
-        <!-- Empieza con 0% invertido y escala según las señales bayesianas.    -->
+        <!-- Empieza con 0% invertido y escala según las recomendaciones bayesianas.    -->
 
         <ng-container matColumnDef="exp_return">
           <th
             mat-header-cell
             *matHeaderCellDef
             mat-sort-header="exp_cumulative_return"
-            matTooltip="Retorno acumulado con exposición modulada — la IA entra gradualmente según las señales"
+            matTooltip="Retorno acumulado con exposición modulada — la IA entra gradualmente según las recomendaciones"
           >
             Rentabilidad (Exposición)
           </th>

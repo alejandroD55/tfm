@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 
 EVIDENCE_FEATURES = ("Sentiment", "RSI", "Trend", "Volatility")
 SIGNALS = ("BUY", "HOLD", "SELL")
+EXPOSURE_ACTIONS = ("INCREASE", "MAINTAIN", "DECREASE")
 
 
 def _float_or_none(value: Any) -> Optional[float]:
@@ -186,6 +187,14 @@ def normalize_signal_rows(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]
         ticker = row.get("ticker")
         if not ticker:
             continue
+        if str(signal).upper() == "BUY":
+            exposure_action = "INCREASE"
+        elif str(signal).upper() == "SELL":
+            exposure_action = "DECREASE"
+        else:
+            exposure_action = "MAINTAIN"
+
+        exposure_constraints = row.get("exposure_constraints") or {}
         normalized.append(
             {
                 "batch_date": _date_str(row.get("batch_date") or row.get("date")),
@@ -203,6 +212,37 @@ def normalize_signal_rows(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]
                 "rsi_state": row.get("rsi_state") or discretization.get("rsi_state"),
                 "trend_state": row.get("trend_state") or discretization.get("trend_state"),
                 "volatility_state": row.get("volatility_state") or discretization.get("volatility_state"),
+                "exposure_action": exposure_action,
+                "smoothed_exposure_input": _float_or_none(
+                    _first_not_none(
+                        row.get("smoothed_exposure_input"),
+                        exposure_constraints.get("smoothed_exposure_input"),
+                    )
+                ),
+                "constrained_exposure": _float_or_none(
+                    _first_not_none(
+                        row.get("constrained_exposure"),
+                        exposure_constraints.get("constrained_exposure"),
+                    )
+                ),
+                "regime_ceiling": _float_or_none(
+                    _first_not_none(
+                        row.get("regime_ceiling"),
+                        exposure_constraints.get("regime_ceiling"),
+                    )
+                ),
+                "fundamental_cap": _float_or_none(
+                    _first_not_none(
+                        row.get("fundamental_cap"),
+                        exposure_constraints.get("fundamental_cap"),
+                    )
+                ),
+                "catalyst_penalty": _float_or_none(
+                    _first_not_none(
+                        row.get("catalyst_penalty"),
+                        exposure_constraints.get("catalyst_penalty"),
+                    )
+                ),
             }
         )
     normalized.sort(key=lambda x: (x["ticker"], x["batch_date"]))
@@ -314,6 +354,8 @@ def compute_transition_report(signal_rows: Iterable[Dict[str, Any]]) -> Dict[str
     total_hold_followed_by_hold = 0
     total_hold_with_next = 0
     run_lengths_by_signal: Dict[str, List[int]] = {s: [] for s in SIGNALS}
+    run_lengths_by_action: Dict[str, List[int]] = {a: [] for a in EXPOSURE_ACTIONS}
+    all_exposure_changes: List[float] = []
 
     for ticker, ticker_rows in grouped.items():
         signals = [r["signal"] for r in ticker_rows]
@@ -358,6 +400,24 @@ def compute_transition_report(signal_rows: Iterable[Dict[str, Any]]) -> Dict[str
             run_lengths_by_signal[sig].extend(lens)
             avg_consecutive[sig] = _summary(lens)
 
+        actions = [str(r.get("exposure_action") or "MAINTAIN").upper() for r in ticker_rows]
+        action_runs = _runs(actions)
+        for action in EXPOSURE_ACTIONS:
+            run_lengths_by_action[action].extend(
+                [r["duration"] for r in action_runs if r["signal"] == action]
+            )
+
+        constrained = [
+            _float_or_none(r.get("constrained_exposure")) for r in ticker_rows
+        ]
+        constrained = [float(v) for v in constrained if v is not None]
+        ticker_exposure_changes: List[float] = []
+        if len(constrained) >= 2:
+            ticker_exposure_changes = [
+                constrained[i] - constrained[i - 1] for i in range(1, len(constrained))
+            ]
+            all_exposure_changes.extend(ticker_exposure_changes)
+
         all_holding_periods.extend(holding_periods)
         all_turnovers.append(turnover)
         total_buy_sell += buy_sell
@@ -368,9 +428,19 @@ def compute_transition_report(signal_rows: Iterable[Dict[str, Any]]) -> Dict[str
             "average_holding_period_days": _summary(holding_periods)["avg"],
             "exposure_ratio": round(exposure_days / len(ticker_rows), 4) if ticker_rows else 0.0,
             "signal_turnover": round(turnover, 4),
+            "recommendation_turnover": (
+                round(
+                    sum(1 for i in range(1, len(actions)) if actions[i] != actions[i - 1])
+                    / max(len(actions) - 1, 1),
+                    4,
+                )
+                if actions
+                else 0.0
+            ),
             "buy_to_sell_transitions": buy_sell,
             "hold_persistence": round(hold_hold / hold_next, 4) if hold_next else 0.0,
             "average_consecutive_signal_durations": avg_consecutive,
+            "avg_exposure_change_step": _summary(ticker_exposure_changes)["avg"],
         }
 
     return {
@@ -382,6 +452,11 @@ def compute_transition_report(signal_rows: Iterable[Dict[str, Any]]) -> Dict[str
             if by_ticker else 0.0
         ),
         "signal_turnover": round(sum(all_turnovers) / len(all_turnovers), 4) if all_turnovers else 0.0,
+        "recommendation_action_durations": {
+            action: _summary(run_lengths_by_action[action]) for action in EXPOSURE_ACTIONS
+        },
+        "avg_exposure_change_step": _summary(all_exposure_changes)["avg"],
+        "abs_exposure_change_step": _summary([abs(x) for x in all_exposure_changes])["avg"],
         "buy_to_sell_transitions": total_buy_sell,
         "hold_persistence": (
             round(total_hold_followed_by_hold / total_hold_with_next, 4)
@@ -535,6 +610,7 @@ def compute_signal_stability_report(
     changes_per_month: Counter[str] = Counter()
     all_run_lengths: List[int] = []
     threshold_distances: List[float] = []
+    exposure_edge_distances: List[float] = []
     whipsaws = 0
 
     by_ticker = {}
@@ -561,7 +637,12 @@ def compute_signal_stability_report(
             min(abs(float(p) - buy_threshold), abs(float(p) - sell_threshold))
             for p in probs
         ]
+        exposure_distances = [
+            min(abs(float(p) - 0.30), abs(float(p) - 0.75))
+            for p in probs
+        ]
         threshold_distances.extend(distances)
+        exposure_edge_distances.extend(exposure_distances)
         whipsaws += ticker_whipsaws
         by_ticker[ticker] = {
             "signal_changes": ticker_changes,
@@ -576,6 +657,7 @@ def compute_signal_stability_report(
             "whipsaw_count": ticker_whipsaws,
             "whipsaw_frequency": round(ticker_whipsaws / max(len(ticker_rows), 1), 4),
             "distance_to_thresholds": _summary(distances),
+            "distance_to_exposure_edges": _summary(exposure_distances),
             "near_threshold_2pct": round(sum(1 for d in distances if d <= 0.02) / len(distances), 4) if distances else 0.0,
         }
 
@@ -587,6 +669,7 @@ def compute_signal_stability_report(
         "whipsaw_frequency": round(whipsaws / max(len(rows), 1), 4) if rows else 0.0,
         "whipsaw_count": whipsaws,
         "distance_to_thresholds": _summary(threshold_distances),
+        "distance_to_exposure_edges": _summary(exposure_edge_distances),
         "near_threshold_2pct": (
             round(sum(1 for d in threshold_distances if d <= 0.02) / len(threshold_distances), 4)
             if threshold_distances else 0.0
@@ -650,6 +733,7 @@ def compute_probability_distribution_report(
     normalized_entropy = entropy / math.log(bucket_count) if bucket_count > 1 else 0.0
 
     by_signal = Counter(r["signal"] for r in rows)
+    by_action = Counter(r.get("exposure_action", "MAINTAIN") for r in rows)
     return {
         "status": "ok",
         "sample_size": len(probs),
@@ -664,6 +748,7 @@ def compute_probability_distribution_report(
         },
         "prob_up_summary": _summary(probs),
         "signal_distribution": dict(by_signal),
+        "recommendation_distribution": dict(by_action),
         "skewness": round(skewness, 6),
         "approximate_entropy": round(entropy, 6),
         "normalized_entropy": round(normalized_entropy, 6),
@@ -682,20 +767,36 @@ def compute_quant_audit_report(
     thresholds = (model_config or {}).get("signal_thresholds", {})
     buy_threshold = float((thresholds.get("BUY") or {}).get("prob_up_above", 0.52))
     sell_threshold = float((thresholds.get("SELL") or {}).get("prob_up_below", 0.28))
+    transition_report = compute_transition_report(rows)
+    stability_report = compute_signal_stability_report(
+        rows,
+        buy_threshold=buy_threshold,
+        sell_threshold=sell_threshold,
+    )
+    probability_distribution_report = compute_probability_distribution_report(rows)
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "report_date": report_date,
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "source": "observability_only",
-        "decision_policy": "No trading thresholds, signals, or strategy rules are changed.",
+        "decision_policy": (
+            "Observability only: CPT and thresholds are unchanged. "
+            "BUY/HOLD/SELL are interpreted as exposure recommendations "
+            "(increase/maintain/decrease) over portfolio risk allocation."
+        ),
+        "signal_to_exposure_mapping": {
+            "BUY": "INCREASE_EXPOSURE",
+            "HOLD": "MAINTAIN_EXPOSURE",
+            "SELL": "DECREASE_EXPOSURE",
+            "probability_edges_reference": {"low_edge": 0.30, "high_edge": 0.75},
+        },
         "sample_size": len(rows),
         "calibration_report": compute_calibration_report(outcomes),
-        "transition_report": compute_transition_report(rows),
+        "transition_report": transition_report,
+        "recommendation_transition_report": transition_report,
         "market_regime_report": compute_market_regime_report(rows),
-        "signal_stability_report": compute_signal_stability_report(
-            rows,
-            buy_threshold=buy_threshold,
-            sell_threshold=sell_threshold,
-        ),
-        "probability_distribution_report": compute_probability_distribution_report(rows),
+        "signal_stability_report": stability_report,
+        "recommendation_stability_report": stability_report,
+        "probability_distribution_report": probability_distribution_report,
+        "recommendation_distribution_report": probability_distribution_report,
     }

@@ -136,13 +136,33 @@ export class AuditComponent implements OnInit, OnDestroy {
     return t.sentiment_detail.distribution?.[sent]?.pct ?? 0;
   }
 
-  // Clase CSS para el estado de una señal
+  // Clase CSS para la recomendación de exposición
   signalClass(signal: string): string {
     return signal === 'BUY' ? 'signal-buy' : signal === 'SELL' ? 'signal-sell' : 'signal-hold';
   }
 
   signalLabel(signal: string): string {
     return signal === 'BUY' ? '↑ Incrementar' : signal === 'SELL' ? '↓ Reducir' : '→ Mantener';
+  }
+
+  get buyThresholdPct(): number {
+    const v = this.model?.signal_thresholds?.BUY?.prob_up_above;
+    return typeof v === 'number' ? v * 100 : 52;
+  }
+
+  get buyThreshold(): number {
+    const v = this.model?.signal_thresholds?.BUY?.prob_up_above;
+    return typeof v === 'number' ? v : 0.52;
+  }
+
+  get sellThresholdPct(): number {
+    const v = this.model?.signal_thresholds?.SELL?.prob_up_below;
+    return typeof v === 'number' ? v * 100 : 28;
+  }
+
+  get sellThreshold(): number {
+    const v = this.model?.signal_thresholds?.SELL?.prob_up_below;
+    return typeof v === 'number' ? v : 0.28;
   }
 
   stateClass(state: string): string {

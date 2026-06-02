@@ -28,9 +28,9 @@ Endpoints:
   GET /features/{date}/{ticker}     - Feature snapshot unificado
   GET /model/traces/{date}          - Trazas por model_id (gbm_v1, bayesian_v1.2)
   GET /analytics/calibration/{date} - Calibracion y reliability table
-  GET /analytics/transitions/{date} - Exposicion y transiciones de senal
+  GET /analytics/transitions/{date} - Exposicion y transiciones de recomendación
   GET /analytics/regimes/{date}     - Rendimiento por regimen de mercado
-  GET /analytics/stability/{date}   - Estabilidad de senales
+  GET /analytics/stability/{date}   - Estabilidad de recomendaciones
   GET /analytics/probabilities/{date} - Distribucion de prob_up
   GET /analytics/contributions/{date}/{ticker} - Contribuciones por evidencia
   GET /audit/replay                 - Replay/auditoria por ventana historica
@@ -816,7 +816,7 @@ def get_model_config(
     """
     Devuelve la configuracion completa del modelo bayesiano:
     - Thresholds de discretizacion (RSI, volatilidad, tendencia)
-    - Thresholds de senal (BUY/SELL/HOLD)
+    - Thresholds de recomendacion (BUY/HOLD/SELL como señales de exposición)
     - Distribuciones prior
     - CPT completa de MarketDirection
     - Limitaciones conocidas del modelo
@@ -1000,7 +1000,7 @@ def get_transition_report(
     days_back: int = Query(default=365, ge=30, le=1500),
     x_api_key: str = Header(default=""),
 ):
-    """Exposicion, turnover, transiciones BUY->SELL y persistencia HOLD."""
+    """Turnover de recomendaciones de exposición, persistencia y cambios de riesgo."""
     return _audit_section(
         date, "transition_report", days_back, ticker=ticker, x_api_key=x_api_key
     )
@@ -1026,7 +1026,7 @@ def get_signal_stability_report(
     days_back: int = Query(default=365, ge=30, le=1500),
     x_api_key: str = Header(default=""),
 ):
-    """Cambios mensuales, duraciones, whipsaws y distancia a umbrales."""
+    """Estabilidad de recomendaciones, whipsaws y distancia a bordes de decisión/exposición."""
     return _audit_section(
         date, "signal_stability_report", days_back, ticker=ticker, x_api_key=x_api_key
     )
@@ -1130,8 +1130,9 @@ def get_audit_replay(
     """
     Replay/auditoria day-by-day desde trazas persistidas.
 
-    Devuelve prob_up, cambios de senal, contribution_analysis, macro adjustment
-    e hysteresis cuando esos campos estan disponibles en bayesian_reports.
+    Devuelve prob_up, cambios de recomendación de exposición,
+    contribution_analysis, macro adjustment e hysteresis cuando esos campos
+    están disponibles en bayesian_reports.
     """
     check_api_key(x_api_key)
     if event == "nvidia_deepseek_2025_01_27":
@@ -1606,7 +1607,7 @@ def get_ohlcv_week(
     Devuelve los precios OHLCV de la semana comercial alrededor de una fecha
     (hasta 3 días antes + día objetivo + hasta 3 días después, máx 7 puntos).
     Fuente: MongoDB coleccion ohlcv.
-    Usado por el gráfico semanal del panel de señales.
+    Usado por el gráfico semanal del panel de recomendaciones.
     """
     check_api_key(x_api_key)
     if not date or len(date) != 10:
@@ -1685,7 +1686,7 @@ def get_ticker_performance_history(
     x_api_key: str = Header(default=""),
 ):
     """
-    Serie historica para Highcharts: OHLC, Bandas de Bollinger, senales y
+    Serie historica para Highcharts: OHLC, Bandas de Bollinger, recomendaciones y
     rendimiento Long/Cash hasta la fecha seleccionada.
 
     Fuente: MongoDB (ohlcv + bayesian_reports). Se calcula sin depender de
@@ -2285,7 +2286,7 @@ def mongo_ticker_analytics(
     days: int = Query(default=30, ge=7, le=365),
     x_api_key: str = Header(default=""),
 ):
-    """Analisis historico de un ticker: evolucion de senal, P(up) e indicadores."""
+    """Analisis historico de un ticker: evolucion de recomendacion, P(up) e indicadores."""
     check_api_key(x_api_key)
     db = _require_mongo()
     from datetime import datetime, timedelta, timezone

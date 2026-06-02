@@ -84,7 +84,7 @@
               <div><div class="bn-label">Red Bayesiana</div><small>pgmpy</small></div>
             </div>
             <div class="f-text">
-              Cruza los indicadores (λ3) con el sentimiento de las noticias (λ2) para emitir la <strong>Confianza Alcista</strong> y la decisión (Comprar/Mantener/Cash).
+              Cruza los indicadores (λ3) con el sentimiento de las noticias (λ2) para emitir la <strong>Confianza Alcista</strong> y la recomendación de exposición (Incrementar/Mantener/Reducir).
             </div>
           </div>
           <div class="f-arrow">→</div>
@@ -105,7 +105,7 @@
             <strong>Batch (Ejecución):</strong> Un ciclo completo de las 5 Lambdas. Si alguna falla por problemas de API, el batch marca error para que el ingeniero lo revise.
           </div>
           <div class="g-col">
-            <strong>Cobertura:</strong> Activos con señal generada / Total esperados. Puede ser menor a 100% de forma natural si un día no hay noticias suficientes para procesar un ETF.
+            <strong>Cobertura:</strong> Activos con recomendación generada / Total esperados. Puede ser menor a 100% de forma natural si un día no hay noticias suficientes para procesar un ETF.
           </div>
         </div>
 
@@ -198,7 +198,7 @@
             <mat-icon>show_chart</mat-icon>
             <span>Cobertura Diaria de Activos</span>
           </div>
-          <span class="card-sub">% de ETFs con Señal Generada</span>
+          <span class="card-sub">% de ETFs con Recomendación Generada</span>
         </div>
         <div class="chart-container-tall">
           <ngx-charts-bar-vertical
@@ -237,7 +237,7 @@
         <div class="card-head">
           <div class="card-title">
             <mat-icon>online_prediction</mat-icon>
-            <span>Señales Emitidas</span>
+            <span>Recomendaciones Emitidas</span>
           </div>
           <span class="card-sub">Decisiones calculadas por la Red Bayesiana</span>
         </div>
@@ -275,7 +275,7 @@
                 <span class="batch-date">{{ batch.date }}</span>
 
                 <div class="batch-meta">
-                  <span class="m-item" matTooltip="Señales generadas vs Total ETFs">
+                  <span class="m-item" matTooltip="Recomendaciones generadas vs Total ETFs">
                     <mat-icon>storage</mat-icon>
                     {{ batch.tickers_with_signals }}/{{ batch.tickers_expected }} Activos
                   </span>

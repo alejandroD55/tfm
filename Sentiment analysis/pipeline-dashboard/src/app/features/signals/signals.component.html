@@ -6,7 +6,7 @@
         <mat-icon>psychology</mat-icon>
         <span>Decisiones de Inteligencia Artificial</span>
       </div>
-      <h1 class="page-title">Señales & Explicabilidad</h1>
+      <h1 class="page-title">Exposición & Explicabilidad</h1>
       <p class="page-sub">
         Descubre el razonamiento exacto de la IA (Red Bayesiana + FinBERT) detrás de cada decisión.
       </p>
@@ -23,7 +23,7 @@
       </div>
       
       <div class="filter-group">
-        <label>Filtrar por Señal</label>
+        <label>Filtrar por Recomendación</label>
         <select class="aurora-select" [(ngModel)]="filterExposure" (change)="applyFilter()">
           <option value="">Todas las recomendaciones</option>
           <option value="INCREASE_STRONG">↑↑ Aumentar fuerte</option>
@@ -317,7 +317,7 @@
   @if (loading) {
     <div class="loader">
       <mat-spinner diameter="40"></mat-spinner>
-      <p>Calculando señales bayesianas…</p>
+      <p>Calculando recomendaciones de exposición…</p>
     </div>
   } @else {
 
@@ -414,13 +414,13 @@
       </div>
       
       <div class="chart-box main-chart-full">
-        <h4>Decisión Final de Inversión</h4>
+        <h4>Recomendación Final de Exposición</h4>
         <div class="donut-container large-donut">
           <div class="donut-chart-wrapper">
             <ngx-charts-pie-chart [results]="signalChart" [labels]="false" [legend]="false" [doughnut]="true" [arcWidth]="0.3" [customColors]="customSignalColors"></ngx-charts-pie-chart>
             <div class="donut-center">
               <div class="dc-num">{{ tickerViews.length }}</div>
-              <div class="dc-lbl">Señales</div>
+              <div class="dc-lbl">Recomendaciones</div>
             </div>
           </div>
           <div class="custom-legend">
@@ -444,7 +444,7 @@
             <span>Evolución de Rendimiento por Etapas</span>
           </div>
           <p class="perf-sub">
-            Velas OHLC con Bandas de Bollinger, señales BUY/SELL y rendimiento Long/Cash hasta {{ selectedDate }}.
+            Velas OHLC con Bandas de Bollinger, recomendaciones de exposición y rendimiento Long/Cash hasta {{ selectedDate }}.
             Usa el selector de rango, el navigator o arrastra sobre el gráfico para hacer zoom.
           </p>
         </div>
@@ -516,9 +516,9 @@
           </td>
         </ng-container>
 
-        <!-- ── Señal BN (referencia secundaria) ── -->
+        <!-- ── Recomendación BN (referencia secundaria) ── -->
         <ng-container matColumnDef="signal">
-          <th mat-header-cell *matHeaderCellDef mat-sort-header>Señal BN</th>
+          <th mat-header-cell *matHeaderCellDef mat-sort-header>Recomendación BN</th>
           <td mat-cell *matCellDef="let row">
             <span class="prob-badge"
                   [matTooltip]="'P(↑) ' + (row.prob_up*100 | number: '1.0-0') + '% · Confianza bayesiana'">
@@ -843,7 +843,7 @@
                             <div class="rp-label">{{ profile.label }}</div>
                             <div class="rp-suitability" [class.ok]="profile.suitable" [class.ko]="!profile.suitable">
                               <mat-icon>{{ profile.suitable ? 'check_circle' : 'cancel' }}</mat-icon>
-                              {{ profile.suitable ? 'Señal adecuada' : 'No recomendado' }}
+                              {{ profile.suitable ? 'Recomendación adecuada' : 'No recomendado' }}
                             </div>
                           </div>
                         </div>
@@ -875,15 +875,15 @@
       </table>
     </div>
 
-    <section class="signals-cards-mobile" aria-label="Señales en tarjetas">
+    <section class="signals-cards-mobile" aria-label="Recomendaciones en tarjetas">
       @if (dataSource.filteredData.length > 0) {
         <div class="carousel-hint" aria-hidden="true">
-          <span>Desliza para recorrer señales</span>
+          <span>Desliza para recorrer recomendaciones</span>
           <span class="hint-dots">• • •</span>
         </div>
-        <div class="signals-cards-track" role="list" aria-label="Lista horizontal de señales">
+        <div class="signals-cards-track" role="list" aria-label="Lista horizontal de recomendaciones">
           @for (row of dataSource.filteredData; track row.ticker) {
-            <article class="signal-card" role="listitem" [attr.aria-label]="'Señal para ' + row.ticker">
+            <article class="signal-card" role="listitem" [attr.aria-label]="'Recomendación para ' + row.ticker">
               <header class="signal-card-head">
                 <span class="ticker-name">{{ row.ticker }}</span>
                 <span class="signal-pill {{ row.signal.toLowerCase() }}">

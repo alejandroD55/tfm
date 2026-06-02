@@ -8,7 +8,7 @@
       </div>
       <h1 class="page-title">Resumen Operativo</h1>
       <p class="page-sub">
-        Sistema de trading algorítmico · Red Bayesiana + FinBERT
+        Plataforma de recomendación de exposición · Red Bayesiana + FinBERT
         @if (pipelineLabel) {
           · Pipeline <strong>{{ pipelineLabel }}</strong> · {{ initialCapital | number:'1.0-0' }} € iniciales
         } @else {
@@ -42,7 +42,7 @@
       </mat-expansion-panel-header>
       <div class="glossary-content">
         <div class="g-col">
-          <strong>Exposición (%):</strong> Fracción del capital asignado a cada activo. La IA no entra o sale bruscamente — modula la exposición de forma continua (0–100%) según el régimen de mercado y las señales bayesianas. Empezamos en 0% y escalamos gradualmente.
+          <strong>Exposición (%):</strong> Fracción del capital asignado a cada activo. La IA no entra o sale bruscamente — modula la exposición de forma continua (0–100%) según el régimen de mercado y las recomendaciones bayesianas. Empezamos en 0% y escalamos gradualmente.
         </div>
         <div class="g-col">
           <strong>Recomendación de posición:</strong> En lugar de BUY/SELL, el sistema emite 5 niveles: <em>Aumentar fuerte · Aumentar · Mantener · Reducir · Reducir fuerte</em>. Nunca sale completamente salvo condición de mercado extrema (VIX > 45).
@@ -130,7 +130,7 @@
             <span>Exposición Actual por Activo</span>
           </div>
           <span class="card-sub">
-            Fracción del capital asignado a cada ETF hoy · La IA modula continuamente en función del régimen de mercado y las señales bayesianas
+            Fracción del capital asignado a cada ETF hoy · La IA modula continuamente en función del régimen de mercado y las recomendaciones bayesianas
           </span>
         </div>
 

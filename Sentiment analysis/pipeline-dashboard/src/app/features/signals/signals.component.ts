@@ -59,7 +59,7 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
   // 1. SOLUCIÓN: Declaramos la variable que el HTML está buscando para los Smart Donuts
   tickerViews: TickerView[] = [];
 
-  // Exposición primero, señal bayesiana como referencia secundaria
+  // Exposición primero, recomendación bayesiana como referencia secundaria
   displayedColumns = ['ticker', 'exposure', 'evidence', 'winrate', 'return', 'alpha', 'expand'];
   dataSource = new MatTableDataSource<TickerView>();
 
@@ -302,7 +302,7 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
       },
     }));
 
-    // Flags del gráfico de precio — traducimos la señal interna BN a lenguaje de exposición
+    // Flags del gráfico de precio — traducimos la recomendación interna BN a lenguaje de exposición
     const flagColor = (signal: string) =>
       signal === 'BUY' ? '#16a34a' : signal === 'SELL' ? '#7c3aed' : '#94a3b8';
     const flagTitle = (signal: string) =>
@@ -409,7 +409,7 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
         },
         {
           type: 'flags',
-          name: 'Señales',
+          name: 'Recomendaciones',
           data: signalFlags,
           onSeries: 'ohlc',
           shape: 'squarepin',
@@ -912,13 +912,13 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     else factors.push('tendencia bajista en medias móviles (SMA20 < SMA50)');
 
     if (row.evidence.rsi === 'oversold')        factors.push('RSI en zona de sobreventa — posible rebote técnico inminente');
-    else if (row.evidence.rsi === 'overbought') factors.push('RSI en sobrecompra — señal de precaución ante posible corrección');
+    else if (row.evidence.rsi === 'overbought') factors.push('RSI en sobrecompra — recomendación de precaución ante posible corrección');
     else factors.push('RSI en zona neutral sin presión técnica dominante');
 
     if (row.evidence.volatility === 'low') factors.push('volatilidad comprimida — condiciones de entrada favorables');
     else factors.push('volatilidad elevada — mayor incertidumbre en la ejecución');
 
-    let text = `${row.ticker} genera señal ${signalLabel} con ${bullishCount} de 4 condiciones favorables alineadas: `;
+    let text = `${row.ticker} genera recomendación ${signalLabel} con ${bullishCount} de 4 condiciones favorables alineadas: `;
     text += factors.slice(0, 3).join('; ') + '. ';
 
     if (row.trades_closed > 0) {
@@ -947,9 +947,9 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
         icon: 'shield',
         color: '#3B82F6',
         action: isBuy && score >= 70 && row.win_rate >= 0.55
-          ? 'Entrada permitida — señal sólida'
+          ? 'Entrada permitida — recomendación sólida'
           : isHold ? 'Mantener posición si ya invertido'
-          : 'No actuar — esperar señal más clara',
+          : 'No actuar — esperar recomendación más clara',
         rationale: isBuy && score >= 70 && row.win_rate >= 0.55
           ? `Confianza compuesta ${score}/100 y tasa de acierto ${Math.round(row.win_rate*100)}% superan los umbrales mínimos para perfil conservador (≥70 y ≥55%).`
           : `La confianza compuesta (${score}/100) o la tasa de acierto (${Math.round(row.win_rate*100)}%) no alcanzan los umbrales requeridos para asumir riesgo.`,
@@ -966,7 +966,7 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
           : 'Reducir exposición o no entrar',
         rationale: isBuy && score >= 55
           ? `Confianza compuesta ${score}/100 con probabilidad alcista del ${Math.round(row.prob_up*100)}%. Adecuado para posición de tamaño estándar.`
-          : `Señal ${row.signal} con confianza ${score}/100. El perfil moderado requiere ≥55 de confianza compuesta para abrir posición.`,
+          : `Recomendación ${this.expRecLabel(row.exposure_recommendation)} con confianza ${score}/100. El perfil moderado requiere ≥55 de confianza compuesta para abrir posición.`,
         suitable: isBuy && score >= 55,
       },
       {
@@ -975,14 +975,14 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
         icon: 'rocket_launch',
         color: '#EF4444',
         action: isBuy
-          ? 'Entrada directa siguiendo señal del modelo'
+          ? 'Entrada directa siguiendo recomendación del modelo'
           : isHold ? 'Mantener con trailing stop'
           : 'Salir del mercado y buscar alternativas',
         rationale: isBuy
-          ? `Probabilidad alcista del ${Math.round(row.prob_up*100)}%. El perfil agresivo ejecuta cualquier señal BUY del modelo sin filtros adicionales de confianza.`
+          ? `Probabilidad alcista del ${Math.round(row.prob_up*100)}%. El perfil agresivo ejecuta cualquier recomendación de incremento de exposición sin filtros adicionales de confianza.`
           : isSell
-          ? `El modelo recomienda CASH. El perfil agresivo prioriza preservar capital y esperar mejor punto de reentrada.`
-          : `Señal MANTENER — el perfil agresivo conserva posición existente pero activa trailing stop del 3%.`,
+          ? `El modelo recomienda reducir exposición. El perfil agresivo prioriza preservar capital y esperar mejor punto de reentrada.`
+          : `Recomendación MANTENER — el perfil agresivo conserva posición existente pero activa trailing stop del 3%.`,
         suitable: isBuy,
       },
     ];

@@ -159,7 +159,7 @@ export class PipelineComponent implements OnInit, OnDestroy {
       value: b.headlines_scored,
     }));
 
-    // 4. Gráfico de Señales Emitidas
+  // 4. Gráfico de Recomendaciones Emitidas
     this.signalsChart = sortedBatches.map(b => ({
       name: b.date.slice(5),
       value: b.tickers_with_signals,
@@ -210,7 +210,7 @@ export class PipelineComponent implements OnInit, OnDestroy {
       'trace_s3_key': 'Archivo Trace S3',
       'model_version': 'Versión del Modelo',
       'tickers_skipped': 'ETFs Omitidos',
-      'signals_generated': 'Decisiones Generadas',
+      'signals_generated': 'Recomendaciones Generadas',
       'tickers_with_sentiment': 'Cruces NLP Exitósos',
       'tickers_reported': 'Activos Reportados',      // Nueva Key
       'total_closed_trades': 'Operaciones Cerradas'  // Nueva Key

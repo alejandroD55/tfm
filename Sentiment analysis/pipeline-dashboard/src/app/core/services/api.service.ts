@@ -315,7 +315,7 @@ export class ApiService {
     );
   }
 
-  /** Histórico para Highcharts: OHLC, Bollinger, señales y rendimiento hasta la fecha elegida */
+  /** Histórico para Highcharts: OHLC, Bollinger, recomendaciones y rendimiento hasta la fecha elegida */
   getTickerPerformance(ticker: string, date: string, limit = 365): Observable<TickerPerformanceResponse> {
     const params = new HttpParams().set('limit', limit.toString());
     return this.http.get<TickerPerformanceResponse>(

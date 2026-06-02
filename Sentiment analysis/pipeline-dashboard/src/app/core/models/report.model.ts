@@ -33,7 +33,7 @@ export interface PipelineHealth {
   stage_kpis: StageKpis;
 }
 
-// ─── Signal explanations (Bayesian evidence) ─────────────────────────────
+// ─── Explicaciones de recomendación (evidencia bayesiana) ────────────────
 
 export interface BayesianEvidence {
   sentiment: SentimentState;
@@ -62,7 +62,7 @@ export interface BacktestingMetrics {
 /**
  * Métricas del backtesting de exposición continua.
  * Fórmula: portfolio_return_t = market_return_t × smoothed_exposure_t
- * La IA no sabe el futuro — usa solo la señal del día calculada con datos pasados.
+ * La IA no sabe el futuro — usa solo la recomendación del día calculada con datos pasados.
  */
 export interface ExposureBacktestingMetrics {
   cumulative_return: number;   // retorno acumulado con exposición modulada
@@ -136,7 +136,7 @@ export interface TickerView {
 
   // ── Backtesting de exposición continua (PRIMARIO) ─────────────────────────
   // La IA modula la posición día a día con datos solo del pasado.
-  // Comienza en 0% y escala gradualmente según señales bayesianas.
+  // Comienza en 0% y escala gradualmente según recomendaciones bayesianas.
   exp_cumulative_return: number;
   exp_sharpe_ratio:      number;
   exp_max_drawdown:      number;

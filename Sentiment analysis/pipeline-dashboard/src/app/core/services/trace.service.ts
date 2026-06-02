@@ -32,7 +32,7 @@ export class TraceService {
 
   // ─── Helpers de presentación ──────────────────────────────────────
 
-  /** Fuerza de la señal según distancia al punto de indiferencia (0.5) */
+  /** Fuerza de la recomendación según distancia al punto de indiferencia (0.5) */
   signalStrength(probUp: number): 'strong' | 'moderate' | 'weak' {
     const dist = Math.abs(probUp - 0.5);
     if (dist > 0.25) return 'strong';

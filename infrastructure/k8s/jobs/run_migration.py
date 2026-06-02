@@ -179,10 +179,31 @@ def load_applied_migrations(host, port, user, dbname, password, auth_mode):
 
 
 def list_migration_files():
-    migrations_dir = Path("/migration/migrations")
-    if not migrations_dir.exists():
-        logger.error(f"Directorio de migraciones no encontrado: {migrations_dir}")
+    # Orden de prioridad:
+    # 1) Migrations dir explícito por variable de entorno (local/CI)
+    # 2) Ruta del contenedor K8s: /migration/migrations
+    # 3) Ruta local relativa al repo: <repo>/migrations
+    candidates = []
+    env_dir = os.getenv("MIGRATIONS_DIR")
+    if env_dir:
+        candidates.append(Path(env_dir))
+    candidates.append(Path("/migration/migrations"))
+    candidates.append(Path(__file__).resolve().parents[3] / "migrations")
+
+    migrations_dir = None
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_dir():
+            migrations_dir = candidate
+            break
+
+    if migrations_dir is None:
+        logger.error(
+            "Directorio de migraciones no encontrado. Rutas probadas: %s",
+            ", ".join(str(c) for c in candidates),
+        )
         sys.exit(1)
+
+    logger.info("Usando directorio de migraciones: %s", migrations_dir)
     return sorted(migrations_dir.glob("*.sql"))
 
 
