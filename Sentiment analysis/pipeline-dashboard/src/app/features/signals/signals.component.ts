@@ -53,14 +53,14 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
   loading = true;
   availableDates: ReportDateEntry[] = [];
   selectedDate = '';
-  filterSignal = '';
+  filterExposure = '';   // INCREASE_STRONG | INCREASE_MILD | MAINTAIN | REDUCE_MILD | REDUCE_STRONG | ''
   expandedRows = new Set<string>();
 
   // 1. SOLUCIÓN: Declaramos la variable que el HTML está buscando para los Smart Donuts
   tickerViews: TickerView[] = [];
 
   // Exposición primero, señal bayesiana como referencia secundaria
-  displayedColumns = ['ticker', 'exposure', 'signal', 'evidence', 'winrate', 'return', 'alpha', 'expand'];
+  displayedColumns = ['ticker', 'exposure', 'evidence', 'winrate', 'return', 'alpha', 'expand'];
   dataSource = new MatTableDataSource<TickerView>();
 
   // Gráficos de Resumen
@@ -70,9 +70,11 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
   trendChart: ChartDataPoint[] = [];
   volatilityChart: ChartDataPoint[] = [];
 
-  buyCount  = 0;
-  sellCount = 0;
-  holdCount = 0;
+  increaseStrongCount = 0;
+  increaseMildCount   = 0;
+  maintainCount       = 0;
+  reduceMildCount     = 0;
+  reduceStrongCount   = 0;
   avgProbUp = 0;
 
   tickerTraceCache = new Map<string, TickerTrace | null>();
@@ -97,9 +99,11 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
 
   // Funciones de Coloreado Dinámico (Para NGX-Charts)
   customSignalColors = (name: string) => {
-    if (name === 'COMPRAR') return '#22C55E';
-    if (name === 'CASH') return '#7C3AED';
-    return '#F59E0B'; // MANTENER
+    if (name.startsWith('↑↑')) return '#15803d';
+    if (name.startsWith('↑'))  return '#22c55e';
+    if (name.startsWith('→'))  return '#3b82f6';
+    if (name.startsWith('↓↓')) return '#b91c1c';
+    return '#f59e0b';  // ↓ Reducir
   };
   customSentimentColors = (name: string) => {
     if (name === 'ALCISTA') return '#22C55E';
@@ -185,11 +189,13 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
       this.dataSource.sort = this.sort;
     }
 
-    this.dataSource.filterPredicate = (row, filter) => !filter || row.signal === filter;
+    this.dataSource.filterPredicate = (row, filter) => !filter || row.exposure_recommendation === filter;
 
-    this.buyCount  = views.filter(v => v.signal === 'BUY').length;
-    this.sellCount = views.filter(v => v.signal === 'SELL').length;
-    this.holdCount = views.filter(v => v.signal === 'HOLD').length;
+    this.increaseStrongCount = views.filter(v => v.exposure_recommendation === 'INCREASE_STRONG').length;
+    this.increaseMildCount   = views.filter(v => v.exposure_recommendation === 'INCREASE_MILD').length;
+    this.maintainCount       = views.filter(v => v.exposure_recommendation === 'MAINTAIN').length;
+    this.reduceMildCount     = views.filter(v => v.exposure_recommendation === 'REDUCE_MILD').length;
+    this.reduceStrongCount   = views.filter(v => v.exposure_recommendation === 'REDUCE_STRONG').length;
     this.avgProbUp = views.length ? (views.reduce((s, v) => s + v.prob_up, 0) / views.length) * 100 : 0;
 
     // Procesar datos para gráficos de Nodos (Con nombres en castellano)
@@ -216,9 +222,11 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     });
 
     this.signalChart = [
-      { name: 'COMPRAR', value: this.buyCount },
-      { name: 'CASH', value: this.sellCount },
-      { name: 'MANTENER', value: this.holdCount }
+      { name: '↑↑ Aumentar fuerte', value: this.increaseStrongCount },
+      { name: '↑  Aumentar',        value: this.increaseMildCount   },
+      { name: '→  Mantener',        value: this.maintainCount       },
+      { name: '↓  Reducir',         value: this.reduceMildCount     },
+      { name: '↓↓ Reducir fuerte',  value: this.reduceStrongCount   },
     ].filter(i => i.value > 0);
 
     this.sentimentChart = Object.entries(sent).map(([name, value]) => ({ name, value })).filter(i => i.value > 0);
@@ -234,7 +242,9 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     }
   }
 
-  applyFilter() { this.dataSource.filter = this.filterSignal; }
+  applyFilter() {
+    this.dataSource.filter = this.filterExposure;
+  }
 
   onPerformanceTickerChange(ticker: string) {
     this.performanceTicker = ticker;
@@ -292,15 +302,24 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
       },
     }));
 
+    // Flags del gráfico de precio — traducimos la señal interna BN a lenguaje de exposición
     const flagColor = (signal: string) =>
-      signal === 'BUY' ? '#16a34a' : signal === 'SELL' ? '#7c3aed' : '#f59e0b';
+      signal === 'BUY' ? '#16a34a' : signal === 'SELL' ? '#7c3aed' : '#94a3b8';
+    const flagTitle = (signal: string) =>
+      signal === 'BUY' ? '↑' : signal === 'SELL' ? '↓' : '→';
+    const flagText  = (signal: string, probUp: number | null) => {
+      const pct = probUp != null ? ` · P(↑) ${(probUp * 100).toFixed(1)}%` : '';
+      return signal === 'BUY'  ? `Aumentar exposición${pct}`
+           : signal === 'SELL' ? `Reducir exposición${pct}`
+           : `Mantener exposición${pct}`;
+    };
 
     const signalFlags = resp.signals
       .filter(s => s.signal !== 'HOLD')
       .map(s => ({
         x: toTs(s.date),
-        title: s.signal,
-        text: `${s.signal} · P(up) ${s.prob_up != null ? (s.prob_up * 100).toFixed(1) : '?'}%`,
+        title: flagTitle(s.signal),
+        text:  flagText(s.signal, s.prob_up),
         fillColor: flagColor(s.signal),
       }));
 
@@ -875,7 +894,7 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   buildWhyNow(row: TickerView): string {
-    const signalLabel = row.signal === 'BUY' ? 'COMPRAR' : row.signal === 'SELL' ? 'CASH (Liquidez)' : 'MANTENER';
+    const signalLabel = this.expRecLabel(row.exposure_recommendation);
     const bullishFlags = [
       row.evidence.sentiment === 'bullish',
       row.evidence.trend === 'uptrend',
@@ -916,9 +935,10 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
 
   getRiskProfiles(row: TickerView): { type: string; label: string; icon: string; color: string; action: string; rationale: string; suitable: boolean }[] {
     const score = this.getCompositeScore(row);
-    const isBuy  = row.signal === 'BUY';
-    const isHold = row.signal === 'HOLD';
-    const isSell = row.signal === 'SELL';
+    // Exposure-based risk assessment (replaces binary BUY/SELL/HOLD)
+    const isBuy  = ['INCREASE_STRONG', 'INCREASE_MILD'].includes(row.exposure_recommendation);
+    const isHold = row.exposure_recommendation === 'MAINTAIN';
+    const isSell = ['REDUCE_MILD', 'REDUCE_STRONG'].includes(row.exposure_recommendation);
 
     return [
       {

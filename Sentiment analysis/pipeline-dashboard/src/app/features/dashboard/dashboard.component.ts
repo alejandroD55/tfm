@@ -36,7 +36,6 @@ export class DashboardComponent implements OnInit, OnDestroy {
   availableDates: ReportDateEntry[] = [];
   selectedDate = '';
 
-  signalPieChart: ChartDataPoint[] = [];
   probUpChart: ChartDataPoint[] = [];
   winRateChart: ChartDataPoint[] = [];
   
@@ -62,9 +61,6 @@ export class DashboardComponent implements OnInit, OnDestroy {
     return item.value >= 50 ? '#06B6D4' : '#EF4444'; 
   };
 
-  get buyCount()  { return this.tickerViews.filter(t => t.signal === 'BUY').length;  }
-  get sellCount() { return this.tickerViews.filter(t => t.signal === 'SELL').length; }
-  get holdCount() { return this.tickerViews.filter(t => t.signal === 'HOLD').length; }
 
   get pipelineLabel(): string {
     return this.pipelineCtx.selectedPipeline()?.label ?? '';
@@ -119,12 +115,6 @@ export class DashboardComponent implements OnInit, OnDestroy {
     
     const sumBH = this.tickerViews.reduce((acc, curr) => acc + curr.buy_hold_return, 0);
     this.avgBenchmark = this.tickerViews.length > 0 ? (sumBH / this.tickerViews.length) : 0;
-
-    this.signalPieChart = [
-      { name: 'COMPRAR', value: this.buyCount },
-      { name: 'CASH', value: this.sellCount },
-      { name: 'MANTENER', value: this.holdCount }
-    ].filter(item => item.value > 0);
 
     this.probUpChart = this.reportSvc.probUpChart(this.tickerViews);
 

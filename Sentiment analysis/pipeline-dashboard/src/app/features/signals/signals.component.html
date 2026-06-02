@@ -24,11 +24,13 @@
       
       <div class="filter-group">
         <label>Filtrar por Señal</label>
-        <select class="aurora-select" [(ngModel)]="filterSignal" (change)="applyFilter()">
-          <option value="">Todas las señales</option>
-          <option value="BUY">COMPRAR</option>
-          <option value="SELL">LIQUIDEZ (CASH)</option>
-          <option value="HOLD">MANTENER</option>
+        <select class="aurora-select" [(ngModel)]="filterExposure" (change)="applyFilter()">
+          <option value="">Todas las recomendaciones</option>
+          <option value="INCREASE_STRONG">↑↑ Aumentar fuerte</option>
+          <option value="INCREASE_MILD">↑ Aumentar</option>
+          <option value="MAINTAIN">→ Mantener posición</option>
+          <option value="REDUCE_MILD">↓ Reducir</option>
+          <option value="REDUCE_STRONG">↓↓ Reducir fuerte</option>
         </select>
       </div>
 
@@ -132,9 +134,9 @@
               <strong>Regla de Decisión:</strong><br>
               Si Confianza Alcista es:<br>
               <ul>
-                <li style="color: #15803D; font-weight: 600;">≥ 65% → COMPRAR</li>
-                <li style="color: #B45309; font-weight: 600;">Entre 35% y 65% → MANTENER</li>
-                <li style="color: #6D28D9; font-weight: 600;">≤ 35% → CASH (LIQUIDEZ)</li>
+                <li style="color: #15803D; font-weight: 600;">≥ 65% → Aumentar exposición</li>
+                <li style="color: #2563EB; font-weight: 600;">50–65% → Mantener posición</li>
+                <li style="color: #B45309; font-weight: 600;">≤ 50% → Reducir exposición</li>
               </ul>
             </div>
           </div>
@@ -518,10 +520,9 @@
         <ng-container matColumnDef="signal">
           <th mat-header-cell *matHeaderCellDef mat-sort-header>Señal BN</th>
           <td mat-cell *matCellDef="let row">
-            <span [class]="'signal-pill-sm ' + row.signal.toLowerCase()"
-                  [matTooltip]="'P(↑) ' + (row.prob_up*100 | number: '1.0-0') + '%' + ' · Señal bayesiana de referencia'">
-              <mat-icon>{{ signalIcon(row.signal) }}</mat-icon>
-              {{ row.signal === 'BUY' ? 'COMPRAR' : row.signal === 'SELL' ? 'CASH' : 'MANTENER' }}
+            <span class="prob-badge"
+                  [matTooltip]="'P(↑) ' + (row.prob_up*100 | number: '1.0-0') + '% · Confianza bayesiana'">
+              P(↑) {{ (row.prob_up*100)|number:'1.0-0' }}%
             </span>
           </td>
         </ng-container>
@@ -700,7 +701,7 @@
                       <span class="dec-arrow">→</span>
                       <div class="dec-result {{ row.signal.toLowerCase() }}">
                         <span class="dec-cap">Decisión Final</span>
-                        <span class="dec-val">{{ row.signal === 'BUY' ? 'COMPRAR' : row.signal === 'SELL' ? 'CASH' : 'MANTENER' }}</span>
+                        <span class="dec-val">{{ expRecLabel(row.exposure_recommendation) }}</span>
                         <span class="dec-sub">Confianza Alcista: {{ (row.prob_up*100)|number:'1.1-1' }}%</span>
                         @if (getRecommendedExposure(row.ticker) !== null) {
                           <span class="dec-sub">Exposición recomendada: {{ getRecommendedExposure(row.ticker) }}%</span>
@@ -736,7 +737,7 @@
                       <mat-icon>info</mat-icon>
                       <span>
                         <strong>Razonamiento Bayesiano:</strong> Se emite orden de
-                        {{ row.signal === 'BUY' ? 'COMPRAR' : row.signal === 'SELL' ? 'PASAR A LIQUIDEZ' : 'MANTENER' }}
+                        {{ expRecLabel(row.exposure_recommendation) }}
                         porque la combinación actual de indicadores y noticias produce una confianza alcista del
                         <strong>{{ (row.prob_up*100)|number:'1.1-1' }}%</strong>.
                       </span>
@@ -887,7 +888,7 @@
                 <span class="ticker-name">{{ row.ticker }}</span>
                 <span class="signal-pill {{ row.signal.toLowerCase() }}">
                   <mat-icon>{{ signalIcon(row.signal) }}</mat-icon>
-                  {{ row.signal === 'BUY' ? 'COMPRAR' : row.signal === 'SELL' ? 'CASH' : 'MANTENER' }}
+                  {{ expRecLabel(row.exposure_recommendation) }}
                 </span>
               </header>
 

@@ -471,6 +471,25 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
     this.sharpeDrawdownChartHeight = Math.min(720, Math.max(260, n * perBar + chrome));
   }
 
+  // ── Helpers exposición (mirrors dashboard) ───────────────────────────────
+  expRecClass(rec: string): string { return (rec ?? '').toLowerCase().replace(/_/g, '-'); }
+
+  expRecLabel(rec: string): string {
+    const m: Record<string, string> = {
+      INCREASE_STRONG: '↑↑ Aumentar fuerte', INCREASE_MILD: '↑ Aumentar',
+      MAINTAIN: '→ Mantener', REDUCE_MILD: '↓ Reducir', REDUCE_STRONG: '↓↓ Reducir fuerte',
+    };
+    return m[rec] ?? rec;
+  }
+
+  expRecIcon(rec: string): string {
+    const m: Record<string, string> = {
+      INCREASE_STRONG: 'arrow_upward', INCREASE_MILD: 'trending_up',
+      MAINTAIN: 'remove', REDUCE_MILD: 'trending_down', REDUCE_STRONG: 'arrow_downward',
+    };
+    return m[rec] ?? 'remove';
+  }
+
   qualityLabel(s: number) {
     if (s >= 2) return 'Excelente';
     if (s >= 1) return 'Bueno';

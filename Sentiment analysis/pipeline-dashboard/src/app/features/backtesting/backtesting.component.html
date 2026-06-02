@@ -26,7 +26,7 @@
   <div class="card clean-note">
     <mat-icon>info</mat-icon>
     <span
-      >Vista ejecutiva: snapshot final + histórico completo + ciclos BUY/SELL,
+      >Rendimiento con exposición continua · La IA modula gradualmente sin entrar/salir de golpe ·
       sin selectores ni ruido.</span
     >
   </div>
@@ -37,87 +37,37 @@
       <p>Calculando métricas de rendimiento…</p>
     </div>
   } @else {
-    <section class="kpi-grid">
-      <article
-        class="kpi"
-        [class.kpi-pos]="summary.avg_cumulative_return > 0"
-        [class.kpi-neg]="summary.avg_cumulative_return < 0"
-      >
-        <div class="kpi-head">
-          <span class="kpi-label">Beneficio Medio (Estrategia IA)</span>
-          <span class="kpi-icon"
-            ><mat-icon>account_balance_wallet</mat-icon></span
-          >
+    <section class="card history-card">
+      <div class="card-head history-head">
+        <div class="card-title">
+          <mat-icon>stacked_bar_chart</mat-icon>
+          <span>Distribución de Recomendaciones por Fecha</span>
         </div>
-        <div class="kpi-value">
-          {{ summary.avg_cumulative_return > 0 ? "+" : ""
-          }}{{ summary.avg_cumulative_return * 100 | number: "1.2-2"
-          }}<span class="unit">%</span>
+        <span class="card-sub">Cómo evolucionaron las recomendaciones de exposición a lo largo del periodo · sin señales binarias</span>
+      </div>
+      @if (historyRows.length > 0) {
+        <div class="exposure-dist-summary">
+          @for (metric of historyMetricOptions; track metric.value) {
+            @if (metric.value === 'avg_exposure') {
+              <article class="history-metric-card">
+                <header class="history-metric-head">
+                  <span class="history-metric-title">{{ metric.label }}</span>
+                  <span class="history-metric-desc">{{ metric.description }}</span>
+                </header>
+                <highcharts-chart
+                  [Highcharts]="Highcharts"
+                  [constructorType]="'stockChart'"
+                  [options]="historyChartOptionsByMetric[metric.value]"
+                  [(update)]="historyChartUpdates[metric.value]"
+                  class="history-chart">
+                </highcharts-chart>
+              </article>
+            }
+          }
         </div>
-        <div class="kpi-foot">
-          <span class="kpi-sub"
-            >Media de {{ summary.total_tickers }} activos</span
-          >
-        </div>
-      </article>
-
-      <article class="kpi" [class.kpi-pos]="summary.avg_sharpe_ratio > 1">
-        <div class="kpi-head">
-          <span class="kpi-label">Ratio de Sharpe (Riesgo)</span>
-          <span class="kpi-icon"><mat-icon>balance</mat-icon></span>
-        </div>
-        <div class="kpi-value">
-          {{ summary.avg_sharpe_ratio | number: "1.2-2" }}
-        </div>
-        <div class="kpi-foot">
-          <span class="quality" [class.good]="summary.avg_sharpe_ratio > 1">{{
-            qualityLabel(summary.avg_sharpe_ratio)
-          }}</span>
-          <span class="kpi-sub">Anualizado (Tasa libre 2%)</span>
-        </div>
-      </article>
-
-      <article class="kpi kpi-neg">
-        <div class="kpi-head">
-          <span class="kpi-label">Caída Máxima (Drawdown)</span>
-          <span class="kpi-icon"><mat-icon>water_drop</mat-icon></span>
-        </div>
-        <div class="kpi-value">
-          {{ summary.avg_max_drawdown * 100 | number: "1.2-2"
-          }}<span class="unit">%</span>
-        </div>
-        <div class="kpi-foot">
-          <span class="kpi-sub">Peor escenario del sistema</span>
-        </div>
-      </article>
-
-      <article class="kpi">
-        <div class="kpi-head">
-          <span class="kpi-label">Operaciones Completadas</span>
-          <span class="kpi-icon"><mat-icon>swap_horiz</mat-icon></span>
-        </div>
-        <div class="kpi-value">{{ summary.total_closed_trades }}</div>
-        <div class="kpi-foot">
-          <span class="kpi-sub">Ciclos de Compra/Venta totales</span>
-        </div>
-      </article>
-
-      <article
-        class="kpi"
-        [class.kpi-pos]="winnersCount >= summary.total_tickers / 2"
-      >
-        <div class="kpi-head">
-          <span class="kpi-label">ETFs en Positivo</span>
-          <span class="kpi-icon"><mat-icon>emoji_events</mat-icon></span>
-        </div>
-        <div class="kpi-value">
-          {{ winnersCount
-          }}<span class="unit">/{{ summary.total_tickers }}</span>
-        </div>
-        <div class="kpi-foot">
-          <span class="kpi-sub">Generaron ganancias este año</span>
-        </div>
-      </article>
+      } @else {
+        <p style="padding:24px;color:var(--slate-400);text-align:center">Sin datos históricos disponibles.</p>
+      }
     </section>
 
     <!-- ── Progresión de Exposición durante el Backtesting ───────────────── -->
@@ -198,7 +148,7 @@
               class="leg-dot"
               style="background: #7c3aed; margin-left: 10px"
             ></span
-            ><span>Binario BUY/SELL</span>
+            ><span>Estrategia Binaria (referencia)</span>
             <span
               class="leg-dot"
               style="background: #64748b; margin-left: 10px"
@@ -582,14 +532,10 @@
           <article class="asset-card">
             <header class="asset-card-head">
               <span class="ticker-name">{{ r.ticker }}</span>
-              <span class="signal-pill {{ r.signal.toLowerCase() }}">
-                {{
-                  r.signal === "BUY"
-                    ? "COMPRAR"
-                    : r.signal === "SELL"
-                      ? "CASH"
-                      : "MANTENER"
-                }}
+              <span [class]="'exp-rec-badge-sm ' + expRecClass(r.exposure_recommendation)"
+                    [matTooltip]="expRecLabel(r.exposure_recommendation)">
+                <mat-icon style="font-size:13px;height:13px;width:13px">{{ expRecIcon(r.exposure_recommendation) }}</mat-icon>
+                {{ expRecLabel(r.exposure_recommendation) }}
               </span>
             </header>
 

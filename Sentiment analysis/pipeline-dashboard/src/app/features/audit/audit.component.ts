@@ -142,7 +142,7 @@ export class AuditComponent implements OnInit, OnDestroy {
   }
 
   signalLabel(signal: string): string {
-    return signal === 'BUY' ? 'COMPRAR' : signal === 'SELL' ? 'CASH' : 'MANTENER';
+    return signal === 'BUY' ? '↑ Incrementar' : signal === 'SELL' ? '↓ Reducir' : '→ Mantener';
   }
 
   stateClass(state: string): string {
