@@ -1,5 +1,73 @@
 -- Schema para Aurora PostgreSQL - TFM Trading System
 -- Ejecutar como superuser o con permisos CREATE TABLE
+-- ============================================================================
+-- TABLAS AÑADIDAS PARA LA LÓGICA DE EXPOSICIÓN Y MACRO
+-- ============================================================================
+
+-- Tabla para el estado del régimen de mercado y ajuste macro
+CREATE TABLE IF NOT EXISTS market_regime_state (
+    batch_date DATE PRIMARY KEY,
+    run_id TEXT,
+    risk_regime VARCHAR(20),
+    macro_adjustment FLOAT,
+    vix FLOAT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Tabla para el score del sentimiento macroeconómico
+CREATE TABLE IF NOT EXISTS macro_sentiment_scores (
+    batch_date DATE PRIMARY KEY,
+    run_id TEXT,
+    macro_sentiment VARCHAR(20),
+    score FLOAT,
+    n_articles INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Tabla para persistir el historial de outcomes (resultados a D+1, D+3, D+5)
+CREATE TABLE IF NOT EXISTS signal_outcomes (
+    batch_date DATE NOT NULL,
+    ticker VARCHAR(10) NOT NULL,
+    run_id TEXT,
+    signal VARCHAR(10),
+    prob_up FLOAT,
+    prob_down FLOAT,
+    sentiment_state VARCHAR(20),
+    rsi_state VARCHAR(20),
+    trend_state VARCHAR(20),
+    volatility_state VARCHAR(20),
+    price_d0 FLOAT,
+    price_d1 FLOAT,
+    price_d3 FLOAT,
+    price_d5 FLOAT,
+    outcome_d1 VARCHAR(10),
+    outcome_d3 VARCHAR(10),
+    outcome_d5 VARCHAR(10),
+    correct_d1 BOOLEAN,
+    correct_d3 BOOLEAN,
+    correct_d5 BOOLEAN,
+    macro_sentiment VARCHAR(20),
+    risk_regime VARCHAR(20),
+    macro_adjustment FLOAT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (batch_date, ticker)
+);
+
+-- Tabla para el estado de la posición diaria (Exposure Management)
+CREATE TABLE IF NOT EXISTS position_state (
+    batch_date DATE NOT NULL,
+    ticker VARCHAR(10) NOT NULL,
+    prob_up FLOAT,
+    market_regime VARCHAR(20),
+    target_exposure FLOAT,
+    smoothed_exposure FLOAT,
+    exposure_delta FLOAT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (batch_date, ticker)
+);
 
 -- Tabla de registro de lotes (batches)
 CREATE TABLE IF NOT EXISTS batch_log (

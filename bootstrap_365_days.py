@@ -648,14 +648,19 @@ def get_db_connection():
     )
 
 
-def pg_upsert_signal(conn, date_str, ticker, signal, prob_up, prob_down):
+def pg_upsert_signal(conn, date_str, ticker, exposure_recommendation, signal, prob_up, prob_down):
     with conn.cursor() as c:
         c.execute(
             """
-            INSERT INTO trading_signals (batch_date, ticker, signal, prob_up, prob_down) VALUES (%s,%s,%s,%s,%s)
-            ON CONFLICT (batch_date, ticker) DO UPDATE SET signal=EXCLUDED.signal, prob_up=EXCLUDED.prob_up, prob_down=EXCLUDED.prob_down
+            INSERT INTO trading_signals (batch_date, ticker, exposure_recommendation, signal, prob_up, prob_down) 
+            VALUES (%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (batch_date, ticker) DO UPDATE SET 
+                exposure_recommendation=EXCLUDED.exposure_recommendation,
+                signal=EXCLUDED.signal, 
+                prob_up=EXCLUDED.prob_up, 
+                prob_down=EXCLUDED.prob_down
         """,
-            (date_str, ticker, signal, float(prob_up), float(prob_down)),
+            (date_str, ticker, exposure_recommendation, signal, float(prob_up), float(prob_down)),
         )
     conn.commit()
 
@@ -2954,7 +2959,7 @@ def _process_ticker_day(
         upsert_bayesian_report(date_str, ticker, trace_data, MODEL_CONFIG["version"])
 
         pg_upsert_signal(
-            thread_conn, date_str, ticker, signal, prob_up, round(1 - prob_up, 4)
+            thread_conn, date_str, ticker, exposure_recommendation, signal, prob_up, round(1 - prob_up, 4)
         )
         with thread_conn.cursor() as c:
             c.execute(
