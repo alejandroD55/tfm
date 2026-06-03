@@ -40,34 +40,28 @@
     <section class="card history-card">
       <div class="card-head history-head">
         <div class="card-title">
-          <mat-icon>stacked_bar_chart</mat-icon>
-          <span>Distribución de Recomendaciones por Fecha</span>
+          <mat-icon>account_balance_wallet</mat-icon>
+          <span>Capital Desplegado — Resumen Cartera</span>
+          <mat-icon class="chart-info-icon" [matTooltip]="chartTooltips['capitalDeployed']">info_outline</mat-icon>
         </div>
-        <span class="card-sub">Cómo evolucionaron las recomendaciones de exposición a lo largo del periodo · sin decisiones binarias</span>
+        <span class="card-sub">Media agregada de capital invertido vs efectivo en reserva durante todo el backtesting</span>
       </div>
-      @if (historyRows.length > 0) {
-        <div class="exposure-dist-summary">
-          @for (metric of historyMetricOptions; track metric.value) {
-            @if (metric.value === 'avg_exposure') {
-              <article class="history-metric-card">
-                <header class="history-metric-head">
-                  <span class="history-metric-title">{{ metric.label }}</span>
-                  <span class="history-metric-desc">{{ metric.description }}</span>
-                </header>
-                <highcharts-chart
-                  [Highcharts]="Highcharts"
-                  [constructorType]="'stockChart'"
-                  [options]="historyChartOptionsByMetric[metric.value]"
-                  [(update)]="historyChartUpdates[metric.value]"
-                  class="history-chart">
-                </highcharts-chart>
-              </article>
-            }
-          }
-        </div>
-      } @else {
-        <p style="padding:24px;color:var(--slate-400);text-align:center">Sin datos históricos disponibles.</p>
-      }
+      <div class="capital-kpi-row">
+        <article class="capital-kpi">
+          <span class="capital-kpi-label">Capital invertido (media)</span>
+          <span class="capital-kpi-value">{{ avgPortfolioExposure | number:'1.1-1' }}%</span>
+          <div class="capital-kpi-bar">
+            <div class="capital-kpi-fill invested" [style.width.%]="avgPortfolioExposure"></div>
+          </div>
+        </article>
+        <article class="capital-kpi">
+          <span class="capital-kpi-label">Cash no invertido (media)</span>
+          <span class="capital-kpi-value muted">{{ avgPortfolioCash | number:'1.1-1' }}%</span>
+          <div class="capital-kpi-bar">
+            <div class="capital-kpi-fill cash" [style.width.%]="avgPortfolioCash"></div>
+          </div>
+        </article>
+      </div>
     </section>
 
     <!-- ── Progresión de Exposición durante el Backtesting ───────────────── -->
@@ -76,6 +70,7 @@
         <div class="card-title">
           <mat-icon>stacked_line_chart</mat-icon>
           <span>Progresión de Capital Desplegado</span>
+          <mat-icon class="chart-info-icon" [matTooltip]="chartTooltips['exposureProgress']">info_outline</mat-icon>
         </div>
         <span class="card-sub">
           Cómo la IA fue aumentando el capital invertido en cada activo ·
@@ -98,14 +93,38 @@
           >
           </highcharts-chart>
         </div>
-        <div class="thresholds" style="margin-top: 8px">
+        <div class="thresholds">
           <span class="th-buy">≥ 70% — Alta convicción alcista</span>
-          <span class="th-hold"
-            >50–70% — Posición moderada (régimen NEUTRAL)</span
-          >
-          <span class="th-sell"
-            >≤ 50% — Capital protegido (régimen adverso)</span
-          >
+          <span class="th-hold">50–70% — Posición moderada (régimen NEUTRAL)</span>
+          <span class="th-sell">≤ 50% — Capital protegido (régimen adverso)</span>
+        </div>
+
+        <!-- Desglose interactivo por activo -->
+        <div class="capital-drilldown">
+          <div class="filter-group">
+            <label>Detalle por activo</label>
+            <select class="aurora-select" [(ngModel)]="selectedCapitalTicker">
+              @for (r of tickerViews; track r.ticker) {
+                <option [value]="r.ticker">{{ r.ticker }}</option>
+              }
+            </select>
+          </div>
+          @if (getCapitalView(selectedCapitalTicker); as cv) {
+            <div class="capital-drill-grid">
+              <div class="capital-drill-item">
+                <span class="capital-drill-label">Capital invertido</span>
+                <span class="capital-drill-val">{{ cv.avg_exposure | number:'1.1-1' }}%</span>
+                <div class="capital-kpi-bar"><div class="capital-kpi-fill invested" [style.width.%]="cv.avg_exposure"></div></div>
+                <span class="capital-drill-eur">≈ € {{ (cv.avg_exposure / 100 * 10000) | number:'1.0-0' }} de 10.000 €</span>
+              </div>
+              <div class="capital-drill-item">
+                <span class="capital-drill-label">Cash no invertido</span>
+                <span class="capital-drill-val muted">{{ cv.avg_cash_pct | number:'1.1-1' }}%</span>
+                <div class="capital-kpi-bar"><div class="capital-kpi-fill cash" [style.width.%]="cv.avg_cash_pct"></div></div>
+                <span class="capital-drill-eur">≈ € {{ (cv.avg_cash_pct / 100 * 10000) | number:'1.0-0' }} en reserva</span>
+              </div>
+            </div>
+          }
         </div>
       } @else {
         <p style="padding: 24px; color: var(--slate-400); text-align: center">
@@ -114,51 +133,21 @@
       }
     </section>
 
-    <section class="card history-card">
-      <div class="card-head history-head">
-        <div class="card-title">
-          <mat-icon>swap_horiz</mat-icon>
-          <span>Ciclos BUY / SELL por ticker</span>
-        </div>
-        <span class="card-sub"
-          >Entradas y salidas en timeline para auditar decisiones de forma
-          clara.</span
-        >
-      </div>
-      <highcharts-chart
-        [Highcharts]="Highcharts"
-        [options]="cyclesChartOptions"
-        [(update)]="cyclesChartUpdate"
-        class="history-chart"
-      >
-      </highcharts-chart>
-    </section>
-
     <section class="section-row section-row-2">
       <section class="card chart-card">
         <div class="card-head">
           <div class="card-title">
             <mat-icon>bar_chart</mat-icon>
             <span>Comparativa de Rentabilidad por Activo</span>
+            <mat-icon class="chart-info-icon" [matTooltip]="chartTooltips['returnComparison']">info_outline</mat-icon>
           </div>
           <div class="legend compact-legend">
-            <span class="leg-dot" style="background: #1d4ed8"></span
-            ><span>Exposición Gradual (IA)</span>
-            <span
-              class="leg-dot"
-              style="background: #7c3aed; margin-left: 10px"
-            ></span
-            ><span>Estrategia Binaria (referencia)</span>
-            <span
-              class="leg-dot"
-              style="background: #64748b; margin-left: 10px"
-            ></span
-            ><span>Mercado (B&amp;H)</span>
+            <span class="leg-dot" style="background: #2563EB"></span><span>Estrategia (Exposición)</span>
+            <span class="leg-dot" style="background: #64748b; margin-left: 10px"></span><span>Mercado (B&amp;H)</span>
           </div>
         </div>
         <span class="card-sub" style="display: block; margin: -6px 0 10px 0">
-          Azul = IA modulando exposición desde 0% · Violeta = estrategia binaria
-          entra/sale · Gris = comprar y mantener 100% desde el día 1
+          Ordenado por ticker · Azul = IA modulando exposición desde 0% · Gris = comprar y mantener 100%
         </span>
         <div class="chart-host chart-host-tall">
           <ngx-charts-bar-vertical-2d
@@ -166,7 +155,7 @@
             [xAxis]="true"
             [yAxis]="true"
             [showGridLines]="true"
-            [scheme]="tripleScheme"
+            [scheme]="compareScheme"
             yAxisLabel="Rentabilidad (%)"
             [showYAxisLabel]="true"
             [showDataLabel]="true"
@@ -183,10 +172,10 @@
           <div class="card-title">
             <mat-icon>add_circle_outline</mat-icon>
             <span>Mejora vs Mercado (Alpha)</span>
+            <mat-icon class="chart-info-icon" [matTooltip]="chartTooltips['alpha']">info_outline</mat-icon>
           </div>
           <span class="card-sub"
-            >Rentabilidad con exposición modulada (azul) vs comprar y mantener
-            100% desde día 1 (gris)</span
+            >Rentabilidad con exposición modulada vs comprar y mantener 100% desde día 1</span
           >
         </div>
         <div class="chart-host">
@@ -212,6 +201,7 @@
           <div class="card-title">
             <mat-icon>speed</mat-icon>
             <span>Ratio de Sharpe Anualizado</span>
+            <mat-icon class="chart-info-icon" [matTooltip]="chartTooltips['sharpe']">info_outline</mat-icon>
           </div>
           <span class="card-sub">Retorno ajustado por riesgo</span>
         </div>
@@ -244,6 +234,7 @@
           <div class="card-title">
             <mat-icon>arrow_downward</mat-icon>
             <span>Caída Máxima (Max Drawdown)</span>
+            <mat-icon class="chart-info-icon" [matTooltip]="chartTooltips['drawdown']">info_outline</mat-icon>
           </div>
           <span class="card-sub">Riesgo de caída por activo</span>
         </div>
@@ -544,11 +535,11 @@
                 <span class="metric-label">Rentabilidad IA</span>
                 <span
                   class="num"
-                  [class.pos]="r.cumulative_return > 0"
-                  [class.neg]="r.cumulative_return < 0"
+                  [class.pos]="r.exp_cumulative_return > 0"
+                  [class.neg]="r.exp_cumulative_return < 0"
                 >
-                  {{ r.cumulative_return > 0 ? "+" : ""
-                  }}{{ r.cumulative_return * 100 | number: "1.2-2" }}%
+                  {{ r.exp_cumulative_return > 0 ? "+" : ""
+                  }}{{ r.exp_cumulative_return * 100 | number: "1.2-2" }}%
                 </span>
               </div>
               <div class="asset-metric">
@@ -573,44 +564,39 @@
                 <span class="metric-label">Ratio Sharpe</span>
                 <span
                   class="num"
-                  [class.pos]="r.sharpe_ratio > 1"
-                  [class.neg]="r.sharpe_ratio < 0"
-                  >{{ r.sharpe_ratio | number: "1.2-2" }}</span
+                  [class.pos]="r.exp_sharpe_ratio > 1"
+                  [class.neg]="r.exp_sharpe_ratio < 0"
+                  >{{ r.exp_sharpe_ratio | number: "1.2-2" }}</span
                 >
               </div>
               <div class="asset-metric">
                 <span class="metric-label">Caída Máx.</span>
                 <span class="num neg"
-                  >{{ r.max_drawdown * 100 | number: "1.2-2" }}%</span
+                  >{{ r.exp_max_drawdown * 100 | number: "1.2-2" }}%</span
                 >
               </div>
               <div class="asset-metric">
                 <span class="metric-label">Capital Final</span>
                 <span
                   class="num"
-                  [class.pos]="r.final_equity > 10000"
-                  [class.neg]="r.final_equity < 10000"
+                  [class.pos]="r.exp_final_equity > 10000"
+                  [class.neg]="r.exp_final_equity < 10000"
                 >
-                  $&nbsp;{{ r.final_equity | number: "1.0-0" }}
+                  €&nbsp;{{ r.exp_final_equity | number: "1.0-0" }}
                 </span>
               </div>
               <div class="asset-metric">
-                <span class="metric-label">Ciclos</span>
-                <span class="num">{{ r.trades_closed }}</span>
+                <span class="metric-label">Capital Desplegado</span>
+                <span class="num">{{ r.avg_exposure | number: "1.0-1" }}%</span>
+              </div>
+              <div class="asset-metric">
+                <span class="metric-label">Cash no invertido</span>
+                <span class="num muted">{{ r.avg_cash_pct | number: "1.0-1" }}%</span>
               </div>
               <div class="asset-metric">
                 <span class="metric-label">Tasa Acierto</span>
                 <span class="num" [class.pos]="r.win_rate >= 0.5"
                   >{{ r.win_rate * 100 | number: "1.0-0" }}%</span
-                >
-              </div>
-              <div class="asset-metric">
-                <span class="metric-label">Factor Beneficio</span>
-                <span
-                  class="num"
-                  [class.pos]="r.profit_factor > 1"
-                  [class.neg]="r.profit_factor < 1"
-                  >{{ r.profit_factor | number: "1.2-2" }}</span
                 >
               </div>
             </div>

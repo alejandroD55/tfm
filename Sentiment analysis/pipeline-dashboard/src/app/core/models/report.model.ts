@@ -75,6 +75,9 @@ export interface ExposureBacktestingDiagnostics {
   avg_exposure:       number;                     // exposición media durante el periodo
   min_exposure:       number;
   max_exposure:       number;
+  avg_cash_pct:       number;                     // cash no invertido (1 - smoothed_exposure)
+  min_cash_pct:       number;
+  max_cash_pct:       number;
   regime_distribution: Record<string, number>;    // días por régimen: BULL/NEUTRAL/HIGH_VOL/BEAR
 }
 
@@ -147,6 +150,7 @@ export interface TickerView {
   exp_max_drawdown:      number;
   exp_final_equity:      number;
   avg_exposure:          number;   // % de exposición media durante el periodo
+  avg_cash_pct:          number;   // % de cash no invertido (complemento de exposición)
   regime_distribution:   Record<string, number>;
 
   // ── Diagnóstico de operaciones ────────────────────────────────────────────

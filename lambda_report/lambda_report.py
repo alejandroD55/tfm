@@ -428,6 +428,115 @@ def compute_benchmark(signals_df):
     return benchmark
 
 
+def get_exposure_data(connection, report_date, days_back=DAYS_BACK):
+    """Lee exposición suavizada desde position_state + precios de cierre."""
+    try:
+        cursor = connection.cursor()
+        end_date = pd.to_datetime(report_date).date()
+        start_date = end_date - timedelta(days=days_back)
+        query = """
+            SELECT ps.batch_date, ps.ticker, ps.smoothed_exposure, ps.market_regime,
+                   ti.close_price
+            FROM position_state ps
+            JOIN technical_indicators ti
+              ON ps.batch_date = ti.batch_date AND ps.ticker = ti.ticker
+            WHERE ps.batch_date >= %s AND ps.batch_date <= %s
+            ORDER BY ps.batch_date, ps.ticker
+        """
+        cursor.execute(query, (start_date, end_date))
+        rows = cursor.fetchall()
+        cursor.close()
+        return [
+            {
+                "batch_date": r[0],
+                "ticker": r[1],
+                "smoothed_exposure": float(r[2]) if r[2] is not None else 0.0,
+                "market_regime": r[3] or "NEUTRAL",
+                "close_price": float(r[4]) if r[4] is not None else 0.0,
+            }
+            for r in rows
+        ]
+    except Exception as exc:
+        logger.warning(f"No se pudo leer position_state para backtest de exposición: {exc}")
+        return []
+
+
+def calculate_exposure_backtesting(signals_list):
+    """Backtesting de exposición continua: portfolio_return = market_return × smoothed_exposure."""
+    exp_metrics, exp_diagnostics = {}, {}
+    if not signals_list:
+        return exp_metrics, exp_diagnostics
+
+    tickers = list({r["ticker"] for r in signals_list})
+    initial_cap = 10000.0
+    risk_free = 0.02
+
+    for ticker in tickers:
+        ts = sorted(
+            [r for r in signals_list if r["ticker"] == ticker],
+            key=lambda x: x["batch_date"],
+        )
+        if len(ts) < 2:
+            continue
+
+        capital = initial_cap
+        equity = [capital]
+        daily_exposures = []
+        regime_days = {"BULL": 0, "NEUTRAL": 0, "HIGH_VOL": 0, "BEAR": 0}
+
+        for i in range(1, len(ts)):
+            p0 = float(ts[i - 1].get("close_price") or 0)
+            p1 = float(ts[i].get("close_price") or 0)
+            if p0 == 0 or p1 == 0:
+                equity.append(equity[-1])
+                continue
+
+            market_ret = (p1 - p0) / p0
+            exposure = float(ts[i].get("smoothed_exposure", 0.0))
+            daily_exposures.append(exposure)
+
+            regime = ts[i].get("market_regime", "NEUTRAL")
+            if regime in regime_days:
+                regime_days[regime] += 1
+
+            portfolio_ret = market_ret * exposure
+            capital *= 1.0 + portfolio_ret
+            equity.append(capital)
+
+        final_eq = capital
+        cum_ret = (final_eq - initial_cap) / initial_cap
+
+        if len(equity) > 2:
+            eq_arr = np.array(equity)
+            dr = np.diff(eq_arr) / eq_arr[:-1]
+            excess = dr - (risk_free / 252)
+            std = np.std(excess)
+            sharpe = float(np.mean(excess) / std * np.sqrt(252)) if std > 1e-6 else 0.0
+            peak = np.maximum.accumulate(eq_arr)
+            max_dd = float(np.min((eq_arr - peak) / peak))
+        else:
+            sharpe = max_dd = 0.0
+
+        daily_cash = [1.0 - e for e in daily_exposures]
+        exp_metrics[ticker] = {
+            "cumulative_return": round(float(cum_ret), 4),
+            "sharpe_ratio": round(float(sharpe), 4),
+            "max_drawdown": round(float(max_dd), 4),
+            "final_equity": round(float(final_eq), 2),
+        }
+        exp_diagnostics[ticker] = {
+            "avg_exposure": round(float(np.mean(daily_exposures)), 4) if daily_exposures else 0.0,
+            "min_exposure": round(float(np.min(daily_exposures)), 4) if daily_exposures else 0.0,
+            "max_exposure": round(float(np.max(daily_exposures)), 4) if daily_exposures else 1.0,
+            "avg_cash_pct": round(float(np.mean(daily_cash)), 4) if daily_cash else 1.0,
+            "min_cash_pct": round(float(np.min(daily_cash)), 4) if daily_cash else 0.0,
+            "max_cash_pct": round(float(np.max(daily_cash)), 4) if daily_cash else 1.0,
+            "regime_distribution": regime_days,
+        }
+
+    return exp_metrics, exp_diagnostics
+
+
 def get_close_price(ticker: str, date_str: str) -> float | None:
     """Obtiene el precio de cierre de un ticker en una fecha concreta vía yfinance."""
     try:
@@ -587,6 +696,9 @@ def handler(event, context):
             if not signals_df.empty
             else ({}, {})
         )
+        exposure_rows = get_exposure_data(connection, today, days_back=DAYS_BACK)
+        exp_metrics, exp_diagnostics = calculate_exposure_backtesting(exposure_rows)
+        primary_metrics = exp_metrics if exp_metrics else backtest_metrics
         pipeline_health = get_pipeline_health(connection, today, ctx["run_id"])
         explanations = get_explanations_sample(connection, today, limit=10)
         benchmark = compute_benchmark(signals_df) if not signals_df.empty else {}
@@ -611,46 +723,48 @@ def handler(event, context):
             "recommendation_diagnostics": diagnostics,
             "benchmark_comparison": {
                 ticker: {
-                    "strategy_cumulative_return": backtest_metrics[ticker][
+                    "strategy_cumulative_return": primary_metrics[ticker][
                         "cumulative_return"
                     ],
                     "buy_hold_cumulative_return": benchmark.get(ticker, 0.0),
                     "alpha_vs_benchmark": round(
-                        backtest_metrics[ticker]["cumulative_return"]
+                        primary_metrics[ticker]["cumulative_return"]
                         - benchmark.get(ticker, 0.0),
                         4,
                     ),
                 }
-                for ticker in backtest_metrics
+                for ticker in primary_metrics
             },
             "top_recommendation_explanations": explanations,
             "backtesting_metrics": backtest_metrics,
+            "exposure_backtesting_metrics": exp_metrics,
+            "exposure_backtesting_diagnostics": exp_diagnostics,
             "summary": {
-                "total_tickers": len(backtest_metrics),
+                "total_tickers": len(primary_metrics),
                 "avg_cumulative_return": (
                     round(
                         np.mean(
-                            [m["cumulative_return"] for m in backtest_metrics.values()]
+                            [m["cumulative_return"] for m in primary_metrics.values()]
                         ),
                         4,
                     )
-                    if backtest_metrics
+                    if primary_metrics
                     else 0
                 ),
                 "avg_sharpe_ratio": (
                     round(
-                        np.mean([m["sharpe_ratio"] for m in backtest_metrics.values()]),
+                        np.mean([m["sharpe_ratio"] for m in primary_metrics.values()]),
                         4,
                     )
-                    if backtest_metrics
+                    if primary_metrics
                     else 0
                 ),
                 "avg_max_drawdown": (
                     round(
-                        np.mean([m["max_drawdown"] for m in backtest_metrics.values()]),
+                        np.mean([m["max_drawdown"] for m in primary_metrics.values()]),
                         4,
                     )
-                    if backtest_metrics
+                    if primary_metrics
                     else 0
                 ),
                 "total_closed_trades": (
@@ -663,9 +777,9 @@ def handler(event, context):
                 "initial_capital": 10000.0,
                 "risk_free_rate": 0.02,
                 "period_days": DAYS_BACK,
-                "strategy_type": "Long/Cash",
+                "strategy_type": "Probabilistic Exposure",
                 "sharpe_annualized": True,
-                "limitation": "El backtesting asume ejecucion al cierre. Estrategia Long/Cash: recomendaciones de incremento abren posición, reducción cierra posición y mantener conserva el estado actual.",
+                "limitation": "El backtesting asume ejecución al cierre. Estrategia de exposición continua: portfolio_return = market_return × smoothed_exposure. Arranca en 0% invertido.",
             },
             "trace_artifact": f"mongo:bayesian_traces/{today}",
             "quant_audit_artifact": f"mongo:quant_audit_reports/{today}",

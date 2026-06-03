@@ -132,6 +132,17 @@ REFRESH_NEWS_CACHE = os.getenv("BOOTSTRAP_REFRESH_NEWS_CACHE", "").lower() in (
 # Cuando una fuente no publica exactamente en el dia objetivo, reutilizamos
 # articulos de dias inmediatamente anteriores para evitar gaps artificiales.
 TICKER_NEWS_LOOKBACK_DAYS = int(os.getenv("BOOTSTRAP_TICKER_NEWS_LOOKBACK_DAYS", "3"))
+# Control de coste/latencia para el paso LLM de resumen por articulo.
+DISABLE_LLM_SUMMARY = os.getenv("BOOTSTRAP_DISABLE_LLM_SUMMARY", "").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+MAX_TICKER_ARTICLES_PER_DAY = int(
+    os.getenv("BOOTSTRAP_MAX_TICKER_ARTICLES_PER_DAY", "20")
+)
+GROQ_MAX_RETRIES = int(os.getenv("BOOTSTRAP_GROQ_MAX_RETRIES", "1"))
 
 DB_CONFIG = {
     "host": os.getenv("POSTGRES_HOST", "localhost"),
@@ -440,7 +451,10 @@ def get_finbert():
 def get_groq_client():
     global _groq_client
     if _groq_client is None and GROQ_API_KEY:
-        _groq_client = groq.Groq(api_key=GROQ_API_KEY)
+        _groq_client = groq.Groq(
+            api_key=GROQ_API_KEY,
+            max_retries=max(0, GROQ_MAX_RETRIES),
+        )
     return _groq_client
 
 
@@ -452,6 +466,9 @@ def extract_and_summarize(ticker: str, headline: str, url: str) -> str:
 
     Thread-safe: usa _groq_rate_wait() en lugar de time.sleep() fijo.
     """
+    if DISABLE_LLM_SUMMARY:
+        return headline
+
     client = get_groq_client()
     try:
         resp = requests.get(url, timeout=5)
@@ -1972,7 +1989,7 @@ def _calc_exposure_backtesting(signals_list: List[Dict]) -> Tuple[Dict, Dict]:
                 continue
 
             market_ret = (p1 - p0) / p0
-            exposure = float(ts[i].get("smoothed_exposure", 0.5))
+            exposure = float(ts[i].get("smoothed_exposure", 0.0))
             daily_exposures.append(exposure)
 
             regime = ts[i].get("market_regime", "NEUTRAL")
@@ -2004,10 +2021,14 @@ def _calc_exposure_backtesting(signals_list: List[Dict]) -> Tuple[Dict, Dict]:
             "max_drawdown": round(float(max_dd), 4),
             "final_equity": round(float(final_eq), 2),
         }
+        daily_cash = [1.0 - e for e in daily_exposures]
         exp_diagnostics[ticker] = {
-            "avg_exposure": round(float(np.mean(daily_exposures)), 4) if daily_exposures else 0.5,
+            "avg_exposure": round(float(np.mean(daily_exposures)), 4) if daily_exposures else 0.0,
             "min_exposure": round(float(np.min(daily_exposures)), 4) if daily_exposures else 0.0,
             "max_exposure": round(float(np.max(daily_exposures)), 4) if daily_exposures else 1.0,
+            "avg_cash_pct": round(float(np.mean(daily_cash)), 4) if daily_cash else 1.0,
+            "min_cash_pct": round(float(np.min(daily_cash)), 4) if daily_cash else 0.0,
+            "max_cash_pct": round(float(np.max(daily_cash)), 4) if daily_cash else 1.0,
             "regime_distribution": regime_days,
         }
 
@@ -2449,7 +2470,7 @@ def _process_ticker_day(
     macro_sentiment: str,
     risk_regime: str,
     signal_history: List[str],       # copia del historial del ticker (no compartida)
-    previous_exposure: float = 0.5,  # exposición suavizada del día anterior
+    previous_exposure: float = 0.0,  # exposición suavizada del día anterior (arranca en 0%)
     vix: Optional[float] = None,     # VIX del día (para detect_market_regime)
 ) -> Optional[Dict]:
     """
@@ -2580,7 +2601,8 @@ def _process_ticker_day(
         sentiment_samples: List[Dict] = []
         kpis = {"total_headlines": 0, "processed_headlines": 0}
 
-        for art in articles[:20]:
+        articles_window = articles[: max(1, MAX_TICKER_ARTICLES_PER_DAY)]
+        for art in articles_window:
             kpis["total_headlines"] += 1
             # extract_and_summarize usa _groq_rate_wait() → thread-safe
             summary = extract_and_summarize(
@@ -2625,7 +2647,7 @@ def _process_ticker_day(
             )
         _news_debug(
             f"[news-sentiment] {date_str} {ticker}: procesadas={len(processed_headlines)}/"
-            f"{len(articles[:20])} con FinBERT/Groq={'on' if GROQ_API_KEY else 'off'}"
+            f"{len(articles_window)} con FinBERT/Groq={'on' if GROQ_API_KEY and not DISABLE_LLM_SUMMARY else 'off'}"
         )
 
         # ── Agregación de sentimiento y evidencias ───────────────────────────
@@ -3135,8 +3157,8 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
 
     # ── Fase 1 — Exposure tracking ────────────────────────────────────────────
     # Exposición suavizada del día anterior por ticker (EWM).
-    # Valor inicial 0.5 = exposición neutral (equivalente al prior de mercado).
-    exposure_history_per_ticker: dict = {t: 0.5 for t in active_tickers}
+    # Valor inicial 0.0 = sin capital desplegado el día 1 (coherente con narrativa backtest).
+    exposure_history_per_ticker: dict = {t: 0.0 for t in active_tickers}
     # Acumulado de todos los signal_records (incluye smoothed_exposure) para
     # calcular el backtesting de exposición en cada iteración del reporte.
     all_signal_records: List[Dict] = []
@@ -3321,36 +3343,40 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
                 "signal_diagnostics": diagnostics,
                 "benchmark_comparison": {
                     t: {
-                        "strategy_cumulative_return": metrics[t]["cumulative_return"],
+                        "strategy_cumulative_return": exp_metrics.get(t, {}).get(
+                            "cumulative_return", 0.0
+                        ),
                         "buy_hold_cumulative_return": benchmark.get(t, 0.0),
                         "alpha_vs_benchmark": round(
-                            metrics[t]["cumulative_return"] - benchmark.get(t, 0.0), 4
+                            exp_metrics.get(t, {}).get("cumulative_return", 0.0)
+                            - benchmark.get(t, 0.0),
+                            4,
                         ),
                     }
-                    for t in metrics
+                    for t in exp_metrics
                 },
                 "top_signal_explanations": explanations,
                 "backtesting_metrics": metrics,
                 "summary": {
-                    "total_tickers": len(metrics),
+                    "total_tickers": len(exp_metrics),
                     "avg_cumulative_return": (
                         round(
-                            np.mean([m["cumulative_return"] for m in metrics.values()]),
+                            np.mean([m["cumulative_return"] for m in exp_metrics.values()]),
                             4,
                         )
-                        if metrics
+                        if exp_metrics
                         else 0
                     ),
                     "avg_sharpe_ratio": (
-                        round(np.mean([m["sharpe_ratio"] for m in metrics.values()]), 4)
-                        if metrics
+                        round(np.mean([m["sharpe_ratio"] for m in exp_metrics.values()]), 4)
+                        if exp_metrics
                         else 0
                     ),
                     "avg_max_drawdown": (
-                        round(np.mean([m["max_drawdown"] for m in metrics.values()]), 4)
-                        if metrics
+                        round(np.mean([m["max_drawdown"] for m in exp_metrics.values()]), 4)
+                        if exp_metrics
                         else 0
-                    ),  # CORRECCIÓN: Añadido para el dashboard
+                    ),
                     "total_closed_trades": (
                         sum(
                             item.get("trades_closed", 0)
@@ -3364,9 +3390,9 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
                     "initial_capital": INITIAL_CAP,
                     "risk_free_rate": RISK_FREE_RATE,
                     "period_days": DAYS_BACK,
-                    "strategy_type": "Long/Cash",
+                    "strategy_type": "Probabilistic Exposure",
                     "sharpe_annualized": True,
-                    "limitation": "El backtesting asume ejecucion al cierre. Estrategia Long/Cash: BUY entra al mercado, SELL cierra posicion, HOLD mantiene posicion abierta.",
+                    "limitation": "El backtesting asume ejecución al cierre. Estrategia de exposición continua: portfolio_return = market_return × smoothed_exposure. Arranca en 0% invertido.",
                 },
                 # ── Fase 1: Probabilistic Exposure Management ─────────────────
                 "exposure_backtesting_metrics": exp_metrics,
@@ -3380,7 +3406,7 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
                             - metrics.get(t, {}).get("cumulative_return", 0.0),
                             4,
                         ),
-                        "avg_exposure":   exp_diagnostics.get(t, {}).get("avg_exposure", 0.5),
+                        "avg_exposure":   exp_diagnostics.get(t, {}).get("avg_exposure", 0.0),
                         "regime_distribution": exp_diagnostics.get(t, {}).get("regime_distribution", {}),
                     }
                     for t in set(list(metrics.keys()) + list(exp_metrics.keys()))

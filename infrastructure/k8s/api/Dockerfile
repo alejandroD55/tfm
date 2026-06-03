@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # ── Copiar código fuente ───────────────────────────────────────────────────────
 COPY infrastructure/k8s/api/main.py .
 COPY shared/mongo_utils.py .
+COPY shared/quant_observability.py .
 COPY etf_universe.json .
 
 # ── Usuario no-root ────────────────────────────────────────────────────────────

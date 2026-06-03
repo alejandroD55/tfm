@@ -357,8 +357,13 @@
   font-size: 11px; font-weight: 700; letter-spacing: .03em;
   mat-icon { font-size: 14px; height: 14px; width: 14px; }
 }
+.signal-pill.increase-strong { background: rgba(34,197,94,.18); color: #15803d; }
+.signal-pill.increase-mild   { background: rgba(34,197,94,.12); color: #16a34a; }
+.signal-pill.maintain        { background: rgba(59,130,246,.12); color: #1d4ed8; }
+.signal-pill.reduce-mild     { background: rgba(245,158,11,.15); color: #b45309; }
+.signal-pill.reduce-strong   { background: rgba(239,68,68,.15); color: #b91c1c; }
 .signal-pill.buy  { background: var(--success-100); color: var(--success-700); }
-.signal-pill.sell { background: rgba(124, 58, 237, .15); color: #7C3AED; } /* Violeta */
+.signal-pill.sell { background: rgba(124, 58, 237, .15); color: #7C3AED; }
 .signal-pill.hold { background: var(--warn-100);    color: var(--warn-700); }
 
 .prob-cell { display: flex; align-items: center; gap: 10px; min-width: 140px; }
@@ -432,10 +437,62 @@
 .dec-node.ev-bearish, .dec-node.ev-downtrend, .dec-node.ev-overbought, .dec-node.ev-high-vol { background: var(--danger-50); color: var(--danger-700); border-color: var(--danger-100); }
 .dec-node.ev-neutral, .dec-node.ev-neutral-rsi { background: var(--slate-50); color: var(--slate-600); border-color: var(--border); }
 
-.dec-result { display: flex; flex-direction: column; gap: 2px; padding: 10px 14px; min-width: 140px; flex: 1 1 140px; border-radius: var(--r-sm); border: 2px solid; .dec-cap { opacity: .7; } }
-.dec-result.buy  { background: var(--success-50); color: var(--success-700); border-color: var(--success-500); }
-.dec-result.sell { background: rgba(124, 58, 237, .05);  color: #7C3AED;  border-color: #7C3AED; }
-.dec-result.hold { background: var(--warn-50);    color: var(--warn-700);    border-color: var(--warn-500); }
+.dec-result { display: flex; flex-direction: column; gap: 6px; padding: 10px 14px; min-width: 160px; flex: 1 1 160px; border-radius: var(--r-sm); border: 2px solid; .dec-cap { opacity: .7; } }
+.dec-result.increase-strong { background: rgba(34,197,94,.08); color: #15803d; border-color: #22c55e; }
+.dec-result.increase-mild   { background: rgba(34,197,94,.05); color: #16a34a; border-color: #4ade80; }
+.dec-result.maintain        { background: rgba(59,130,246,.06); color: #1d4ed8; border-color: #3b82f6; }
+.dec-result.reduce-mild     { background: rgba(245,158,11,.08); color: #b45309; border-color: #f59e0b; }
+.dec-result.reduce-strong   { background: rgba(239,68,68,.08); color: #b91c1c; border-color: #ef4444; }
+
+.dec-rec-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: var(--r-pill);
+  font-size: 12px;
+  font-weight: 700;
+  width: fit-content;
+  mat-icon { font-size: 14px; height: 14px; width: 14px; }
+  &.increase-strong { background: rgba(34,197,94,.18); color: #15803d; }
+  &.increase-mild   { background: rgba(34,197,94,.12); color: #16a34a; }
+  &.maintain        { background: rgba(59,130,246,.12); color: #1d4ed8; }
+  &.reduce-mild     { background: rgba(245,158,11,.15); color: #b45309; }
+  &.reduce-strong   { background: rgba(239,68,68,.15); color: #b91c1c; }
+}
+
+.dec-conf-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+.dec-conf-val {
+  font-size: 15px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.dec-conf-bar {
+  position: relative;
+  height: 6px;
+  background: var(--slate-100);
+  border-radius: var(--r-pill);
+  overflow: visible;
+}
+.dec-conf-fill {
+  height: 100%;
+  border-radius: var(--r-pill);
+  opacity: 0.35;
+}
+.dec-conf-marker {
+  position: absolute;
+  top: -3px;
+  width: 4px;
+  height: 12px;
+  background: var(--slate-800);
+  border-radius: 2px;
+  transform: translateX(-50%);
+}
 
 .explainer { display: flex; align-items: flex-start; gap: 8px; background: var(--brand-100); color: var(--brand-700); padding: 10px 14px; border-radius: var(--r-sm); font-size: 13px; line-height: 1.5; mat-icon { font-size: 18px; height: 18px; width: 18px; flex-shrink: 0; margin-top: 1px; } }
 
@@ -806,14 +863,21 @@
   }
 }
 
-/* ─── Weekly OHLCV Price Chart ─────────────────────────────────────────────── */
+/* ─── Inline stage evolution chart (expandable rows) ─────────────────────── */
 
+.inline-perf-section,
 .week-chart-section {
   margin: 0 0 16px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   padding: 14px 16px 10px;
+}
+
+.inline-perf-chart {
+  display: block;
+  width: 100%;
+  min-height: 380px;
 }
 
 .wcs-header {

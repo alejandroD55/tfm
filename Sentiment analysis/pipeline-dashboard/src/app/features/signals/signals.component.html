@@ -584,10 +584,10 @@
         </ng-container>
 
         <ng-container matColumnDef="return">
-          <th mat-header-cell *matHeaderCellDef mat-sort-header="cumulative_return">Rentabilidad Anual</th>
+          <th mat-header-cell *matHeaderCellDef mat-sort-header="exp_cumulative_return">Rentabilidad (Exposición)</th>
           <td mat-cell *matCellDef="let row">
-            <span class="ret-val" [class.pos]="row.cumulative_return>0" [class.neg]="row.cumulative_return<0">
-              {{ row.cumulative_return>0?'+':'' }}{{ (row.cumulative_return*100)|number:'1.2-2' }}%
+            <span class="ret-val" [class.pos]="row.exp_cumulative_return>0" [class.neg]="row.exp_cumulative_return<0">
+              {{ row.exp_cumulative_return>0?'+':'' }}{{ (row.exp_cumulative_return*100)|number:'1.2-2' }}%
             </span>
           </td>
         </ng-container>
@@ -701,8 +701,23 @@
                       <span class="dec-arrow">→</span>
                       <div class="dec-result {{ expRecClass(row.exposure_recommendation) }}">
                         <span class="dec-cap">Decisión Final</span>
-                        <span class="dec-val">{{ expRecLabel(row.exposure_recommendation) }}</span>
-                        <span class="dec-sub">Confianza Alcista: {{ (row.prob_up*100)|number:'1.1-1' }}%</span>
+                        <span class="dec-rec-badge {{ expRecClass(row.exposure_recommendation) }}">
+                          <mat-icon>{{ expRecIcon(row.exposure_recommendation) }}</mat-icon>
+                          {{ expRecBadgeLabel(row.exposure_recommendation) }}
+                        </span>
+                        <div class="dec-conf-row">
+                          <span class="dec-sub">Confianza Alcista:</span>
+                          <span class="dec-conf-val" [style.color]="probGradientColor(row.prob_up)">
+                            {{ (row.prob_up*100)|number:'1.1-1' }}%
+                          </span>
+                          <div class="dec-conf-bar">
+                            <div class="dec-conf-fill"
+                                 [style.width.%]="row.prob_up*100"
+                                 [style.background]="'linear-gradient(to right, #dc2626, #f59e0b 50%, #16a34a)'">
+                            </div>
+                            <div class="dec-conf-marker" [style.left.%]="row.prob_up*100"></div>
+                          </div>
+                        </div>
                         @if (getRecommendedExposure(row.ticker) !== null) {
                           <span class="dec-sub">Exposición recomendada: {{ getRecommendedExposure(row.ticker) }}%</span>
                         }
@@ -789,39 +804,28 @@
 
                 </div>
 
-                <!-- ── PRECIO SEMANAL ─────────────────────────────────────────── -->
-                <div class="week-chart-section">
+                <!-- ── Evolución de rendimiento por etapas (inline) ─────────── -->
+                <div class="inline-perf-section">
                   <div class="wcs-header">
-                    <mat-icon>candlestick_chart</mat-icon>
-                    <span>Precio de Cierre — Últimas 4 semanas · Cierre al {{ selectedDate }}</span>
-                    <span class="wcs-sub">±3 sesiones hábiles alrededor del día analizado</span>
+                    <mat-icon>monitoring</mat-icon>
+                    <span>Evolución de Rendimiento por Etapas — {{ row.ticker }}</span>
                   </div>
 
-                  @if (isOhlcvLoading(row.ticker)) {
+                  @if (isInlineChartLoading(row.ticker)) {
                     <div class="wcs-loading">
                       <mat-spinner diameter="22"></mat-spinner>
-                      <span>Cargando precios históricos...</span>
+                      <span>Cargando histórico de {{ row.ticker }}...</span>
                     </div>
-                  } @else if (hasWeekChartData(row.ticker)) {
-
-                    <div class="wcs-chart">
-                      <highcharts-chart
-                        [Highcharts]="Highcharts"
-                        [constructorType]="'chart'"
-                        [options]="getWeekChartOptions(row.ticker)"
-                        class="week-hc-chart">
-                      </highcharts-chart>
-
-                      <div class="wcs-legend">
-                        <span class="wcs-leg-item wcs-leg-line"></span>
-                        <span class="wcs-leg-txt">Precio cierre</span>
-                        <span class="wcs-leg-item wcs-leg-target"></span>
-                        <span class="wcs-leg-txt">Día analizado</span>
-                      </div>
-                    </div>
-
+                  } @else if (hasInlineChart(row.ticker)) {
+                    <highcharts-chart
+                      [Highcharts]="Highcharts"
+                      [constructorType]="'stockChart'"
+                      [options]="getInlineChartOptions(row.ticker)"
+                      [(update)]="inlineChartUpdates[row.ticker]"
+                      class="inline-perf-chart">
+                    </highcharts-chart>
                   } @else {
-                    <p class="wcs-empty">Sin datos de precios disponibles para el último mes.</p>
+                    <p class="wcs-empty">Sin datos de rendimiento disponibles. Ejecuta el bootstrap hasta {{ selectedDate }}.</p>
                   }
                 </div>
 
@@ -888,7 +892,7 @@
                 <span class="ticker-name">{{ row.ticker }}</span>
                 <span class="signal-pill {{ expRecClass(row.exposure_recommendation) }}">
                   <mat-icon>{{ signalIcon(row.exposure_recommendation) }}</mat-icon>
-                  {{ expRecLabel(row.exposure_recommendation) }}
+                  {{ expRecBadgeLabel(row.exposure_recommendation) }}
                 </span>
               </header>
 
@@ -940,9 +944,9 @@
                   </span>
                 </div>
                 <div class="metric-item">
-                  <span class="metric-label">Rentabilidad Anual</span>
-                  <span class="ret-val" [class.pos]="row.cumulative_return>0" [class.neg]="row.cumulative_return<0">
-                    {{ row.cumulative_return>0?'+':'' }}{{ (row.cumulative_return*100)|number:'1.2-2' }}%
+                  <span class="metric-label">Rentabilidad (Exposición)</span>
+                  <span class="ret-val" [class.pos]="row.exp_cumulative_return>0" [class.neg]="row.exp_cumulative_return<0">
+                    {{ row.exp_cumulative_return>0?'+':'' }}{{ (row.exp_cumulative_return*100)|number:'1.2-2' }}%
                   </span>
                 </div>
                 <div class="metric-item">

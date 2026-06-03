@@ -83,13 +83,13 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
   exposureChartOptions: Highcharts.Options = {};
   exposureChartUpdate = false;
   historyMetricOptions: { value: BacktestHistoryMetric; label: string; unit: '%' | 'number' | '$'; description: string }[] = [
-    { value: 'ai_return', label: 'Rentabilidad IA', unit: '%', description: 'Retorno acumulado de la estrategia Long/Cash' },
-    { value: 'buy_hold', label: 'Mercado (B&H)', unit: '%', description: 'Retorno de comprar y mantener el ETF' },
-    { value: 'alpha', label: 'Mejora vs Mercado', unit: '%', description: 'Diferencia entre IA y Buy & Hold' },
-    { value: 'sharpe', label: 'Ratio Sharpe', unit: 'number', description: 'Retorno ajustado por riesgo anualizado' },
-    { value: 'drawdown', label: 'Caída Máx.', unit: '%', description: 'Peor caída desde máximos de la curva' },
-    { value: 'final_equity', label: 'Capital Final', unit: '$', description: 'Valor final partiendo de $10,000' },
-    { value: 'avg_exposure', label: 'Capital Desplegado', unit: '%', description: 'Fracción media del capital invertido · arranca en 0% y escala según las señales' },
+    { value: 'ai_return', label: 'Rentabilidad IA', unit: '%', description: 'Retorno acumulado con exposición modulada desde 0%' },
+    { value: 'buy_hold', label: 'Mercado (B&H)', unit: '%', description: 'Retorno de comprar y mantener el ETF al 100%' },
+    { value: 'alpha', label: 'Mejora vs Mercado', unit: '%', description: 'Diferencia entre estrategia de exposición y Buy & Hold' },
+    { value: 'sharpe', label: 'Ratio Sharpe', unit: 'number', description: 'Retorno ajustado por riesgo anualizado · > 1 es bueno' },
+    { value: 'drawdown', label: 'Caída Máx.', unit: '%', description: 'Peor caída desde máximos · ideal < 15%' },
+    { value: 'final_equity', label: 'Capital Final', unit: '$', description: 'Valor final partiendo de 10.000 € con exposición modulada' },
+    { value: 'avg_exposure', label: 'Capital Desplegado', unit: '%', description: 'Fracción media del capital invertido · arranca en 0%' },
   ];
 
   /** Altura del host para barras horizontales (Sharpe / Drawdown): escala con nº de ETFs. */
@@ -99,9 +99,23 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
   // Exposición continua como primario | métricas binarias como referencia secundaria
   tableCols = ['ticker', 'exp_return', 'exp_sharpe', 'exp_drawdown', 'exp_equity', 'avg_exp', 'bh', 'alpha', 'winrate'];
 
-  compareScheme: any  = { domain: ['#2563EB', '#94A3B8'] }; // Azul corporativo (IA) vs Gris neutro (B&H)
-  tripleScheme: any   = { domain: ['#1d4ed8', '#7c3aed', '#64748b'] }; // Exposición | Binario | B&H
-  drawdownScheme: any = { domain: ['#EF4444'] }; // Rojo
+  compareScheme: any  = { domain: ['#2563EB', '#94A3B8'] }; // Exposición (IA) vs B&H
+  drawdownScheme: any = { domain: ['#EF4444'] };
+  
+  /** KPI agregado: media de capital desplegado en cartera */
+  avgPortfolioExposure = 0;
+  avgPortfolioCash = 0;
+  selectedCapitalTicker = '';
+
+  /** Tooltips informativos por gráfico */
+  chartTooltips: Record<string, string> = {
+    returnComparison: 'Compara el retorno acumulado de la estrategia de exposición continua (modula posición día a día desde 0%) frente a comprar y mantener el 100% desde el día 1. Ideal: barras azules por encima de las grises.',
+    alpha: 'Exceso de retorno de la estrategia de exposición vs Buy & Hold. Positivo = la IA añade valor. Objetivo: > 0% de forma consistente.',
+    sharpe: 'Retorno ajustado por riesgo (anualizado). Sharpe > 1 = bueno · > 2 = excelente · < 0 = peor que el activo libre de riesgo.',
+    drawdown: 'Mayor caída desde un máximo histórico. Ideal: lo más cercano a 0%. > 15% indica protección insuficiente del capital.',
+    exposureProgress: 'Evolución del % de capital invertido por activo. Arranca en 0% el primer día y escala según recomendaciones bayesianas.',
+    capitalDeployed: 'Desglose por activo: capital invertido (exposición media) y efectivo en reserva (cash no invertido).',
+  };
   
   // Coloreado dinámico para Alpha (Verde si gana al mercado, Rojo si pierde)
   customColorsAlpha = (name: string) => {
@@ -115,7 +129,7 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
     return (item && item.value >= 0) ? '#06B6D4' : '#EF4444'; 
   };
 
-  get winnersCount() { return this.tickerViews.filter(t => t.cumulative_return > 0).length; }
+  get winnersCount() { return this.tickerViews.filter(t => t.exp_cumulative_return > 0).length; }
 
   /** Filas para @for en plantilla (evita optional chaining en el template). */
   get tableRows(): TickerView[] {
@@ -127,7 +141,7 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   get pipelineLabel(): string {
-    return this.pipelineCtx.selectedPipeline()?.label ?? '';
+    return this.pipelineCtx.rangeLabel();
   }
 
   ngOnInit() {
@@ -177,31 +191,20 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
 
   private processReport(report: DailyReport) {
     this.summary = report.summary;
-    this.tickerViews = this.reportSvc.buildTickerViews(report);
+    this.tickerViews = this.reportSvc.buildTickerViews(report)
+      .sort((a, b) => a.ticker.localeCompare(b.ticker));
     this.tableSource.data = this.tickerViews;
+    this.avgPortfolioExposure = this.reportSvc.avgPortfolioExposure(this.tickerViews);
+    this.avgPortfolioCash = 100 - this.avgPortfolioExposure;
+    if (!this.selectedCapitalTicker && this.tickerViews.length) {
+      this.selectedCapitalTicker = this.tickerViews[0].ticker;
+    }
     
-    // Reconecta la ordenación
     if (this.sort) {
       this.tableSource.sort = this.sort;
     }
 
-    // MAPEO FORZADO PARA EL GRÁFICO AGRUPADO: Eje X = ETF, Eje Y = IA vs Mercado
-    // 3 series: Exposición continua (primario) | Binario Long/Cash | Buy & Hold
-    this.returnChart = [
-      {
-        name: 'Exposición Gradual (IA)',
-        series: this.tickerViews.map(t => ({ name: t.ticker, value: +(t.exp_cumulative_return * 100).toFixed(2) }))
-      },
-      {
-        name: 'Estrategia Binaria (BUY/SELL)',
-        series: this.tickerViews.map(t => ({ name: t.ticker, value: +(t.cumulative_return * 100).toFixed(2) }))
-      },
-      {
-        name: 'Mercado (Buy & Hold)',
-        series: this.tickerViews.map(t => ({ name: t.ticker, value: +(t.buy_hold_return * 100).toFixed(2) }))
-      },
-    ];
-
+    this.returnChart = this.reportSvc.returnComparisonChart(this.tickerViews);
     this.sharpeChart   = this.reportSvc.sharpeChart(this.tickerViews);
     this.drawdownChart = this.reportSvc.drawdownChart(this.tickerViews);
     this.alphaChart    = this.reportSvc.alphaChart(this.tickerViews);
@@ -258,7 +261,6 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
       this.signalCycles = cycles;
       this.historyLoading = false;
       this.refreshAllHistoryCharts();
-      this.refreshCyclesChart();
       this.refreshExposureChart();
     }, () => {
       this.historyLoading = false;
@@ -493,6 +495,10 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
       MAINTAIN: 'remove', REDUCE_MILD: 'trending_down', REDUCE_STRONG: 'arrow_downward',
     };
     return m[rec] ?? 'remove';
+  }
+
+  getCapitalView(ticker: string): TickerView | undefined {
+    return this.tickerViews.find(v => v.ticker === ticker);
   }
 
   qualityLabel(s: number) {

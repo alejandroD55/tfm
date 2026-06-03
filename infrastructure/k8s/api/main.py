@@ -42,6 +42,16 @@ Endpoints:
 import os
 import json
 import logging
+
+try:
+    from dotenv import load_dotenv
+
+    _api_dir = os.path.dirname(os.path.abspath(__file__))
+    _repo_root = os.path.abspath(os.path.join(_api_dir, "..", "..", ".."))
+    load_dotenv(os.path.join(_repo_root, ".env"))
+    load_dotenv()
+except ImportError:
+    pass
 import urllib.request
 import urllib.parse
 from datetime import datetime, timezone, timedelta

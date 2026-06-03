@@ -59,9 +59,18 @@ export class ReportService {
     );
   }
 
+  /** Tickers del reporte — prioriza métricas de exposición continua. */
+  private reportTickers(report: DailyReport): string[] {
+    const expKeys = Object.keys(report.exposure_backtesting_metrics ?? {});
+    if (expKeys.length) return expKeys.sort();
+    const benchKeys = Object.keys(report.benchmark_comparison ?? {});
+    if (benchKeys.length) return benchKeys.sort();
+    return Object.keys(report.backtesting_metrics ?? {}).sort();
+  }
+
   // ─── Construye TickerView[] para todos los tickers ────────────────
   buildTickerViews(report: DailyReport): TickerView[] {
-    const tickers = Object.keys(report.backtesting_metrics);
+    const tickers = this.reportTickers(report);
     const recommendationDiagnostics = (report as any).recommendation_diagnostics
       ?? (report as any).signal_diagnostics
       ?? {};
@@ -69,30 +78,22 @@ export class ReportService {
       ?? (report as any).top_signal_explanations
       ?? [];
     return tickers.map(ticker => {
-      const bm    = report.backtesting_metrics[ticker];
+      const bm    = report.backtesting_metrics?.[ticker];
       const diag  = recommendationDiagnostics[ticker];
-      const bench = report.benchmark_comparison[ticker];
+      const bench = report.benchmark_comparison?.[ticker];
       const expl  = recommendationExplanations.find((e: any) => e.ticker === ticker);
 
       const prob_up = expl?.prob_up ?? 0.5;
 
-      // Calcula exposición continua con la misma lógica del backend (NEUTRAL regime).
-      // Floors NEUTRAL: [0.50, 0.85]. Rango de referencia prob_up: [0.30, 0.75].
       const exposure_pct = this.calcExposurePct(prob_up);
       const exposure_recommendation = this.calcExposureRec(exposure_pct, prob_up);
       const conviction_label = this.calcConviction(prob_up);
 
-      // Métricas de exposición continua (backend _calc_exposure_backtesting)
       const expBm:   ExposureBacktestingMetrics    = report.exposure_backtesting_metrics?.[ticker]   ?? {} as any;
       const expDiag: ExposureBacktestingDiagnostics = report.exposure_backtesting_diagnostics?.[ticker] ?? {} as any;
 
-      // Si hay métricas de exposición, usarlas; si no, derivar desde las binarias
-      // (esto mantiene compatibilidad con reports antiguos sin exposure_backtesting_metrics)
-      const exp_cum_return = expBm.cumulative_return ?? bm?.cumulative_return ?? 0;
-      const exp_sharpe     = expBm.sharpe_ratio      ?? bm?.sharpe_ratio ?? 0;
-      const exp_drawdown   = expBm.max_drawdown      ?? bm?.max_drawdown ?? 0;
-      const exp_equity     = expBm.final_equity      ?? bm?.final_equity ?? 10000;
-      const avg_exp        = (expDiag.avg_exposure   ?? exposure_pct / 100) * 100; // → porcentaje
+      const avg_exp  = (expDiag.avg_exposure ?? 0) * 100;
+      const avg_cash = (expDiag.avg_cash_pct ?? (1 - (expDiag.avg_exposure ?? 0))) * 100;
 
       return {
         ticker,
@@ -102,17 +103,18 @@ export class ReportService {
           sentiment: 'neutral', rsi: 'neutral',
           trend: 'uptrend', volatility: 'low',
         },
-        // Binario (referencia)
+        // Binario (referencia legacy — no usar en UI primaria)
         cumulative_return:  bm?.cumulative_return ?? 0,
         sharpe_ratio:       bm?.sharpe_ratio ?? 0,
         max_drawdown:       bm?.max_drawdown ?? 0,
         final_equity:       bm?.final_equity ?? 10000,
         // Exposición continua (primario)
-        exp_cumulative_return: exp_cum_return,
-        exp_sharpe_ratio:      exp_sharpe,
-        exp_max_drawdown:      exp_drawdown,
-        exp_final_equity:      exp_equity,
+        exp_cumulative_return: expBm.cumulative_return ?? 0,
+        exp_sharpe_ratio:      expBm.sharpe_ratio ?? 0,
+        exp_max_drawdown:      expBm.max_drawdown ?? 0,
+        exp_final_equity:      expBm.final_equity ?? 10000,
         avg_exposure:          avg_exp,
+        avg_cash_pct:          avg_cash,
         regime_distribution:   expDiag.regime_distribution ?? {},
         // Operaciones
         win_rate:           diag?.win_rate ?? 0,
@@ -139,7 +141,7 @@ export class ReportService {
   private calcExposurePct(prob_up: number): number {
     const floor = 0.50; const ceiling = 0.85;
     const t = Math.max(0, Math.min(1, (prob_up - 0.30) / (0.75 - 0.30)));
-    return Math.round((floor + t * (ceiling - floor)) * 1000) / 10; // → 0–100 con 1 decimal
+    return Math.round((floor + t * (ceiling - floor)) * 1000) / 10;
   }
 
   /** Deriva la recomendación de exposición en 5 niveles desde el % */
@@ -159,6 +161,12 @@ export class ReportService {
     return 'low';
   }
 
+  /** Media de capital desplegado (% invertido) en toda la cartera. */
+  avgPortfolioExposure(views: TickerView[]): number {
+    if (!views.length) return 0;
+    return views.reduce((s, v) => s + v.avg_exposure, 0) / views.length;
+  }
+
   // ─── Charts ───────────────────────────────────────────────────────
 
   signalDistributionChart(views: TickerView[]): ChartDataPoint[] {
@@ -173,32 +181,36 @@ export class ReportService {
     return Object.entries(counts).filter(([, v]) => v > 0).map(([name, value]) => ({ name, value }));
   }
 
-  /** Comparativa de retorno: Exposición continua (IA) vs Buy & Hold */
+  /** Comparativa de retorno: Exposición continua (IA) vs Buy & Hold — ordenado por ticker */
   returnComparisonChart(views: TickerView[]): ChartSeries[] {
+    const sorted = [...views].sort((a, b) => a.ticker.localeCompare(b.ticker));
     return [
-      { name: 'Estrategia (Exposición)', series: views.map(v => ({ name: v.ticker, value: +(v.exp_cumulative_return * 100).toFixed(2) })) },
-      { name: 'Buy & Hold',              series: views.map(v => ({ name: v.ticker, value: +(v.buy_hold_return * 100).toFixed(2) })) },
+      { name: 'Estrategia (Exposición)', series: sorted.map(v => ({ name: v.ticker, value: +(v.exp_cumulative_return * 100).toFixed(2) })) },
+      { name: 'Buy & Hold',              series: sorted.map(v => ({ name: v.ticker, value: +(v.buy_hold_return * 100).toFixed(2) })) },
     ];
   }
 
   sharpeChart(views: TickerView[]): ChartDataPoint[] {
-    return views.map(v => ({ name: v.ticker, value: +v.exp_sharpe_ratio.toFixed(3) }));
+    return [...views].sort((a, b) => a.ticker.localeCompare(b.ticker))
+      .map(v => ({ name: v.ticker, value: +v.exp_sharpe_ratio.toFixed(3) }));
   }
 
   drawdownChart(views: TickerView[]): ChartDataPoint[] {
-    return views.map(v => ({ name: v.ticker, value: +(Math.abs(v.exp_max_drawdown) * 100).toFixed(2) }));
+    return [...views].sort((a, b) => a.ticker.localeCompare(b.ticker))
+      .map(v => ({ name: v.ticker, value: +(Math.abs(v.exp_max_drawdown) * 100).toFixed(2) }));
   }
 
   alphaChart(views: TickerView[]): ChartDataPoint[] {
-    // Alpha de exposición vs Buy & Hold
-    return views.map(v => ({
-      name: v.ticker,
-      value: +((v.exp_cumulative_return - v.buy_hold_return) * 100).toFixed(2),
-    }));
+    return [...views].sort((a, b) => a.ticker.localeCompare(b.ticker))
+      .map(v => ({
+        name: v.ticker,
+        value: +((v.exp_cumulative_return - v.buy_hold_return) * 100).toFixed(2),
+      }));
   }
 
   avgExposureChart(views: TickerView[]): ChartDataPoint[] {
-    return views.map(v => ({ name: v.ticker, value: +v.avg_exposure.toFixed(1) }));
+    return [...views].sort((a, b) => a.ticker.localeCompare(b.ticker))
+      .map(v => ({ name: v.ticker, value: +v.avg_exposure.toFixed(1) }));
   }
 
   probUpChart(views: TickerView[]): ChartDataPoint[] {

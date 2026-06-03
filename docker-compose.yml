@@ -66,10 +66,14 @@ services:
       AWS_REGION: ${AWS_REGION:-eu-north-1}
       DATALAKE_BUCKET: ${DATALAKE_BUCKET:-tfm-unir-datalake}
       DASHBOARD_API_KEY: ${DASHBOARD_API_KEY:-dev-local-key}
+      MONGODB_URI: ${MONGODB_URI:-}
+      MONGODB_DB: ${MONGODB_DB:-tfm}
       PRESIGN_TTL_SEC: "900"
       # Credenciales AWS para leer S3 (del fichero .env)
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    env_file:
+      - .env
     ports:
       - "8000:8000"
     healthcheck:

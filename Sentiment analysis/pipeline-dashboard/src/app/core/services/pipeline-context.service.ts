@@ -2,6 +2,10 @@ import { Injectable, signal } from '@angular/core';
 import { Observable, Subject, map, tap } from 'rxjs';
 import { ApiService } from './api.service';
 import { PipelineRun } from '../models/pipeline-run.model';
+import {
+  formatPipelineMetaSubtitle,
+  formatPipelineRangeLabel,
+} from '../utils/pipeline-display.util';
 
 const STORAGE_KEY = 'tfm-selected-pipeline-id';
 
@@ -23,7 +27,7 @@ export class PipelineContextService {
       map(resp =>
         (resp.pipelines ?? []).map(p => ({
           id: p.id,
-          label: p.label,
+          label: formatPipelineRangeLabel(p.start_date, p.end_date),
           startDate: p.start_date,
           endDate: p.end_date,
           reportCount: p.report_count ?? 0,
@@ -66,5 +70,17 @@ export class PipelineContextService {
     const p = this.selectedPipeline();
     if (!p) return {};
     return { start: p.startDate, end: p.endDate };
+  }
+
+  /** Etiqueta legible del rango (selector y cabeceras de vista). */
+  rangeLabel(run: PipelineRun | null = this.selectedPipeline()): string {
+    if (!run) return '';
+    return formatPipelineRangeLabel(run.startDate, run.endDate);
+  }
+
+  /** Subtítulo bajo el selector (días hábiles y capital). */
+  metaSubtitle(run: PipelineRun | null = this.selectedPipeline()): string {
+    if (!run) return '';
+    return formatPipelineMetaSubtitle(run.reportCount, run.initialCapital);
   }
 }

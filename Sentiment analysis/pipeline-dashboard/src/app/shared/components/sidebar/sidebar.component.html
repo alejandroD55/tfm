@@ -29,12 +29,12 @@
         matTooltip="Cada ejecución usa capital inicial independiente (10.000 €)"
         matTooltipPosition="right">
         @for (p of pipelineCtx.pipelines(); track p.id) {
-          <option [value]="p.id">{{ p.label }}</option>
+          <option [value]="p.id">{{ pipelineCtx.rangeLabel(p) }}</option>
         }
       </select>
       @if (pipelineCtx.selectedPipeline(); as p) {
         <div class="sb-pipeline-meta">
-          {{ p.reportCount }} días · {{ p.initialCapital | number:'1.0-0' }} € iniciales
+          {{ pipelineCtx.metaSubtitle(p) }}
         </div>
       }
     </div>

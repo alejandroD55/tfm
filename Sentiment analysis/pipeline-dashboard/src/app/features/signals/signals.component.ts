@@ -17,7 +17,7 @@ import { PipelineContextService } from '../../core/services/pipeline-context.ser
 import { TraceService } from '../../core/services/trace.service';
 import {
   ApiService, NewsDetailResponse, NewsArticleDetail, MacroContext, MacroArticle,
-  OhlcvPoint, TickerPerformanceResponse, FeatureSnapshot, InferenceModelId,
+  TickerPerformanceResponse, FeatureSnapshot, InferenceModelId,
 } from '../../core/services/api.service';
 import {
   TickerView, ReportDateEntry, DailyReport,
@@ -84,10 +84,10 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
   selectedModelId: InferenceModelId = 'bayesian_v1.2';
   hasTraceForDate = false;
 
-  // ── OHLCV Week chart ──────────────────────────────────────────────────────
-  ohlcvWeekCache   = new Map<string, OhlcvPoint[]>();
-  ohlcvWeekLoading = new Set<string>();
-  weekChartOptionsCache = new Map<string, Highcharts.Options>();
+  // ── Stage evolution chart (inline en filas expandibles) ─────────────────
+  inlineChartCache = new Map<string, Highcharts.Options>();
+  inlineChartUpdates: Record<string, boolean> = {};
+  inlineChartLoading = new Set<string>();
 
   // ── Highcharts performance chart ──────────────────────────────────────────
   performanceTicker = '';
@@ -159,9 +159,9 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
   onDateChange(date: string) {
     this.loading = true;
     this.tickerTraceCache.clear();
-    this.ohlcvWeekCache.clear();
-    this.ohlcvWeekLoading.clear();
-    this.weekChartOptionsCache.clear();
+    this.inlineChartCache.clear();
+    this.inlineChartUpdates = {};
+    this.inlineChartLoading.clear();
     this.performanceCache.clear();
     this.performanceChartOptions = {};
     this.performanceError = '';
@@ -278,7 +278,7 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     });
   }
 
-  private buildPerformanceChartOptions(resp: TickerPerformanceResponse): Highcharts.Options {
+  private buildPerformanceChartOptions(resp: TickerPerformanceResponse, height = 540): Highcharts.Options {
     const toTs = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
     const points = resp.points;
     const targetTs = toTs(resp.target_date);
@@ -325,7 +325,7 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
 
     return {
       chart: {
-        height: 540,
+        height,
         backgroundColor: 'transparent',
         zooming: { type: 'x' },
       },
@@ -333,16 +333,17 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
       credits: { enabled: false },
       rangeSelector: {
         selected: 2,
-        inputEnabled: true,
-        buttons: [
+        inputEnabled: height >= 500,
+        enabled: height >= 500,
+        buttons: height >= 500 ? [
           { type: 'month', count: 1, text: '1M' },
           { type: 'month', count: 3, text: '3M' },
           { type: 'month', count: 6, text: '6M' },
           { type: 'all', text: 'Todo' },
-        ],
+        ] : [],
       },
-      navigator: { enabled: true },
-      scrollbar: { enabled: true },
+      navigator: { enabled: height >= 500 },
+      scrollbar: { enabled: height >= 500 },
       legend: { enabled: true },
       xAxis: {
         type: 'datetime',
@@ -427,7 +428,7 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
       this.expandedRows.add(ticker);
       this.loadTickerTrace(ticker);
       this.loadFeatureSnapshot(ticker);
-      this.loadOhlcvWeek(ticker);
+      this.loadInlinePerformanceChart(ticker);
     }
   }
 
@@ -456,137 +457,60 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     return c != null ? Math.round(c * 1000) / 10 : null;
   }
 
-  loadOhlcvWeek(ticker: string) {
-    if (this.ohlcvWeekCache.has(ticker) || this.ohlcvWeekLoading.has(ticker)) return;
-    this.ohlcvWeekLoading.add(ticker);
-    this.apiSvc.getOhlcvMonth(ticker, this.selectedDate).pipe(
+  loadInlinePerformanceChart(ticker: string) {
+    if (this.inlineChartCache.has(ticker) || this.inlineChartLoading.has(ticker)) return;
+    this.inlineChartLoading.add(ticker);
+    const key = `${this.selectedDate}:${ticker}`;
+    const cached = this.performanceCache.get(key);
+    if (cached) {
+      this.inlineChartCache.set(ticker, this.buildPerformanceChartOptions(cached, 380));
+      this.inlineChartUpdates[ticker] = true;
+      this.inlineChartLoading.delete(ticker);
+      return;
+    }
+    this.apiSvc.getTickerPerformance(ticker, this.selectedDate, 365).pipe(
       catchError(() => of(null))
     ).subscribe(resp => {
-      this.ohlcvWeekLoading.delete(ticker);
-      this.ohlcvWeekCache.set(ticker, resp?.points ?? []);
+      this.inlineChartLoading.delete(ticker);
+      if (!resp) return;
+      this.performanceCache.set(key, resp);
+      this.inlineChartCache.set(ticker, this.buildPerformanceChartOptions(resp, 380));
+      this.inlineChartUpdates[ticker] = true;
     });
   }
 
-  getOhlcvPoints(ticker: string): OhlcvPoint[] {
-    return this.ohlcvWeekCache.get(ticker) ?? [];
+  getInlineChartOptions(ticker: string): Highcharts.Options {
+    return this.inlineChartCache.get(ticker) ?? {};
   }
 
-  isOhlcvLoading(ticker: string): boolean {
-    return this.ohlcvWeekLoading.has(ticker);
+  isInlineChartLoading(ticker: string): boolean {
+    return this.inlineChartLoading.has(ticker);
   }
 
-  hasWeekChartData(ticker: string): boolean {
-    return (this.ohlcvWeekCache.get(ticker)?.length ?? 0) > 0;
+  hasInlineChart(ticker: string): boolean {
+    const opts = this.inlineChartCache.get(ticker);
+    return !!(opts?.series && (opts.series as any[]).length);
   }
 
-  getWeekChartOptions(ticker: string): Highcharts.Options {
-    const cached = this.weekChartOptionsCache.get(ticker);
-    if (cached) return cached;
-    const opts = this.buildWeekChartOptions(ticker);
-    if (opts.series && (opts.series as any[]).length) {
-      this.weekChartOptionsCache.set(ticker, opts);
-    }
-    return opts;
+  /** Color de gradiente para Confianza Alcista: rojo (baja) → verde (alta) */
+  probGradientColor(prob: number): string {
+    const t = Math.max(0, Math.min(1, prob));
+    const r = Math.round(220 - t * 180);
+    const g = Math.round(50 + t * 170);
+    const b = Math.round(60 - t * 20);
+    return `rgb(${r}, ${g}, ${b})`;
   }
 
-  private buildWeekChartOptions(ticker: string): Highcharts.Options {
-    const pts = this.ohlcvWeekCache.get(ticker) ?? [];
-    if (pts.length === 0) return {};
-
-    const toTs = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
-    const targetTs = toTs(this.selectedDate);
-
-    const data = pts.map(p => {
-      const isTarget = p.date === this.selectedDate;
-      return {
-        x: toTs(p.date),
-        y: p.close,
-        marker: isTarget
-          ? { enabled: true, radius: 6, fillColor: '#2563eb', lineColor: '#ffffff', lineWidth: 2 }
-          : { enabled: true, radius: 3, fillColor: '#ffffff', lineColor: '#2563eb', lineWidth: 1.5 },
-      };
-    });
-
-    return {
-      chart: {
-        type: 'area',
-        height: 280,
-        backgroundColor: 'transparent',
-        spacing: [16, 16, 12, 8],
-        style: { fontFamily: 'inherit' },
-      },
-      title: { text: undefined },
-      credits: { enabled: false },
-      legend: { enabled: false },
-      rangeSelector: { enabled: false, inputEnabled: false, buttonTheme: { visibility: 'hidden' }, labelStyle: { visibility: 'hidden' } } as any,
-      navigator: { enabled: false },
-      scrollbar: { enabled: false },
-      xAxis: {
-        type: 'datetime',
-        tickPixelInterval: 90,
-        lineColor: 'rgba(148,163,184,.3)',
-        tickColor: 'rgba(148,163,184,.3)',
-        labels: {
-          style: { fontSize: '11px', color: '#94a3b8' },
-          format: '{value:%d %b}',
-        },
-        plotLines: [{
-          value: targetTs,
-          color: '#2563eb',
-          width: 1.5,
-          dashStyle: 'Dash',
-          zIndex: 5,
-          label: {
-            text: `Día analizado`,
-            rotation: 0,
-            y: 14,
-            x: 6,
-            style: { color: '#2563eb', fontWeight: '600', fontSize: '10px' },
-          },
-        }],
-      },
-      yAxis: {
-        title: { text: undefined },
-        gridLineColor: 'rgba(148,163,184,.18)',
-        labels: {
-          style: { fontSize: '11px', color: '#94a3b8' },
-          formatter: function () { return '$' + (this.value as number).toFixed(2); },
-        },
-      },
-      tooltip: {
-        backgroundColor: 'rgba(15,23,42,.92)',
-        borderWidth: 0,
-        borderRadius: 6,
-        shadow: false,
-        style: { color: '#f8fafc', fontSize: '12px' },
-        headerFormat: '<span style="font-size:10px;color:#94a3b8">{point.key}</span><br/>',
-        pointFormat: '<b style="color:#60a5fa">${point.y:.2f}</b>',
-        xDateFormat: '%A, %d %b %Y',
-        useHTML: true,
-      },
-      plotOptions: {
-        area: {
-          lineWidth: 2.2,
-          lineColor: '#2563eb',
-          color: '#2563eb',
-          fillColor: {
-            linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
-            stops: [
-              [0, 'rgba(37,99,235,0.28)'],
-              [1, 'rgba(37,99,235,0)'],
-            ],
-          },
-          states: { hover: { lineWidth: 2.6 } },
-          marker: { symbol: 'circle' },
-          dataGrouping: { enabled: false } as any,
-        },
-      },
-      series: [{
-        type: 'area',
-        name: 'Precio cierre',
-        data,
-      }],
+  /** Etiqueta corta para badge de recomendación */
+  expRecBadgeLabel(rec: string): string {
+    const m: Record<string, string> = {
+      INCREASE_STRONG: '↑↑ Aumentar fuerte',
+      INCREASE_MILD:   '↑ Aumentar',
+      MAINTAIN:        '→ Mantener',
+      REDUCE_MILD:     '↓ Reducir',
+      REDUCE_STRONG:   '↓↓ Reducir fuerte',
     };
+    return m[rec] ?? rec.replace(/_/g, ' ');
   }
 
   loadTickerTrace(ticker: string) {

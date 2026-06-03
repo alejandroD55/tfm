@@ -63,7 +63,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
 
   get pipelineLabel(): string {
-    return this.pipelineCtx.selectedPipeline()?.label ?? '';
+    return this.pipelineCtx.rangeLabel();
   }
 
   get initialCapital(): number {
