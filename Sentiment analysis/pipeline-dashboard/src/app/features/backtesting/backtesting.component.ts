@@ -12,6 +12,7 @@ import { NgxChartsModule } from '@swimlane/ngx-charts';
 import Highcharts from 'highcharts/highstock';
 import { HighchartsChartModule } from 'highcharts-angular';
 import { forkJoin, of, catchError, Subject, takeUntil } from 'rxjs';
+import { ApiService, TickerPerformanceResponse } from '../../core/services/api.service';
 import { ReportService } from '../../core/services/report.service';
 import { PipelineContextService } from '../../core/services/pipeline-context.service';
 import { DailyReport, TickerView, ReportDateEntry } from '../../core/models/report.model';
@@ -51,6 +52,7 @@ interface SignalCyclePoint {
 export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
   private reportSvc = inject(ReportService);
   private pipelineCtx = inject(PipelineContextService);
+  private apiSvc = inject(ApiService);
   private destroy$ = new Subject<void>();
 
   @ViewChild(MatSort) sort!: MatSort;
@@ -106,6 +108,16 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
   avgPortfolioExposure = 0;
   avgPortfolioCash = 0;
   selectedCapitalTicker = '';
+  /** Histórico global: vacío = media cartera; ticker = serie individual */
+  historyTickerFilter = '';
+  /** Paneles expandibles en Detalle Financiero por Activo */
+  expandedAssets = new Set<string>();
+  assetPerformanceCache = new Map<string, TickerPerformanceResponse>();
+  assetPerformanceOptions: Record<string, Highcharts.Options> = {};
+  assetPerformanceUpdates: Record<string, boolean> = {};
+  assetPerformanceLoading = new Set<string>();
+  assetMiniChartOptions: Record<string, Highcharts.Options> = {};
+  assetMiniChartUpdates: Record<string, boolean> = {};
 
   /** Tooltips informativos por gráfico */
   chartTooltips: Record<string, string> = {
@@ -159,6 +171,12 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
 
   private loadPipelineData() {
     this.loading = true;
+    this.assetPerformanceCache.clear();
+    this.assetPerformanceOptions = {};
+    this.assetPerformanceUpdates = {};
+    this.assetMiniChartOptions = {};
+    this.assetMiniChartUpdates = {};
+    this.expandedAssets.clear();
     this.reportSvc.listAvailableDates().subscribe({
       next: (dates) => {
         this.loadBacktestingHistory(dates);
@@ -216,7 +234,9 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
     this.historyLoading = true;
     this.historyError = '';
 
-    const sortedDates = [...dates].sort((a, b) => a.date.localeCompare(b.date));
+    const sortedDates = [...dates]
+      .filter(d => this.inPipelineRange(d.date))
+      .sort((a, b) => a.date.localeCompare(b.date));
     forkJoin(
       sortedDates.map(d =>
         this.reportSvc.loadReport(d.date).pipe(catchError(() => of(null)))
@@ -262,6 +282,14 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
       this.historyLoading = false;
       this.refreshAllHistoryCharts();
       this.refreshExposureChart();
+      for (const ticker of this.expandedAssets) {
+        this.refreshAssetMiniCharts(ticker);
+        const cached = this.assetPerformanceCache.get(ticker);
+        if (cached) {
+          this.assetPerformanceOptions[ticker] = this.buildAssetPerformanceOptions(cached, 300);
+          this.assetPerformanceUpdates[ticker] = true;
+        }
+      }
     }, () => {
       this.historyLoading = false;
       this.historyError = 'No se pudo cargar la evolución histórica del backtesting.';
@@ -269,7 +297,8 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   private refreshAllHistoryCharts() {
-    if (!this.historyRows.length) {
+    const scopedRows = this.pipelineScopedHistoryRows();
+    if (!scopedRows.length) {
       for (const metric of this.historyMetricOptions) {
         this.historyChartOptionsByMetric[metric.value] = {};
         this.historyChartUpdates[metric.value] = true;
@@ -277,17 +306,29 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
       return;
     }
 
-    const byDate = new Map<string, BacktestHistoryPoint[]>();
-    for (const row of this.historyRows) {
-      if (!byDate.has(row.date)) byDate.set(row.date, []);
-      byDate.get(row.date)!.push(row);
-    }
-    const toTs = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
+    const tickerFilter = this.historyTickerFilter;
     for (const metric of this.historyMetricOptions) {
       const valueOf = (row: BacktestHistoryPoint) => row[metric.value];
-      const data = [...byDate.entries()]
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([date, rows]) => [toTs(date), rows.reduce((sum, row) => sum + valueOf(row), 0) / rows.length]);
+      let data: [number, number][];
+      let seriesName: string;
+
+      if (tickerFilter) {
+        const rows = scopedRows
+          .filter(r => r.ticker === tickerFilter)
+          .sort((a, b) => a.date.localeCompare(b.date));
+        data = rows.map(r => [this.toChartTs(r.date), valueOf(r)]);
+        seriesName = `${metric.label} · ${tickerFilter}`;
+      } else {
+        const byDate = new Map<string, BacktestHistoryPoint[]>();
+        for (const row of scopedRows) {
+          if (!byDate.has(row.date)) byDate.set(row.date, []);
+          byDate.get(row.date)!.push(row);
+        }
+        data = [...byDate.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([date, rows]) => [this.toChartTs(date), rows.reduce((sum, row) => sum + valueOf(row), 0) / rows.length]);
+        seriesName = `${metric.label} (media cartera)`;
+      }
 
       const color = metric.value === 'alpha'
         ? '#15803d'
@@ -311,7 +352,7 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
         navigator: { enabled: false },
         scrollbar: { enabled: false },
         legend: { enabled: false },
-        xAxis: { type: 'datetime' },
+        xAxis: this.pipelineXAxis(),
         yAxis: {
           title: { text: metric.label },
           labels: {
@@ -337,7 +378,7 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
         },
         series: [{
           type: 'line',
-          name: `${metric.label} (media cartera)`,
+          name: seriesName,
           data,
           color,
           lineWidth: 2.2,
@@ -349,14 +390,14 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
 
   /** Gráfico de progresión de capital desplegado (% exposición) por ticker a lo largo del backtesting */
   private refreshExposureChart() {
-    if (!this.historyRows.length) {
+    const scopedRows = this.pipelineScopedHistoryRows();
+    if (!scopedRows.length) {
       this.exposureChartOptions = {};
       this.exposureChartUpdate = true;
       return;
     }
 
-    const toTs = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
-    const tickers = [...new Set(this.historyRows.map(r => r.ticker))].sort();
+    const tickers = [...new Set(scopedRows.map(r => r.ticker))].sort();
 
     const colorMap: Record<string, string> = {
       SPY: '#1d4ed8', QQQ: '#7c3aed', GLD: '#d97706',
@@ -365,13 +406,13 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
     const defaultColors = ['#1d4ed8','#7c3aed','#d97706','#16a34a','#b91c1c','#0891b2'];
 
     const series = tickers.map((ticker, idx) => {
-      const rows = this.historyRows
+      const rows = scopedRows
         .filter(r => r.ticker === ticker)
         .sort((a, b) => a.date.localeCompare(b.date));
       return {
         type: 'line' as const,
         name: ticker,
-        data: rows.map(r => [toTs(r.date), +(r.avg_exposure).toFixed(1)]),
+        data: rows.map(r => [this.toChartTs(r.date), +(r.avg_exposure).toFixed(1)]),
         color: colorMap[ticker] ?? defaultColors[idx % defaultColors.length],
         lineWidth: 2.5,
         marker: { enabled: false },
@@ -390,7 +431,7 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
       navigator: { enabled: false },
       scrollbar: { enabled: false },
       legend: { enabled: true, align: 'right', verticalAlign: 'top' },
-      xAxis: { type: 'datetime' },
+      xAxis: this.pipelineXAxis(),
       yAxis: {
         title: { text: '% Capital desplegado' },
         min: 0, max: 100,
@@ -412,21 +453,21 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   private refreshCyclesChart() {
-    if (!this.signalCycles.length) {
+    const scopedCycles = this.pipelineScopedCycles();
+    if (!scopedCycles.length) {
       this.cyclesChartOptions = {};
       this.cyclesChartUpdate = true;
       return;
     }
 
-    const toTs = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
-    const tickers = this.cycleTickers;
+    const tickers = [...new Set(scopedCycles.map(r => r.ticker))].sort();
     const yIndex = new Map(tickers.map((t, i) => [t, i]));
-    const buyData = this.signalCycles
+    const buyData = scopedCycles
       .filter(point => point.signal === 'BUY')
-      .map(point => ({ x: toTs(point.date), y: yIndex.get(point.ticker) ?? 0, name: point.ticker }));
-    const sellData = this.signalCycles
+      .map(point => ({ x: this.toChartTs(point.date), y: yIndex.get(point.ticker) ?? 0, name: point.ticker }));
+    const sellData = scopedCycles
       .filter(point => point.signal === 'SELL')
-      .map(point => ({ x: toTs(point.date), y: yIndex.get(point.ticker) ?? 0, name: point.ticker }));
+      .map(point => ({ x: this.toChartTs(point.date), y: yIndex.get(point.ticker) ?? 0, name: point.ticker }));
 
     this.cyclesChartOptions = {
       chart: {
@@ -437,7 +478,7 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
       },
       title: { text: undefined },
       credits: { enabled: false },
-      xAxis: { type: 'datetime' },
+      xAxis: this.pipelineXAxis(),
       yAxis: {
         title: { text: 'Ticker' },
         categories: tickers,
@@ -499,6 +540,188 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
 
   getCapitalView(ticker: string): TickerView | undefined {
     return this.tickerViews.find(v => v.ticker === ticker);
+  }
+
+  onHistoryTickerChange() {
+    this.refreshAllHistoryCharts();
+  }
+
+  toggleAssetDetail(ticker: string) {
+    if (this.expandedAssets.has(ticker)) {
+      this.expandedAssets.delete(ticker);
+      return;
+    }
+    this.expandedAssets.add(ticker);
+    this.loadAssetPerformanceChart(ticker);
+    this.refreshAssetMiniCharts(ticker);
+  }
+
+  isAssetExpanded(ticker: string): boolean {
+    return this.expandedAssets.has(ticker);
+  }
+
+  bhFinalEquity(r: TickerView): number {
+    return Math.round(10_000 * (1 + r.buy_hold_return));
+  }
+
+  alphaEur(r: TickerView): number {
+    return Math.round(r.exp_final_equity - this.bhFinalEquity(r));
+  }
+
+  loadAssetPerformanceChart(ticker: string) {
+    if (!this.selectedDate || this.assetPerformanceCache.has(ticker)) {
+      const cached = this.assetPerformanceCache.get(ticker);
+      if (cached) {
+        this.assetPerformanceOptions[ticker] = this.buildAssetPerformanceOptions(cached, 300);
+        this.assetPerformanceUpdates[ticker] = true;
+      }
+      return;
+    }
+    if (this.assetPerformanceLoading.has(ticker)) return;
+    this.assetPerformanceLoading.add(ticker);
+    this.apiSvc.getTickerPerformance(ticker, this.selectedDate, this.pipelineDayLimit()).pipe(
+      catchError(() => of(null))
+    ).subscribe(resp => {
+      this.assetPerformanceLoading.delete(ticker);
+      if (!resp) return;
+      this.assetPerformanceCache.set(ticker, resp);
+      this.assetPerformanceOptions[ticker] = this.buildAssetPerformanceOptions(resp, 300);
+      this.assetPerformanceUpdates[ticker] = true;
+    });
+  }
+
+  /** Rango temporal configurado del pipeline activo (startDate → endDate). */
+  private pipelineBounds(): { start: string; end: string } | null {
+    const p = this.pipelineCtx.selectedPipeline();
+    if (!p) return null;
+    return { start: p.startDate, end: p.endDate };
+  }
+
+  private pipelineDayLimit(): number {
+    const bounds = this.pipelineBounds();
+    if (!bounds) return 365;
+    const startMs = new Date(`${bounds.start}T00:00:00Z`).getTime();
+    const endMs = new Date(`${bounds.end}T00:00:00Z`).getTime();
+    const days = Math.ceil((endMs - startMs) / 86_400_000) + 7;
+    return Math.max(30, Math.min(365, days));
+  }
+
+  private inPipelineRange(date: string): boolean {
+    const bounds = this.pipelineBounds();
+    if (!bounds) return true;
+    return date >= bounds.start && date <= bounds.end;
+  }
+
+  private toChartTs(date: string): number {
+    return new Date(`${date}T00:00:00Z`).getTime();
+  }
+
+  /** Eje X acotado al gap temporal del pipeline ejecutado. */
+  private pipelineXAxis(extra: Highcharts.XAxisOptions = {}): Highcharts.XAxisOptions {
+    const bounds = this.pipelineBounds();
+    return {
+      type: 'datetime',
+      ...(bounds ? { min: this.toChartTs(bounds.start), max: this.toChartTs(bounds.end) } : {}),
+      ...extra,
+    };
+  }
+
+  private pipelineScopedHistoryRows(): BacktestHistoryPoint[] {
+    return this.historyRows.filter(r => this.inPipelineRange(r.date));
+  }
+
+  private pipelineScopedCycles(): SignalCyclePoint[] {
+    return this.signalCycles.filter(r => this.inPipelineRange(r.date));
+  }
+
+  private buildAssetPerformanceOptions(resp: TickerPerformanceResponse, height: number): Highcharts.Options {
+    const bounds = this.pipelineBounds();
+    const points = resp.points.filter(p => this.inPipelineRange(p.date));
+    const anchor = bounds
+      ? (points.find(p => p.date >= bounds.start) ?? points[0])
+      : points[0];
+    const baseStrategy = anchor?.strategy_return ?? 0;
+    const baseBuyHold = anchor?.buy_hold_return ?? 0;
+    // API devuelve % acumulado desde el primer día del histórico pedido; rebaseamos al inicio del pipeline
+    const strategy = points.map(p => [this.toChartTs(p.date), +(p.strategy_return - baseStrategy).toFixed(4)]);
+    const buyHold = points.map(p => [this.toChartTs(p.date), +(p.buy_hold_return - baseBuyHold).toFixed(4)]);
+    const exposure = this.pipelineScopedHistoryRows()
+      .filter(r => r.ticker === resp.ticker)
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map(r => [this.toChartTs(r.date), r.avg_exposure]);
+
+    return {
+      chart: { height, backgroundColor: 'transparent', zooming: { type: 'x' } },
+      title: { text: undefined },
+      credits: { enabled: false },
+      rangeSelector: { enabled: false },
+      navigator: { enabled: false },
+      scrollbar: { enabled: false },
+      legend: { enabled: true },
+      xAxis: this.pipelineXAxis(),
+      yAxis: [{
+        title: { text: 'Rentabilidad acumulada (%)' },
+        height: exposure.length ? '58%' : '100%',
+        plotLines: [{ value: 0, color: '#94a3b8', width: 1 }],
+      }, ...(exposure.length ? [{
+        title: { text: 'Capital desplegado (%)' },
+        top: '62%',
+        height: '38%',
+        min: 0,
+        max: 100,
+      }] : [])],
+      tooltip: { shared: true, valueDecimals: 2, valueSuffix: '%' },
+      plotOptions: { series: { dataGrouping: { enabled: false }, marker: { enabled: false } } as any },
+      series: [
+        { type: 'line', name: 'Estrategia (exposición)', data: strategy, color: '#2563eb', lineWidth: 2.2, yAxis: 0 },
+        { type: 'line', name: 'Buy & Hold', data: buyHold, color: '#94a3b8', lineWidth: 1.6, yAxis: 0 },
+        ...(exposure.length ? [{ type: 'area', name: 'Capital desplegado', data: exposure, color: 'rgba(37,99,235,.25)', fillOpacity: 0.3, lineWidth: 1.5, yAxis: 1 }] : []),
+      ] as any,
+    };
+  }
+
+  private refreshAssetMiniCharts(ticker: string) {
+    const rows = this.pipelineScopedHistoryRows()
+      .filter(r => r.ticker === ticker)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    if (!rows.length) return;
+
+    const strategyEquity = rows.map(r => [this.toChartTs(r.date), r.final_equity]);
+    const buyHoldEquity = rows.map(r => [this.toChartTs(r.date), Math.round(10_000 * (1 + r.buy_hold / 100))]);
+
+    this.assetMiniChartOptions[ticker] = {
+      chart: { height: 240, backgroundColor: 'transparent', zooming: { type: 'x' } },
+      title: { text: undefined },
+      credits: { enabled: false },
+      legend: { enabled: true },
+      xAxis: this.pipelineXAxis(),
+      yAxis: {
+        title: { text: 'Capital (€)' },
+        plotLines: [{
+          value: 10_000,
+          color: '#94a3b8',
+          width: 1,
+          dashStyle: 'Dash',
+          label: { text: 'Capital inicial 10.000 €', style: { color: '#64748b', fontSize: '10px' } },
+        }],
+        labels: {
+          formatter: function () {
+            return `€${Highcharts.numberFormat(Number(this.value), 0)}`;
+          },
+        },
+      },
+      tooltip: {
+        shared: true,
+        valueDecimals: 0,
+        valuePrefix: '€',
+      },
+      plotOptions: { series: { marker: { enabled: false }, lineWidth: 2.2 } as any },
+      series: [
+        { type: 'line', name: 'Capital (estrategia)', data: strategyEquity, color: '#2563eb' },
+        { type: 'line', name: 'Capital (B&H)', data: buyHoldEquity, color: '#94a3b8', lineWidth: 1.6 },
+      ] as any,
+    };
+    this.assetMiniChartUpdates[ticker] = true;
   }
 
   qualityLabel(s: number) {

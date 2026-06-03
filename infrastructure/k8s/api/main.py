@@ -2210,13 +2210,21 @@ def mongo_news_detail(date: str, ticker: str, x_api_key: str = Header(default=""
         bedrock_summaries = filtered_doc.get("filtered_headlines", [])
         daily_context     = filtered_doc.get("daily_context", "")
 
-    # Enriquecer cada artículo con su resumen Bedrock si existe
-    # La colección news almacena el headline original; news_filtered los resúmenes en orden
-    # Intentamos mapear por índice cuando las listas tienen el mismo tamaño,
-    # o dejamos el campo vacío si no hay correspondencia
+    # Mapa original_headline → resumen (news_filtered.filtered_articles)
+    summary_by_original: dict = {}
+    for item in (filtered_doc or {}).get("filtered_articles") or []:
+        if isinstance(item, dict):
+            orig = (item.get("original_headline") or item.get("original") or "").strip().lower()
+            summ = item.get("summary") or item.get("bedrock_summary") or ""
+            if orig and summ:
+                summary_by_original[orig] = summ
+
     articles_out = []
     for i, art in enumerate(raw_articles):
-        bedrock_summary = bedrock_summaries[i] if i < len(bedrock_summaries) else ""
+        hl = (art.get("headline") or "").strip()
+        bedrock_summary = summary_by_original.get(hl.lower(), "")
+        if not bedrock_summary and len(bedrock_summaries) == len(raw_articles):
+            bedrock_summary = bedrock_summaries[i]
         articles_out.append({
             "headline":       art.get("headline", ""),
             "bedrock_summary": bedrock_summary,

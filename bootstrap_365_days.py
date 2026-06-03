@@ -91,6 +91,14 @@ def get_args():
         action="store_true",
         help="Activa logs INFO (por defecto solo WARNING/ERROR + barra de progreso).",
     )
+    parser.add_argument(
+        "--decisions-only",
+        action="store_true",
+        help=(
+            "Re-ejecuta inferencia/exposición/señales/reportes sin ingesta de noticias "
+            "(lee sentiment_scores y macro desde PG). Equivalente a scripts/recompute_decisions.py."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -568,31 +576,123 @@ def run_finbert_macro_local(articles: list) -> dict:
 
 
 def aggregate_sentiment_local(samples: list) -> Tuple[str, float, dict]:
-    if not samples:
-        return "neutral", 0.0, {}
-    dist = {"bullish": 0, "bearish": 0, "neutral": 0}
-    for s in samples:
-        dist[s["sentiment"]] += 1
-    total = len(samples)
-    distribution = {
-        k: {"count": v, "pct": round(v / total * 100, 1)} for k, v in dist.items()
-    }
-    dominant_sentiment = max(dist, key=dist.get) if dist else "neutral"
+    from sentiment_scoring import aggregate_sentiment_samples
+    return aggregate_sentiment_samples(samples)
 
-    best_conf = 0.0
-    for s in samples:
-        if s["sentiment"] == dominant_sentiment and s["confidence"] > best_conf:
-            best_conf = s["confidence"]
 
-    detail = {
-        "total_headlines": total,
-        "aggregation_method": "max_confidence",
-        "distribution": distribution,
-        "dominant": {"sentiment": dominant_sentiment, "confidence": best_conf},
-        "headlines_sample": samples,
-        "limitation": "Se utiliza Voto Mayoritario de todos los titulares del día.",
+def fetch_sentiment_samples_from_pg(
+    cursor, date_str: str, ticker: str
+) -> Tuple[List[Dict], int]:
+    """Lee sentiment_scores de PG y devuelve samples para aggregate_sentiment_local."""
+    cursor.execute(
+        """
+        SELECT sentiment, confidence, headline
+        FROM sentiment_scores
+        WHERE batch_date = %s AND ticker = %s
+        ORDER BY confidence DESC
+        """,
+        (date_str, ticker),
+    )
+    rows = cursor.fetchall() or []
+    samples = [
+        {
+            "sentiment": row[0],
+            "confidence": float(row[1]) if row[1] is not None else 0.5,
+            "headline": row[2] or "",
+        }
+        for row in rows
+    ]
+    from news_relevance import filter_sentiment_samples
+
+    samples, n_skipped = filter_sentiment_samples(ticker, samples)
+    if n_skipped:
+        _news_debug(
+            f"[news-relevance] {date_str} {ticker}: "
+            f"descartadas {n_skipped}/{len(rows)} filas PG sin mención del activo"
+        )
+    return samples, len(samples)
+
+
+def load_macro_for_day(
+    conn,
+    date_str: str,
+    vix: Optional[float] = None,
+) -> Dict:
+    """
+    Macro del día desde PG (market_regime_state + macro_sentiment_scores).
+    Si falta en PG, fallback a Mongo macro_context; si sigue vacío, deriva risk_regime del VIX.
+    """
+    macro_sentiment = "neutral"
+    macro_score = 0.0
+    macro_adj = 0.0
+    risk_regime = "NEUTRAL"
+    n_articles = 0
+    pg_hit = False
+
+    if conn:
+        try:
+            with conn.cursor() as c:
+                c.execute(
+                    """
+                    SELECT risk_regime, macro_adjustment, vix
+                    FROM market_regime_state WHERE batch_date = %s
+                    """,
+                    (date_str,),
+                )
+                row_regime = c.fetchone()
+                c.execute(
+                    """
+                    SELECT macro_sentiment, score, n_articles
+                    FROM macro_sentiment_scores WHERE batch_date = %s
+                    """,
+                    (date_str,),
+                )
+                row_sent = c.fetchone()
+            if row_regime or row_sent:
+                pg_hit = True
+                if row_regime:
+                    risk_regime = row_regime[0] or risk_regime
+                    macro_adj = float(row_regime[1] if row_regime[1] is not None else 0.0)
+                    if row_regime[2] is not None:
+                        vix = float(row_regime[2])
+                if row_sent:
+                    macro_sentiment = row_sent[0] or macro_sentiment
+                    macro_score = float(row_sent[1] if row_sent[1] is not None else 0.0)
+                    n_articles = int(row_sent[2] if row_sent[2] is not None else 0)
+        except Exception as exc:
+            logger.warning(f"load_macro_for_day PG {date_str}: {exc}")
+
+    if not pg_hit:
+        doc = read_macro_context(date_str) or {}
+        if doc:
+            macro_sentiment = doc.get("macro_sentiment", macro_sentiment)
+            risk_regime = doc.get("risk_regime", risk_regime)
+            macro_adj = float(doc.get("macro_adjustment", macro_adj))
+            detail = doc.get("detail") or {}
+            n_articles = int(detail.get("n_articles", n_articles))
+            if detail.get("vix") is not None:
+                vix = float(detail["vix"])
+
+    if not pg_hit and vix is not None:
+        risk_regime = (
+            "RISK_OFF"
+            if vix > 25
+            else ("RISK_ON" if vix < 18 else "NEUTRAL")
+        )
+        macro_adj = (
+            -0.04
+            if risk_regime == "RISK_OFF"
+            else (0.04 if risk_regime == "RISK_ON" else 0.0)
+        )
+
+    return {
+        "macro_sentiment": macro_sentiment,
+        "score": macro_score,
+        "macro_adjustment": macro_adj,
+        "risk_regime": risk_regime,
+        "n_articles": n_articles,
+        "vix": vix,
     }
-    return dominant_sentiment, best_conf, detail
 
 
 def build_reasoning_local(evidence_states, prob_up, signal):
@@ -663,6 +763,101 @@ def get_db_connection():
         database=DB_CONFIG["database"],
         sslmode="prefer",
     )
+
+
+def ensure_exposure_recommendation_schema(conn) -> None:
+    """Aplica migración exposure_recommendation si la PG local está desactualizada."""
+    statements = [
+        """
+        ALTER TABLE trading_signals
+          ADD COLUMN IF NOT EXISTS exposure_recommendation VARCHAR(24)
+        """,
+        """
+        UPDATE trading_signals
+        SET exposure_recommendation = CASE
+          WHEN signal = 'BUY' THEN 'INCREASE_MILD'
+          WHEN signal = 'SELL' THEN 'REDUCE_MILD'
+          ELSE 'MAINTAIN'
+        END
+        WHERE exposure_recommendation IS NULL
+        """,
+        """
+        ALTER TABLE trading_signals
+          ALTER COLUMN exposure_recommendation SET NOT NULL
+        """,
+        """
+        ALTER TABLE trading_signals
+          DROP CONSTRAINT IF EXISTS trading_signals_exposure_recommendation_check
+        """,
+        """
+        ALTER TABLE trading_signals
+          ADD CONSTRAINT trading_signals_exposure_recommendation_check
+          CHECK (exposure_recommendation IN (
+            'INCREASE_STRONG','INCREASE_MILD','MAINTAIN','REDUCE_MILD','REDUCE_STRONG'
+          ))
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_signals_exposure_recommendation
+          ON trading_signals(exposure_recommendation)
+        """,
+        """
+        ALTER TABLE trading_signals ALTER COLUMN signal DROP NOT NULL
+        """,
+    ]
+    try:
+        with conn.cursor() as c:
+            for sql in statements:
+                c.execute(sql)
+            c.execute(
+                """
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = 'signal_outcomes'
+                """
+            )
+            if c.fetchone():
+                for sql in (
+                    """
+                    ALTER TABLE signal_outcomes
+                      ADD COLUMN IF NOT EXISTS exposure_recommendation VARCHAR(24)
+                    """,
+                    """
+                    UPDATE signal_outcomes
+                    SET exposure_recommendation = CASE
+                      WHEN signal = 'BUY' THEN 'INCREASE_MILD'
+                      WHEN signal = 'SELL' THEN 'REDUCE_MILD'
+                      ELSE 'MAINTAIN'
+                    END
+                    WHERE exposure_recommendation IS NULL
+                    """,
+                    """
+                    ALTER TABLE signal_outcomes
+                      ALTER COLUMN exposure_recommendation SET NOT NULL
+                    """,
+                    """
+                    ALTER TABLE signal_outcomes
+                      DROP CONSTRAINT IF EXISTS signal_outcomes_exposure_recommendation_check
+                    """,
+                    """
+                    ALTER TABLE signal_outcomes
+                      ADD CONSTRAINT signal_outcomes_exposure_recommendation_check
+                      CHECK (exposure_recommendation IN (
+                        'INCREASE_STRONG','INCREASE_MILD','MAINTAIN','REDUCE_MILD','REDUCE_STRONG'
+                      ))
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_so_exposure_recommendation
+                      ON signal_outcomes(exposure_recommendation)
+                    """,
+                    """
+                    ALTER TABLE signal_outcomes ALTER COLUMN signal DROP NOT NULL
+                    """,
+                ):
+                    c.execute(sql)
+        conn.commit()
+        logger.info("✅ Esquema trading_signals (exposure_recommendation) listo")
+    except Exception as exc:
+        conn.rollback()
+        logger.warning(f"DDL exposure_recommendation: {exc}")
 
 
 def pg_upsert_signal(conn, date_str, ticker, exposure_recommendation, signal, prob_up, prob_down):
@@ -1972,6 +2167,34 @@ def _calc_exposure_backtesting(signals_list: List[Dict]) -> Tuple[Dict, Dict]:
             [r for r in signals_list if r["ticker"] == ticker],
             key=lambda x: x["batch_date"],
         )
+        if len(ts) == 1:
+            exposure = float(ts[0].get("smoothed_exposure", 0.0))
+            regime = ts[0].get("market_regime", "NEUTRAL")
+            regime_days: Dict[str, int] = {
+                "BULL": 0,
+                "NEUTRAL": 0,
+                "HIGH_VOL": 0,
+                "BEAR": 0,
+            }
+            if regime in regime_days:
+                regime_days[regime] += 1
+            exp_metrics[ticker] = {
+                "cumulative_return": 0.0,
+                "sharpe_ratio": 0.0,
+                "max_drawdown": 0.0,
+                "final_equity": round(float(INITIAL_CAP), 2),
+            }
+            exp_diagnostics[ticker] = {
+                "avg_exposure": round(exposure, 4),
+                "min_exposure": round(exposure, 4),
+                "max_exposure": round(exposure, 4),
+                "avg_cash_pct": round(1.0 - exposure, 4),
+                "min_cash_pct": round(1.0 - exposure, 4),
+                "max_cash_pct": round(1.0 - exposure, 4),
+                "regime_distribution": regime_days,
+            }
+            continue
+
         if len(ts) < 2:
             continue
 
@@ -2158,6 +2381,18 @@ def get_close_price(ticker: str, date_str: str) -> Optional[float]:
         return None
 
 
+def _exposure_recommendation_from_signal(sig: dict) -> str:
+    rec = sig.get("exposure_recommendation")
+    if rec:
+        return rec
+    legacy = sig.get("signal")
+    if legacy == "BUY":
+        return "INCREASE_MILD"
+    if legacy == "SELL":
+        return "REDUCE_MILD"
+    return "MAINTAIN"
+
+
 def update_signal_outcomes_historical(conn, signals_list):
     logger.info("🔄 Procesando outcomes históricos (D0 Insert + D+1, D+3, D+5)...")
     cursor = conn.cursor()
@@ -2168,15 +2403,17 @@ def update_signal_outcomes_historical(conn, signals_list):
         d0_str = sig["batch_date"]
         d0 = pd.to_datetime(d0_str)
         p0 = sig["close_price"]
+        exposure_recommendation = _exposure_recommendation_from_signal(sig)
 
         cursor.execute(
             """
             INSERT INTO signal_outcomes 
-                (batch_date, ticker, run_id, signal, prob_up, prob_down,
+                (batch_date, ticker, run_id, exposure_recommendation, signal, prob_up, prob_down,
                  sentiment_state, rsi_state, trend_state, volatility_state, price_d0,
                  macro_sentiment, risk_regime, macro_adjustment) 
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (batch_date, ticker) DO UPDATE SET
+                exposure_recommendation = EXCLUDED.exposure_recommendation,
                 signal = EXCLUDED.signal, prob_up = EXCLUDED.prob_up, prob_down = EXCLUDED.prob_down,
                 sentiment_state = EXCLUDED.sentiment_state, rsi_state = EXCLUDED.rsi_state,
                 trend_state = EXCLUDED.trend_state, volatility_state = EXCLUDED.volatility_state,
@@ -2188,6 +2425,7 @@ def update_signal_outcomes_historical(conn, signals_list):
                 d0_str,
                 ticker,
                 sig["run_id"],
+                exposure_recommendation,
                 sig["signal"],
                 sig["prob_up"],
                 sig["prob_down"],
@@ -2472,6 +2710,7 @@ def _process_ticker_day(
     signal_history: List[str],       # copia del historial del ticker (no compartida)
     previous_exposure: float = 0.0,  # exposición suavizada del día anterior (arranca en 0%)
     vix: Optional[float] = None,     # VIX del día (para detect_market_regime)
+    decisions_only: bool = False,
 ) -> Optional[Dict]:
     """
     Procesa un ticker para un día concreto en un hilo independiente.
@@ -2535,125 +2774,169 @@ def _process_ticker_day(
             )
         thread_conn.commit()
 
-        # ── Ingesta multi-fuente ─────────────────────────────────────────────
-        finnhub_arts, finnhub_age = _get_ticker_articles_for_day(
-            news_all.get(ticker, {}),
-            date_str,
-            lookback_days=TICKER_NEWS_LOOKBACK_DAYS,
-        )
-        alphavantage_arts, alphavantage_age = _get_ticker_articles_for_day(
-            alphavantage_news.get(ticker, {}),
-            date_str,
-            lookback_days=TICKER_NEWS_LOOKBACK_DAYS,
-        )
-        newsapi_arts, newsapi_age = _get_ticker_articles_for_day(
-            newsapi_ticker_news.get(ticker, {}),
-            date_str,
-            lookback_days=TICKER_NEWS_LOOKBACK_DAYS,
-        )
-        yfinance_arts = fetch_yfinance_ticker_news(ticker, date_str)
-        articles = merge_ticker_articles(
-            finnhub_arts, alphavantage_arts, newsapi_arts, yfinance_arts
-        )
-
-        _news_debug(
-            f"[news-day] {date_str} {ticker}: "
-            f"Finnhub={len(finnhub_arts)} AlphaVantage={len(alphavantage_arts)} "
-            f"NewsAPI={len(newsapi_arts)} "
-            f"YFinance={len(yfinance_arts)} merged={len(articles)}"
-        )
-        if DEBUG_NEWS:
-            for source_name, age in (
-                ("Finnhub", finnhub_age),
-                ("AlphaVantage", alphavantage_age),
-                ("NewsAPI", newsapi_age),
-            ):
-                if age > 0:
-                    logger.info(
-                        f"[news-lookback] {date_str} {ticker} {source_name}: "
-                        f"usando articulos de D-{age}"
-                    )
-        if DEBUG_NEWS:
-            for source_name, source_articles in (
-                ("Finnhub", finnhub_arts),
-                ("AlphaVantage", alphavantage_arts),
-                ("NewsAPI", newsapi_arts),
-                ("YFinance", yfinance_arts),
-                ("Merged", articles),
-            ):
-                samples = _headline_samples(source_articles)
-                if samples:
-                    logger.info(
-                        f"[news-headlines] {date_str} {ticker} {source_name}: {samples}"
-                    )
-
-        if articles:
-            upsert_raw_news(date_str, ticker, articles)
-        else:
-            logger.warning(
-                f"[news-gap] {date_str} {ticker}: 0 noticias tras merge "
-                f"(Finnhub={len(finnhub_arts)}, AlphaVantage={len(alphavantage_arts)}, "
-                f"NewsAPI={len(newsapi_arts)}, YFinance={len(yfinance_arts)})"
-            )
-
-        # ── Groq (LLM) + FinBERT por artículo ───────────────────────────────
-        processed_headlines: List[str] = []
-        sentiment_samples: List[Dict] = []
-        kpis = {"total_headlines": 0, "processed_headlines": 0}
-
-        articles_window = articles[: max(1, MAX_TICKER_ARTICLES_PER_DAY)]
-        for art in articles_window:
-            kpis["total_headlines"] += 1
-            # extract_and_summarize usa _groq_rate_wait() → thread-safe
-            summary = extract_and_summarize(
-                ticker, art.get("headline", ""), art.get("url", "")
-            )
-            # analyze_sentiment_local usa _finbert_lock → thread-safe
-            sdata = analyze_sentiment_local(summary)
-
-            if sdata:
-                kpis["processed_headlines"] += 1
-                upsert_news(date_str, ticker, art, sdata)
-                sentiment_samples.append(
-                    {
-                        "headline": summary,
-                        "sentiment": sdata["sentiment"],
-                        "confidence": sdata["confidence"],
-                    }
+        if decisions_only:
+            with thread_conn.cursor() as c:
+                sentiment_samples, n_pg = fetch_sentiment_samples_from_pg(
+                    c, date_str, ticker
                 )
-                with thread_conn.cursor() as c:
-                    c.execute(
-                        """
-                        INSERT INTO sentiment_scores
-                            (batch_date, ticker, headline, sentiment, confidence, justification)
-                        VALUES (%s,%s,%s,%s,%s,%s)
-                        ON CONFLICT (batch_date, ticker, headline) DO NOTHING
-                    """,
-                        (
-                            date_str,
-                            ticker,
-                            art.get("headline", "")[:250],
-                            sdata["sentiment"],
-                            sdata["confidence"],
-                            sdata["justification"],
-                        ),
-                    )
-                thread_conn.commit()
-                processed_headlines.append(summary)
-
-        if processed_headlines:
-            upsert_filtered_news(
-                date_str, ticker, processed_headlines, "Backtest local"
+            kpis = {
+                "total_headlines": n_pg,
+                "processed_headlines": n_pg,
+            }
+            _news_debug(
+                f"[decisions-only] {date_str} {ticker}: "
+                f"sentiment_scores PG n={n_pg}"
             )
-        _news_debug(
-            f"[news-sentiment] {date_str} {ticker}: procesadas={len(processed_headlines)}/"
-            f"{len(articles_window)} con FinBERT/Groq={'on' if GROQ_API_KEY and not DISABLE_LLM_SUMMARY else 'off'}"
-        )
+        else:
+            # ── Ingesta multi-fuente ─────────────────────────────────────────
+            finnhub_arts, finnhub_age = _get_ticker_articles_for_day(
+                news_all.get(ticker, {}),
+                date_str,
+                lookback_days=TICKER_NEWS_LOOKBACK_DAYS,
+            )
+            alphavantage_arts, alphavantage_age = _get_ticker_articles_for_day(
+                alphavantage_news.get(ticker, {}),
+                date_str,
+                lookback_days=TICKER_NEWS_LOOKBACK_DAYS,
+            )
+            newsapi_arts, newsapi_age = _get_ticker_articles_for_day(
+                newsapi_ticker_news.get(ticker, {}),
+                date_str,
+                lookback_days=TICKER_NEWS_LOOKBACK_DAYS,
+            )
+            yfinance_arts = fetch_yfinance_ticker_news(ticker, date_str)
+            articles = merge_ticker_articles(
+                finnhub_arts, alphavantage_arts, newsapi_arts, yfinance_arts
+            )
+
+            _news_debug(
+                f"[news-day] {date_str} {ticker}: "
+                f"Finnhub={len(finnhub_arts)} AlphaVantage={len(alphavantage_arts)} "
+                f"NewsAPI={len(newsapi_arts)} "
+                f"YFinance={len(yfinance_arts)} merged={len(articles)}"
+            )
+            if DEBUG_NEWS:
+                for source_name, age in (
+                    ("Finnhub", finnhub_age),
+                    ("AlphaVantage", alphavantage_age),
+                    ("NewsAPI", newsapi_age),
+                ):
+                    if age > 0:
+                        logger.info(
+                            f"[news-lookback] {date_str} {ticker} {source_name}: "
+                            f"usando articulos de D-{age}"
+                        )
+            if DEBUG_NEWS:
+                for source_name, source_articles in (
+                    ("Finnhub", finnhub_arts),
+                    ("AlphaVantage", alphavantage_arts),
+                    ("NewsAPI", newsapi_arts),
+                    ("YFinance", yfinance_arts),
+                    ("Merged", articles),
+                ):
+                    samples_dbg = _headline_samples(source_articles)
+                    if samples_dbg:
+                        logger.info(
+                            f"[news-headlines] {date_str} {ticker} {source_name}: {samples_dbg}"
+                        )
+
+            if articles:
+                upsert_raw_news(date_str, ticker, articles)
+            else:
+                logger.warning(
+                    f"[news-gap] {date_str} {ticker}: 0 noticias tras merge "
+                    f"(Finnhub={len(finnhub_arts)}, AlphaVantage={len(alphavantage_arts)}, "
+                    f"NewsAPI={len(newsapi_arts)}, YFinance={len(yfinance_arts)})"
+                )
+
+            # ── Groq (LLM) + FinBERT por artículo ───────────────────────────
+            processed_headlines: List[str] = []
+            filtered_articles: List[Dict] = []
+            sentiment_samples = []
+            kpis = {"total_headlines": 0, "processed_headlines": 0}
+
+            from news_relevance import filter_articles_for_ticker
+
+            articles_relevant, n_irrelevant = filter_articles_for_ticker(
+                ticker, articles[: max(1, MAX_TICKER_ARTICLES_PER_DAY)]
+            )
+            if n_irrelevant:
+                _news_debug(
+                    f"[news-relevance] {date_str} {ticker}: "
+                    f"omitidas {n_irrelevant} noticias sin mención del activo"
+                )
+            articles_window = articles_relevant
+            for art in articles_window:
+                kpis["total_headlines"] += 1
+                summary = extract_and_summarize(
+                    ticker, art.get("headline", ""), art.get("url", "")
+                )
+                sdata = analyze_sentiment_local(summary)
+
+                if sdata:
+                    kpis["processed_headlines"] += 1
+                    upsert_news(date_str, ticker, art, sdata)
+                    sentiment_samples.append(
+                        {
+                            "headline": summary,
+                            "sentiment": sdata["sentiment"],
+                            "confidence": sdata["confidence"],
+                        }
+                    )
+                    with thread_conn.cursor() as c:
+                        c.execute(
+                            """
+                            INSERT INTO sentiment_scores
+                                (batch_date, ticker, headline, sentiment, confidence, justification)
+                            VALUES (%s,%s,%s,%s,%s,%s)
+                            ON CONFLICT (batch_date, ticker, headline) DO NOTHING
+                        """,
+                            (
+                                date_str,
+                                ticker,
+                                art.get("headline", "")[:250],
+                                sdata["sentiment"],
+                                sdata["confidence"],
+                                sdata["justification"],
+                            ),
+                        )
+                    thread_conn.commit()
+                    processed_headlines.append(summary)
+                    filtered_articles.append(
+                        {
+                            "original_headline": (art.get("headline") or "")[:250],
+                            "summary": summary,
+                        }
+                    )
+
+            if processed_headlines:
+                upsert_filtered_news(
+                    date_str,
+                    ticker,
+                    processed_headlines,
+                    "Backtest local",
+                    filtered_articles=filtered_articles,
+                )
+            _news_debug(
+                f"[news-sentiment] {date_str} {ticker}: procesadas={len(processed_headlines)}/"
+                f"{len(articles_window)} con FinBERT/Groq={'on' if GROQ_API_KEY and not DISABLE_LLM_SUMMARY else 'off'}"
+            )
 
         # ── Agregación de sentimiento y evidencias ───────────────────────────
+        from news_relevance import filter_sentiment_samples
+
+        sentiment_samples, _rel_skipped = filter_sentiment_samples(
+            ticker, sentiment_samples
+        )
+        if _rel_skipped:
+            sentiment_detail_pre = {"relevance_filtered": _rel_skipped}
+        else:
+            sentiment_detail_pre = {}
         dom_sent, best_conf, sentiment_detail = aggregate_sentiment_local(
             sentiment_samples
         )
+        if sentiment_detail_pre:
+            sentiment_detail = {**sentiment_detail, **sentiment_detail_pre}
 
         # ══════════════════════════════════════════════════════════════════════
         # CONSTRUCCIÓN DE EVIDENCIAS PARA LA RED BAYESIANA
@@ -2797,6 +3080,23 @@ def _process_ticker_day(
             evidence, macro_adj, macro_context=_macro_ctx, extra=_disc_extra
         )
 
+        from sentiment_scoring import apply_sentiment_to_prob_up
+        _net = float(sentiment_detail.get("net_score") or 0)
+        _disp = float(sentiment_detail.get("dispersion") or 0)
+        _n_news = int(sentiment_detail.get("total_headlines") or 0)
+        prob_up, sentiment_adj = apply_sentiment_to_prob_up(
+            prob_up, _net, _n_news, _disp,
+        )
+        if sentiment_adj != 0:
+            sentiment_detail = {
+                **sentiment_detail,
+                "sentiment_adjustment": sentiment_adj,
+            }
+            logger.debug(
+                f"[SENTIMENT] {ticker} {date_str}: net={_net:+.3f} "
+                f"adj={sentiment_adj:+.3f} → prob_up={prob_up:.3f}"
+            )
+
         try:
             contribution_analysis = compute_contribution_analysis(
                 evidence,
@@ -2809,6 +3109,12 @@ def _process_ticker_day(
                 "macro_sentiment": macro_sentiment,
                 "risk_regime": risk_regime,
                 "macro_adjustment": macro_adj,
+            }
+            contribution_analysis["sentiment_context"] = {
+                "net_score": _net,
+                "dispersion": _disp,
+                "n_headlines": _n_news,
+                "sentiment_adjustment": sentiment_adj,
             }
         except Exception as exc:
             logger.warning(
@@ -3070,7 +3376,12 @@ def _process_ticker_day(
 # =============================================================================
 # 5. LOOP MAESTRO
 # =============================================================================
-def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
+def run_pipeline(
+    start_date_str=None,
+    end_date_str=None,
+    tickers_override=None,
+    decisions_only: bool = False,
+):
     # Fechas por argumento o por defecto
     end_d = (
         pd.to_datetime(end_date_str).date() if end_date_str else datetime.now().date()
@@ -3082,8 +3393,10 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
     )
 
     active_tickers = tickers_override if tickers_override else TICKERS
+    mode_label = "decisions-only" if decisions_only else "full bootstrap"
     logger.info(
-        f"🚀 Iniciando Bootstrap Local TFM | Rango: {start_d} a {end_d} | Tickers: {active_tickers}"
+        f"🚀 Iniciando Bootstrap Local TFM ({mode_label}) | "
+        f"Rango: {start_d} a {end_d} | Tickers: {active_tickers}"
     )
     if DEBUG_NEWS:
         logger.info(
@@ -3096,32 +3409,35 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
     ohlcv_all = fetch_ohlcv_all(active_tickers, start_d, end_d)
     vix_series = fetch_vix_historical(start_d, end_d)
 
-    # ── Prefetch paralelo de noticias (Finnhub + AlphaVantage + NewsAPI) ────────
-    # Las tres fuentes son independientes por ticker y usan caché en disco.
-    def _prefetch_ticker_news(ticker: str):
-        f = fetch_news_historical(ticker, start_d, end_d)
-        a = fetch_alpha_vantage_news_historical(ticker, start_d, end_d)
-        n = fetch_newsapi_ticker_news_historical(ticker, start_d, end_d)
-        return ticker, f, a, n
-
-    logger.info(f"⬇ Prefetching noticias en paralelo para {active_tickers}…")
     news_all: Dict[str, Dict] = {}
     alphavantage_news: Dict[str, Dict] = {}
     newsapi_ticker_news: Dict[str, Dict] = {}
-    with ThreadPoolExecutor(max_workers=min(4, len(active_tickers))) as exe:
-        prefetch_futs = {
-            exe.submit(_prefetch_ticker_news, t): t for t in active_tickers
-        }
-        for fut in as_completed(prefetch_futs):
-            t, finnhub_data, alphavantage_data, newsapi_data = fut.result()
-            news_all[t] = finnhub_data
-            alphavantage_news[t] = alphavantage_data
-            newsapi_ticker_news[t] = newsapi_data
-    logger.info("✅ Prefetch completado")
+    if decisions_only:
+        logger.info("⏭ decisions-only: omitiendo prefetch de noticias (Finnhub/AV/NewsAPI)")
+    else:
+        # ── Prefetch paralelo de noticias (Finnhub + AlphaVantage + NewsAPI) ────
+        def _prefetch_ticker_news(ticker: str):
+            f = fetch_news_historical(ticker, start_d, end_d)
+            a = fetch_alpha_vantage_news_historical(ticker, start_d, end_d)
+            n = fetch_newsapi_ticker_news_historical(ticker, start_d, end_d)
+            return ticker, f, a, n
+
+        logger.info(f"⬇ Prefetching noticias en paralelo para {active_tickers}…")
+        with ThreadPoolExecutor(max_workers=min(4, len(active_tickers))) as exe:
+            prefetch_futs = {
+                exe.submit(_prefetch_ticker_news, t): t for t in active_tickers
+            }
+            for fut in as_completed(prefetch_futs):
+                t, finnhub_data, alphavantage_data, newsapi_data = fut.result()
+                news_all[t] = finnhub_data
+                alphavantage_news[t] = alphavantage_data
+                newsapi_ticker_news[t] = newsapi_data
+        logger.info("✅ Prefetch completado")
 
     conn = get_db_connection()
     get_bn_model()
-    get_finbert()
+    if not decisions_only:
+        get_finbert()
 
     # ── DDL: crear position_state si no existe ────────────────────────────────
     try:
@@ -3144,6 +3460,8 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
     except Exception as exc:
         conn.rollback()
         logger.warning(f"DDL position_state: {exc}")
+
+    ensure_exposure_recommendation_schema(conn)
 
     business_days = pd.bdate_range(start=str(start_d), end=str(end_d))
 
@@ -3181,79 +3499,94 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
         if conn:
             pg_upsert_batch_log(conn, date_str, run_id, active_tickers, "STARTED")
 
-        # --- A) Ingesta y Macro (Clon lambda_macro_ingestion / lambda_macro_context) ---
-        ingest_macro_news(date_str)
-        macro_articles = read_macro_news(date_str)
-        _news_debug(
-            f"[macro-news] {date_str}: articulos_macro={len(macro_articles or [])} "
-            f"samples={_headline_samples(macro_articles or [])}"
-        )
-        macro_sentiment_data = run_finbert_macro_local(macro_articles)
-
-        macro_sentiment = macro_sentiment_data["state"]
-        macro_score = macro_sentiment_data["score"]
-        n_macro_articles = macro_sentiment_data["n_articles"]
-
         vix = (
             _sf(vix_series[vix_series.index <= bd].iloc[-1])
             if not vix_series[vix_series.index <= bd].empty
             else None
         )
-        risk_regime = (
-            "RISK_OFF"
-            if vix and vix > 25
-            else ("RISK_ON" if vix and vix < 18 else "NEUTRAL")
-        )
-        macro_adj = (
-            -0.04
-            if risk_regime == "RISK_OFF"
-            else (0.04 if risk_regime == "RISK_ON" else 0.0)
-        )
 
-        upsert_macro_context(
-            date_str,
-            macro_sentiment,
-            risk_regime,
-            macro_adj,
-            {"vix": vix, "n_articles": n_macro_articles},
-        )
+        if decisions_only:
+            macro_loaded = load_macro_for_day(conn, date_str, vix=vix)
+            macro_sentiment = macro_loaded["macro_sentiment"]
+            macro_score = macro_loaded["score"]
+            macro_adj = macro_loaded["macro_adjustment"]
+            risk_regime = macro_loaded["risk_regime"]
+            n_macro_articles = macro_loaded["n_articles"]
+            if macro_loaded.get("vix") is not None:
+                vix = macro_loaded["vix"]
+            _news_debug(
+                f"[decisions-only] {date_str}: macro PG/mongo "
+                f"sentiment={macro_sentiment} regime={risk_regime} adj={macro_adj:+.3f}"
+            )
+        else:
+            # --- A) Ingesta y Macro (Clon lambda_macro_ingestion / lambda_macro_context) ---
+            ingest_macro_news(date_str)
+            macro_articles = read_macro_news(date_str)
+            _news_debug(
+                f"[macro-news] {date_str}: articulos_macro={len(macro_articles or [])} "
+                f"samples={_headline_samples(macro_articles or [])}"
+            )
+            macro_sentiment_data = run_finbert_macro_local(macro_articles)
 
-        if conn:
-            try:
-                with conn.cursor() as c:
-                    c.execute(
-                        """
-                        INSERT INTO market_regime_state (batch_date, run_id, risk_regime, macro_adjustment, vix)
-                        VALUES (%s, %s, %s, %s, %s)
-                        ON CONFLICT (batch_date) DO UPDATE SET risk_regime=EXCLUDED.risk_regime, macro_adjustment=EXCLUDED.macro_adjustment, vix=EXCLUDED.vix
-                    """,
-                        (
-                            date_str,
-                            run_id,
-                            risk_regime,
-                            float(macro_adj),
-                            float(vix) if vix else None,
-                        ),
-                    )
+            macro_sentiment = macro_sentiment_data["state"]
+            macro_score = macro_sentiment_data["score"]
+            n_macro_articles = macro_sentiment_data["n_articles"]
 
-                    c.execute(
-                        """
-                        INSERT INTO macro_sentiment_scores (batch_date, run_id, macro_sentiment, score, n_articles)
-                        VALUES (%s, %s, %s, %s, %s)
-                        ON CONFLICT (batch_date) DO UPDATE SET macro_sentiment=EXCLUDED.macro_sentiment, score=EXCLUDED.score, n_articles=EXCLUDED.n_articles
-                    """,
-                        (
-                            date_str,
-                            run_id,
-                            macro_sentiment,
-                            float(macro_score),
-                            n_macro_articles,
-                        ),
-                    )
-                conn.commit()
-            except Exception as e:
-                conn.rollback()
-                logger.error(f"Error insertando tablas macro: {e}")
+            risk_regime = (
+                "RISK_OFF"
+                if vix and vix > 25
+                else ("RISK_ON" if vix and vix < 18 else "NEUTRAL")
+            )
+            macro_adj = (
+                -0.04
+                if risk_regime == "RISK_OFF"
+                else (0.04 if risk_regime == "RISK_ON" else 0.0)
+            )
+
+            upsert_macro_context(
+                date_str,
+                macro_sentiment,
+                risk_regime,
+                macro_adj,
+                {"vix": vix, "n_articles": n_macro_articles},
+            )
+
+            if conn:
+                try:
+                    with conn.cursor() as c:
+                        c.execute(
+                            """
+                            INSERT INTO market_regime_state (batch_date, run_id, risk_regime, macro_adjustment, vix)
+                            VALUES (%s, %s, %s, %s, %s)
+                            ON CONFLICT (batch_date) DO UPDATE SET risk_regime=EXCLUDED.risk_regime, macro_adjustment=EXCLUDED.macro_adjustment, vix=EXCLUDED.vix
+                        """,
+                            (
+                                date_str,
+                                run_id,
+                                risk_regime,
+                                float(macro_adj),
+                                float(vix) if vix else None,
+                            ),
+                        )
+
+                        c.execute(
+                            """
+                            INSERT INTO macro_sentiment_scores (batch_date, run_id, macro_sentiment, score, n_articles)
+                            VALUES (%s, %s, %s, %s, %s)
+                            ON CONFLICT (batch_date) DO UPDATE SET macro_sentiment=EXCLUDED.macro_sentiment, score=EXCLUDED.score, n_articles=EXCLUDED.n_articles
+                        """,
+                            (
+                                date_str,
+                                run_id,
+                                macro_sentiment,
+                                float(macro_score),
+                                n_macro_articles,
+                            ),
+                        )
+                    conn.commit()
+                except Exception as e:
+                    conn.rollback()
+                    logger.error(f"Error insertando tablas macro: {e}")
 
         # --- B) Procesamiento por Ticker — PARALELO (Clon Map State de Step Functions) ---
         # Cada ticker corre en su propio hilo con su propia conexión PG.
@@ -3277,6 +3610,7 @@ def run_pipeline(start_date_str=None, end_date_str=None, tickers_override=None):
                 list(signal_history_per_ticker[ticker]),    # copia — evita race condition
                 exposure_history_per_ticker[ticker],        # Fase 1: exposición previa
                 vix,                                        # Fase 1: VIX para detect_regime
+                decisions_only,
             ): ticker
             for ticker in active_tickers
         }
@@ -3442,4 +3776,9 @@ if __name__ == "__main__":
     tickers_list = (
         [t.strip().upper() for t in args.tickers.split(",")] if args.tickers else None
     )
-    run_pipeline(args.start, args.end, tickers_override=tickers_list)
+    run_pipeline(
+        args.start,
+        args.end,
+        tickers_override=tickers_list,
+        decisions_only=getattr(args, "decisions_only", False),
+    )

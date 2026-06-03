@@ -620,9 +620,41 @@ def get_ticker_data(connection, target_date, ticker):
     return all_sentiments, indicators
 
 
-def aggregate_sentiment(all_sentiments):
+def aggregate_sentiment(all_sentiments, ticker: str = ""):
     if not all_sentiments:
         return None, None, {}
+    samples = [
+        {
+            "sentiment": row[0],
+            "confidence": float(row[1]) if row[1] is not None else 0.5,
+            "headline": row[2] if len(row) > 2 else "",
+        }
+        for row in all_sentiments
+    ]
+    try:
+        from news_relevance import filter_sentiment_samples
+
+        samples, _n_rel = filter_sentiment_samples(ticker, samples)
+        if not samples:
+            return None, None, {"relevance_filtered": _n_rel, "total_headlines": 0}
+    except ImportError:
+        pass
+    try:
+        from sentiment_scoring import aggregate_sentiment_samples
+        dom, conf, detail = aggregate_sentiment_samples(
+            samples,
+            headlines_sample=[
+                {
+                    "headline": (row[2][:120] + "...") if len(row[2]) > 120 else row[2],
+                    "sentiment": row[0],
+                    "confidence": round(float(row[1]), 4),
+                }
+                for row in all_sentiments[:10]
+            ],
+        )
+        return dom, conf, detail
+    except ImportError:
+        pass
     dist = {"bullish": 0, "bearish": 0, "neutral": 0}
     for row in all_sentiments:
         if row[0] in dist:
@@ -792,7 +824,7 @@ def handler(event, context):
                 )
 
                 dominant_sentiment, dominant_confidence, sentiment_detail = (
-                    aggregate_sentiment(all_sentiments)
+                    aggregate_sentiment(all_sentiments, ticker=ticker)
                 )
                 if dominant_sentiment is None:
                     skipped.append({"ticker": ticker, "reason": "no_sentiment"})
@@ -812,9 +844,33 @@ def handler(event, context):
                 _, prob_up, prob_down, macro_info = infer_signal(
                     model, evidence_states, macro_context
                 )
+                try:
+                    from sentiment_scoring import apply_sentiment_to_prob_up
+                    _net = float(sentiment_detail.get("net_score") or 0)
+                    _disp = float(sentiment_detail.get("dispersion") or 0)
+                    _n_news = int(sentiment_detail.get("total_headlines") or 0)
+                    prob_up, sentiment_adj = apply_sentiment_to_prob_up(
+                        prob_up, _net, _n_news, _disp,
+                    )
+                    prob_down = round(1.0 - prob_up, 4)
+                    sentiment_detail = {
+                        **sentiment_detail,
+                        "sentiment_adjustment": sentiment_adj,
+                    }
+                except ImportError:
+                    sentiment_adj = 0.0
+
                 contribution_analysis = build_contribution_analysis(
                     model, evidence_states, macro_context
                 )
+                if contribution_analysis is not None:
+                    contribution_analysis.setdefault("sentiment_context", {})
+                    contribution_analysis["sentiment_context"] = {
+                        "net_score": sentiment_detail.get("net_score"),
+                        "dispersion": sentiment_detail.get("dispersion"),
+                        "n_headlines": sentiment_detail.get("total_headlines"),
+                        "sentiment_adjustment": sentiment_detail.get("sentiment_adjustment"),
+                    }
 
                 feature_ref = f"feature_snapshots/{latest_date}/{ticker.upper()}"
                 exposure_constraints = {}

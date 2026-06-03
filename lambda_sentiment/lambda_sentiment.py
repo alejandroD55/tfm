@@ -268,6 +268,21 @@ def handler(event, context):
                         skipped_headlines += 1
                         continue
 
+                    try:
+                        from news_relevance import is_article_relevant_to_ticker
+
+                        rel_ok, _rel_reason = is_article_relevant_to_ticker(
+                            ticker,
+                            headline,
+                            article.get("summary") or "",
+                            url=article.get("url") or "",
+                        )
+                        if not rel_ok:
+                            skipped_headlines += 1
+                            continue
+                    except ImportError:
+                        pass
+
                     # Pasamos el hf_client inicializado a la función
                     sentiment_data = analyze_sentiment(headline, hf_client)
                     if sentiment_data is None:

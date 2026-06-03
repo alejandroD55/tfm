@@ -550,8 +550,14 @@ def distinct_raw_news_tickers(batch_date: str) -> list:
 
 # ─── news_filtered: titulares limpios generados por Bedrock ──────────────────
 
-def upsert_filtered_news(batch_date: str, ticker: str, filtered_headlines: list, daily_context: str = ""):
-    """Guarda los titulares ya filtrados/normalizados por Claude Haiku para un ticker."""
+def upsert_filtered_news(
+    batch_date: str,
+    ticker: str,
+    filtered_headlines: list,
+    daily_context: str = "",
+    filtered_articles: Optional[list] = None,
+):
+    """Guarda resúmenes Bedrock/Groq. filtered_articles: [{original_headline, summary}, ...]."""
     try:
         db = _get_db()
         if db is None:
@@ -565,6 +571,8 @@ def upsert_filtered_news(batch_date: str, ticker: str, filtered_headlines: list,
             "headline_count":      len(filtered_headlines),
             "updated_at":          now,
         }
+        if filtered_articles:
+            doc["filtered_articles"] = filtered_articles
         db["news_filtered"].update_one(
             {"batch_date": batch_date, "ticker": ticker.upper()},
             {"$set": doc, "$setOnInsert": {"created_at": now}},

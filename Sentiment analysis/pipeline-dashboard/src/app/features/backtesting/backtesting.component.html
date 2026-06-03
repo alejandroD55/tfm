@@ -74,8 +74,7 @@
         </div>
         <span class="card-sub">
           Cómo la IA fue aumentando el capital invertido en cada activo ·
-          Arranca en 0% el primer día · Sube según régimen de mercado y recomendaciones
-          bayesianas
+          Periodo del pipeline: <strong>{{ pipelineLabel || '—' }}</strong>
         </span>
       </div>
       @if (historyLoading) {
@@ -147,7 +146,7 @@
           </div>
         </div>
         <span class="card-sub" style="display: block; margin: -6px 0 10px 0">
-          Ordenado por ticker · Azul = IA modulando exposición desde 0% · Gris = comprar y mantener 100%
+          Resultado acumulado al cierre del pipeline ({{ pipelineLabel || '—' }}) · Azul = IA modulando exposición · Gris = comprar y mantener 100%
         </span>
         <div class="chart-host chart-host-tall">
           <ngx-charts-bar-vertical-2d
@@ -175,7 +174,7 @@
             <mat-icon class="chart-info-icon" [matTooltip]="chartTooltips['alpha']">info_outline</mat-icon>
           </div>
           <span class="card-sub"
-            >Rentabilidad con exposición modulada vs comprar y mantener 100% desde día 1</span
+            >Exceso de retorno vs B&amp;H · cierre del pipeline {{ pipelineLabel || '—' }}</span
           >
         </div>
         <div class="chart-host">
@@ -203,7 +202,7 @@
             <span>Ratio de Sharpe Anualizado</span>
             <mat-icon class="chart-info-icon" [matTooltip]="chartTooltips['sharpe']">info_outline</mat-icon>
           </div>
-          <span class="card-sub">Retorno ajustado por riesgo</span>
+          <span class="card-sub">Retorno ajustado por riesgo · periodo {{ pipelineLabel || '—' }}</span>
         </div>
         <div
           class="chart-host-small"
@@ -236,7 +235,7 @@
             <span>Caída Máxima (Max Drawdown)</span>
             <mat-icon class="chart-info-icon" [matTooltip]="chartTooltips['drawdown']">info_outline</mat-icon>
           </div>
-          <span class="card-sub">Riesgo de caída por activo</span>
+          <span class="card-sub">Riesgo de caída por activo · periodo {{ pipelineLabel || '—' }}</span>
         </div>
         <div
           class="chart-host-small"
@@ -273,10 +272,27 @@
             <span>Evolución Histórica del Backtesting</span>
           </div>
           <span class="card-sub"
-            >Todas las métricas clave en paralelo para lectura rápida.</span
+            >Métricas clave en el tiempo · periodo del pipeline: <strong>{{ pipelineLabel || '—' }}</strong></span
           >
         </div>
+        <div class="history-controls">
+          <div class="filter-group">
+            <label>Vista</label>
+            <select class="aurora-select" [(ngModel)]="historyTickerFilter" (ngModelChange)="onHistoryTickerChange()">
+              <option value="">Media cartera (todos)</option>
+              @for (v of tickerViews; track v.ticker) {
+                <option [value]="v.ticker">{{ v.ticker }}</option>
+              }
+            </select>
+          </div>
+        </div>
       </div>
+      @if (historyTickerFilter) {
+        <div class="history-context">
+          <mat-icon>show_chart</mat-icon>
+          <span>Mostrando evolución de <strong>{{ historyTickerFilter }}</strong> a lo largo del pipeline</span>
+        </div>
+      }
 
       @if (historyLoading) {
         <div class="history-loading">
@@ -319,8 +335,7 @@
           <span>Detalle Financiero por Activo</span>
         </div>
         <span class="card-sub"
-          >Exposición continua (primario) · Métricas calculadas con la IA
-          modulando posición día a día · Sin look-ahead bias</span
+          >Resultados finales y comportamiento individual · expande cada activo para ver su evolución</span
         >
       </div>
 
@@ -517,89 +532,95 @@
       </div>
       <div
         class="asset-cards"
-        aria-label="Detalle financiero por activo en tarjetas"
+        aria-label="Detalle financiero por activo en tarjetas expandibles"
       >
         @for (r of tableRows; track r.ticker) {
-          <article class="asset-card">
-            <header class="asset-card-head">
-              <span class="ticker-name">{{ r.ticker }}</span>
-              <span [class]="'exp-rec-badge-sm ' + expRecClass(r.exposure_recommendation)"
-                    [matTooltip]="expRecLabel(r.exposure_recommendation)">
-                <mat-icon style="font-size:13px;height:13px;width:13px">{{ expRecIcon(r.exposure_recommendation) }}</mat-icon>
-                {{ expRecLabel(r.exposure_recommendation) }}
-              </span>
+          <article class="asset-card" [class.expanded]="isAssetExpanded(r.ticker)">
+            <header class="asset-card-head asset-card-head-click" (click)="toggleAssetDetail(r.ticker)">
+              <div class="asset-head-left">
+                <mat-icon class="expand-chevron">{{ isAssetExpanded(r.ticker) ? 'expand_less' : 'expand_more' }}</mat-icon>
+                <span class="ticker-name">{{ r.ticker }}</span>
+                <span [class]="'exp-rec-badge-sm ' + expRecClass(r.exposure_recommendation)"
+                      [matTooltip]="expRecLabel(r.exposure_recommendation)">
+                  <mat-icon style="font-size:13px;height:13px;width:13px">{{ expRecIcon(r.exposure_recommendation) }}</mat-icon>
+                  {{ expRecLabel(r.exposure_recommendation) }}
+                </span>
+              </div>
+              <div class="asset-head-kpis">
+                <span class="head-kpi" [class.pos]="r.exp_cumulative_return > 0" [class.neg]="r.exp_cumulative_return < 0">
+                  {{ r.exp_cumulative_return > 0 ? '+' : '' }}{{ r.exp_cumulative_return * 100 | number:'1.2-2' }}%
+                </span>
+                <span class="head-kpi muted">→ € {{ r.exp_final_equity | number:'1.0-0' }}</span>
+                <span class="head-kpi" [class.pos]="alphaEur(r) > 0" [class.neg]="alphaEur(r) < 0">
+                  α {{ alphaEur(r) > 0 ? '+' : '' }}{{ alphaEur(r) | number:'1.0-0' }} €
+                </span>
+              </div>
             </header>
 
-            <div class="asset-card-grid">
+            <div class="asset-card-grid asset-card-summary">
+              <div class="asset-metric highlight">
+                <span class="metric-label">Capital final (estrategia)</span>
+                <span class="num bold" [class.pos]="r.exp_final_equity > 10000" [class.neg]="r.exp_final_equity < 10000">
+                  € {{ r.exp_final_equity | number:'1.0-0' }}
+                </span>
+                <span class="metric-hint">Total cartera · posición + cash</span>
+              </div>
               <div class="asset-metric">
-                <span class="metric-label">Rentabilidad IA</span>
-                <span
-                  class="num"
-                  [class.pos]="r.exp_cumulative_return > 0"
-                  [class.neg]="r.exp_cumulative_return < 0"
-                >
-                  {{ r.exp_cumulative_return > 0 ? "+" : ""
-                  }}{{ r.exp_cumulative_return * 100 | number: "1.2-2" }}%
+                <span class="metric-label">Capital final (B&amp;H)</span>
+                <span class="num">€ {{ bhFinalEquity(r) | number:'1.0-0' }}</span>
+                <span class="metric-hint">100% invertido todo el periodo</span>
+              </div>
+              <div class="asset-metric">
+                <span class="metric-label">Mejora vs mercado</span>
+                <span class="num bold" [class.pos]="alphaEur(r) > 0" [class.neg]="alphaEur(r) < 0">
+                  {{ alphaEur(r) > 0 ? '+' : '' }}{{ alphaEur(r) | number:'1.0-0' }} €
+                  ({{ (r.exp_cumulative_return - r.buy_hold_return) * 100 | number:'1.2-2' }}%)
                 </span>
               </div>
               <div class="asset-metric">
-                <span class="metric-label">Mercado (B&H)</span>
-                <span class="num"
-                  >{{ r.buy_hold_return > 0 ? "+" : ""
-                  }}{{ r.buy_hold_return * 100 | number: "1.2-2" }}%</span
-                >
+                <span class="metric-label">Capital desplegado (media)</span>
+                <span class="num">{{ r.avg_exposure | number:'1.1-1' }}%</span>
+                <span class="metric-hint">≈ € {{ (r.avg_exposure / 100 * 10000) | number:'1.0-0' }} invertidos</span>
               </div>
               <div class="asset-metric">
-                <span class="metric-label">Mejora vs Mercado</span>
-                <span
-                  class="num bold"
-                  [class.pos]="r.alpha_vs_benchmark > 0"
-                  [class.neg]="r.alpha_vs_benchmark < 0"
-                >
-                  {{ r.alpha_vs_benchmark > 0 ? "+" : ""
-                  }}{{ r.alpha_vs_benchmark * 100 | number: "1.2-2" }}%
-                </span>
+                <span class="metric-label">Cash en reserva (media)</span>
+                <span class="num muted">{{ r.avg_cash_pct | number:'1.1-1' }}%</span>
+                <span class="metric-hint">≈ € {{ (r.avg_cash_pct / 100 * 10000) | number:'1.0-0' }} sin riesgo</span>
               </div>
               <div class="asset-metric">
-                <span class="metric-label">Ratio Sharpe</span>
-                <span
-                  class="num"
-                  [class.pos]="r.exp_sharpe_ratio > 1"
-                  [class.neg]="r.exp_sharpe_ratio < 0"
-                  >{{ r.exp_sharpe_ratio | number: "1.2-2" }}</span
-                >
-              </div>
-              <div class="asset-metric">
-                <span class="metric-label">Caída Máx.</span>
-                <span class="num neg"
-                  >{{ r.exp_max_drawdown * 100 | number: "1.2-2" }}%</span
-                >
-              </div>
-              <div class="asset-metric">
-                <span class="metric-label">Capital Final</span>
-                <span
-                  class="num"
-                  [class.pos]="r.exp_final_equity > 10000"
-                  [class.neg]="r.exp_final_equity < 10000"
-                >
-                  €&nbsp;{{ r.exp_final_equity | number: "1.0-0" }}
-                </span>
-              </div>
-              <div class="asset-metric">
-                <span class="metric-label">Capital Desplegado</span>
-                <span class="num">{{ r.avg_exposure | number: "1.0-1" }}%</span>
-              </div>
-              <div class="asset-metric">
-                <span class="metric-label">Cash no invertido</span>
-                <span class="num muted">{{ r.avg_cash_pct | number: "1.0-1" }}%</span>
-              </div>
-              <div class="asset-metric">
-                <span class="metric-label">Tasa Acierto</span>
-                <span class="num" [class.pos]="r.win_rate >= 0.5"
-                  >{{ r.win_rate * 100 | number: "1.0-0" }}%</span
-                >
+                <span class="metric-label">Sharpe · Caída máx.</span>
+                <span class="num">{{ r.exp_sharpe_ratio | number:'1.2-2' }} · {{ r.exp_max_drawdown * 100 | number:'1.1-1' }}%</span>
               </div>
             </div>
+
+            @if (isAssetExpanded(r.ticker)) {
+              <div class="asset-detail-panel">
+                <div class="asset-detail-title">
+                  <mat-icon>insights</mat-icon>
+                  <span>Comportamiento de {{ r.ticker }} durante el pipeline</span>
+                </div>
+                @if (assetPerformanceLoading.has(r.ticker)) {
+                  <div class="asset-chart-loading"><mat-spinner diameter="28"></mat-spinner></div>
+                } @else if (assetPerformanceOptions[r.ticker]) {
+                  <highcharts-chart
+                    [Highcharts]="Highcharts"
+                    [constructorType]="'stockChart'"
+                    [options]="assetPerformanceOptions[r.ticker]"
+                    [(update)]="assetPerformanceUpdates[r.ticker]"
+                    style="display:block;width:100%;height:300px"
+                  ></highcharts-chart>
+                }
+                @if (assetMiniChartOptions[r.ticker]) {
+                  <div class="asset-mini-chart-label">Evolución del capital en euros (estrategia vs mercado)</div>
+                  <highcharts-chart
+                    [Highcharts]="Highcharts"
+                    [options]="assetMiniChartOptions[r.ticker]"
+                    [(update)]="assetMiniChartUpdates[r.ticker]"
+                    style="display:block;width:100%;height:240px"
+                  ></highcharts-chart>
+                }
+              </div>
+            }
           </article>
         } @empty {
           <div class="asset-card-empty">
