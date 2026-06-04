@@ -314,6 +314,59 @@
     }
   </section>
 
+  @if (!loading && selectedDate && currentReport) {
+    <section class="card day-why-section">
+      <div class="day-why-head">
+        <mat-icon>help_outline</mat-icon>
+        <div>
+          <h2 class="day-why-title">¿Por qué este día?</h2>
+          <p class="day-why-sub">
+            Resumen del informe del <strong>{{ selectedDate }}</strong> — drivers macro, régimen y explicaciones destacadas del motor bayesiano.
+          </p>
+        </div>
+      </div>
+
+      <div class="day-why-macro-row">
+        <div class="dwm-chip">
+          <span class="dwm-label">Macro (risk_regime)</span>
+          @if (macroContext) {
+            <span class="dwm-value" [style.color]="regimeColor(macroContext.risk_regime)">{{ macroContext.risk_regime }}</span>
+            <span class="dwm-hint">sentimiento {{ macroContext.macro_sentiment }} · ajuste {{ macroContext.macro_adjustment > 0 ? '+' : '' }}{{ macroContext.macro_adjustment | number:'1.2-2' }}</span>
+          } @else {
+            <span class="dwm-value muted">Sin contexto macro cargado</span>
+          }
+        </div>
+        <div class="dwm-chip">
+          <span class="dwm-label">Confianza media cartera</span>
+          <span class="dwm-value" [style.color]="probGradientColor(avgProbUp / 100)">P(↑) {{ avgProbUp | number:'1.1-1' }}%</span>
+        </div>
+      </div>
+
+      @if (topDayExplanations.length) {
+        <div class="day-why-list">
+          <h3 class="day-why-list-title">Top explicaciones del día (signal_explanations)</h3>
+          @for (exp of topDayExplanations; track exp.ticker) {
+            <button type="button" class="day-why-item" (click)="focusTickerExplanation(exp.ticker)">
+              <span class="day-why-ticker">{{ exp.ticker }}</span>
+              <span class="day-why-rec {{ expRecClass(exp.exposure_recommendation) }}"
+                    [style.border-color]="expRecColor(exp.exposure_recommendation) + '55'"
+                    [style.color]="expRecColor(exp.exposure_recommendation)">
+                <mat-icon>{{ expRecIcon(exp.exposure_recommendation) }}</mat-icon>
+                {{ expRecBadgeLabel(exp.exposure_recommendation) }}
+              </span>
+              <span class="day-why-prob">P(↑) {{ (exp.prob_up * 100) | number:'1.1-1' }}%</span>
+              @if (exp.market_regime) {
+                <span class="day-why-regime">{{ marketRegimeLabel(exp.market_regime) }}</span>
+              }
+            </button>
+          }
+        </div>
+      } @else {
+        <p class="day-why-empty muted">No hay top_signal_explanations en el report de esta fecha.</p>
+      }
+    </section>
+  }
+
   @if (loading) {
     <div class="loader">
       <mat-spinner diameter="40"></mat-spinner>
@@ -668,11 +721,70 @@
                       </div>
                     </div>
 
-                    <!-- Por qué ahora -->
+                    <!-- ¿Por qué este día? — panel estructurado -->
+                    <div class="day-why-panel">
+                      <div class="wn-header">
+                        <mat-icon>help_outline</mat-icon>
+                        <span>¿Por qué este día?</span>
+                      </div>
+                      <dl class="day-why-grid">
+                        <dt>P(↑)</dt>
+                        <dd [style.color]="probGradientColor(row.prob_up)">{{ (row.prob_up * 100) | number:'1.1-1' }}%</dd>
+                        <dt>Régimen activo</dt>
+                        <dd>
+                          @if (isPositionLoading(row.ticker)) {
+                            <span class="muted">Cargando…</span>
+                          } @else {
+                            {{ marketRegimeLabel(marketRegimeForTicker(row.ticker)) }}
+                          }
+                        </dd>
+                        <dt>Macro</dt>
+                        <dd>
+                          @if (macroContext) {
+                            {{ macroContext.risk_regime }} · {{ macroContext.macro_sentiment }}
+                          } @else {
+                            @if (getFeatureSnapshot(row.ticker)?.macro; as mac) {
+                              {{ mac.risk_regime || 'N/D' }} · {{ mac.macro_sentiment || 'N/D' }}
+                            } @else {
+                              <span class="muted">N/D</span>
+                            }
+                          }
+                        </dd>
+                        <dt>Recomendación</dt>
+                        <dd>
+                          <span class="day-why-rec-inline {{ expRecClass(row.exposure_recommendation) }}"
+                                [style.color]="expRecColor(row.exposure_recommendation)">
+                            <mat-icon>{{ expRecIcon(row.exposure_recommendation) }}</mat-icon>
+                            {{ expRecBadgeLabel(row.exposure_recommendation) }}
+                          </span>
+                        </dd>
+                        <dt>Exposición suavizada</dt>
+                        <dd>
+                          @if (isPositionLoading(row.ticker)) {
+                            <span class="muted">Cargando…</span>
+                          } @else if (smoothedExposurePct(row.ticker) !== null) {
+                            {{ smoothedExposurePct(row.ticker) }}%
+                          } @else {
+                            <span class="muted">N/D</span>
+                          }
+                        </dd>
+                      </dl>
+                      @if (getDayExplanation(row.ticker); as dayExp) {
+                        <div class="day-why-evidence">
+                          <span class="day-why-ev-label">Evidencia bayesiana:</span>
+                          {{ translateState(dayExp.evidence.sentiment) }} ·
+                          RSI {{ translateState(dayExp.evidence.rsi) }} ·
+                          {{ translateState(dayExp.evidence.trend) }} ·
+                          vol. {{ translateState(dayExp.evidence.volatility) }}
+                        </div>
+                      }
+                    </div>
+
+                    <!-- Narrativa ampliada -->
                     <div class="why-now-block">
                       <div class="wn-header">
                         <mat-icon>bolt</mat-icon>
-                        <span>Por qué ahora</span>
+                        <span>Resumen narrativo</span>
                       </div>
                       <p class="wn-text">{{ buildWhyNow(row) }}</p>
                     </div>

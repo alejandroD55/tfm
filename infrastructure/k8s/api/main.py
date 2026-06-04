@@ -565,8 +565,7 @@ def health():
 @app.get("/pipelines", tags=["Pipelines"])
 def list_pipelines(x_api_key: str = Header(default="")):
     """
-    Lista pipelines independientes (cada bootstrap con capital inicial propio).
-    Agrupa por pipeline_start/pipeline_end en reports; si faltan metadatos, segmenta por huecos de fechas.
+    Lista pipelines disponibles (colección reports; cada corrida con capital inicial propio).
     """
     check_api_key(x_api_key)
     try:
@@ -585,9 +584,9 @@ def list_pipelines(x_api_key: str = Header(default="")):
 
 @app.get("/reports", tags=["Reports"])
 def list_reports(
-    start: Optional[str] = Query(default=None, description="Filtro YYYY-MM-DD (inicio pipeline)"),
-    end: Optional[str] = Query(default=None, description="Filtro YYYY-MM-DD (fin pipeline)"),
-    x_api_key: str = Header(default=""),
+    start:              Optional[str] = Query(default=None, description="Filtro YYYY-MM-DD (inicio pipeline)"),
+    end:                Optional[str] = Query(default=None, description="Filtro YYYY-MM-DD (fin pipeline)"),
+    x_api_key:          str = Header(default=""),
 ):
     """
     Fechas para el selector del dashboard: unión de
@@ -679,12 +678,16 @@ def list_reports(
 
 
 @app.get("/reports/{date}", tags=["Reports"])
-def get_report(date: str, x_api_key: str = Header(default="")):
-    """Reporte diario completo desde MongoDB (coleccion reports)."""
+def get_report(
+    date:               str,
+    x_api_key:          str = Header(default=""),
+):
+    """Reporte diario completo (colección reports)."""
     check_api_key(x_api_key)
     if not date or len(date) != 10:
         raise HTTPException(status_code=400, detail="Formato: YYYY-MM-DD")
     db = _require_mongo()
+
     doc = db["reports"].find_one({"report_date": date})
     if not doc:
         raise HTTPException(

@@ -146,10 +146,50 @@
   }
 }
 
+.history-compare-card {
+  margin-bottom: 18px;
+  padding: 14px 14px 8px;
+  border-radius: var(--r-md);
+  border: 1px solid rgba(37, 99, 235, 0.22);
+  background: linear-gradient(165deg, rgba(37, 99, 235, 0.06) 0%, rgba(255, 255, 255, 0) 55%);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+.history-compare-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 0 4px;
+}
+
+.history-compare-title {
+  display: block;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--slate-900);
+  letter-spacing: -0.01em;
+}
+
+.history-compare-desc {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--slate-500);
+  font-weight: 500;
+}
+
+.history-compare-chart {
+  display: block;
+  width: 100%;
+  min-height: 440px;
+}
+
 .history-chart {
   display: block;
   width: 100%;
-  min-height: 300px;
+  min-height: 340px;
 }
 
 .d-flex { display: flex; }
@@ -473,6 +513,32 @@
 .th-buy  { background: var(--success-100); color: var(--success-700); }
 .th-hold { background: var(--warn-100);    color: var(--warn-700); }
 .th-sell { background: rgba(124, 58, 237, .12); color: #7c3aed; }
+
+.exposure-cycle-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 0 8px 12px;
+}
+.cycle-leg-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--slate-600);
+}
+.cycle-leg-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.cycles-section {
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+  padding-top: 4px;
+}
 
 .chart-info-icon {
   font-size: 16px !important;

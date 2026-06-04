@@ -6,8 +6,9 @@ export const environment = {
   // El script imprime estos valores al final del despliegue.
   // ──────────────────────────────────────────────────────────────────
   // Producción/K8s: nginx proxea /api → API. Desarrollo: environment.development.ts usa :8000.
-  apiGatewayUrl: '/api',
-  apiKey:        'REEMPLAZA_CON_TU_API_KEY',   // el mismo que pases a deploy_k8s.sh
+  // Desarrollo local: apunta directamente a la API en puerto 8000
+  apiGatewayUrl: 'http://localhost:8000',
+  apiKey:        '25aded11b15417a5580f631e432efad66848df1fa2f620e94d26d6b588486431',
 
   // ──────────────────────────────────────────────────────────────────
   // Credenciales locales del dashboard (no AWS)

@@ -1,5 +1,5 @@
 import { Injectable, signal } from '@angular/core';
-import { Observable, Subject, map, tap } from 'rxjs';
+import { Observable, Subject, map, tap, catchError, switchMap, of } from 'rxjs';
 import { ApiService } from './api.service';
 import { PipelineRun } from '../models/pipeline-run.model';
 import {
@@ -24,30 +24,63 @@ export class PipelineContextService {
   loadPipelines(): Observable<void> {
     this.loading.set(true);
     return this.api.listPipelines().pipe(
-      map(resp =>
-        (resp.pipelines ?? []).map(p => ({
-          id: p.id,
-          label: formatPipelineRangeLabel(p.start_date, p.end_date),
-          startDate: p.start_date,
-          endDate: p.end_date,
-          reportCount: p.report_count ?? 0,
-          initialCapital: p.initial_capital ?? 10_000,
-          firstReportDate: p.first_report_date,
-          lastReportDate: p.last_report_date,
-        } as PipelineRun))
+      map(resp => (resp.pipelines ?? []).map(p => this._mapPipeline(p))),
+      // Fallback: si la API no tiene /pipelines o devuelve vacío,
+      // construimos un pipeline "Historial completo" desde /reports
+      switchMap(list => list.length > 0
+        ? of(list)
+        : this._buildFallbackPipeline()
       ),
+      catchError(() => this._buildFallbackPipeline()),
       tap(list => {
         this.pipelines.set(list);
         const saved = sessionStorage.getItem(STORAGE_KEY);
-        const selected =
-          list.find(p => p.id === saved) ?? list[0] ?? null;
+        const selected = list.find(p => p.id === saved) ?? list[0] ?? null;
         this.selectedPipeline.set(selected);
-        if (selected) {
-          sessionStorage.setItem(STORAGE_KEY, selected.id);
-        }
+        if (selected) sessionStorage.setItem(STORAGE_KEY, selected.id);
         this.loading.set(false);
       }),
       map(() => void 0),
+    );
+  }
+
+  private _mapPipeline(p: any): PipelineRun {
+    return {
+      id:               p.id,
+      label:            p.label ?? formatPipelineRangeLabel(p.start_date, p.end_date),
+      startDate:        p.start_date,
+      endDate:          p.end_date,
+      reportCount:      p.report_count ?? 0,
+      initialCapital:   p.initial_capital ?? 10_000,
+      firstReportDate:  p.first_report_date,
+      lastReportDate:   p.last_report_date,
+      type:             p.type ?? 'independent',
+      sourcePipelines:  p.source_pipelines ?? [],
+    };
+  }
+
+  /** Construye un pipeline "Historial completo" desde las fechas disponibles en /reports */
+  private _buildFallbackPipeline(): Observable<PipelineRun[]> {
+    return this.api.listReports().pipe(
+      map(resp => {
+        const dates = (resp.dates ?? []).map((d: any) => d.date).sort();
+        if (!dates.length) return [];
+        const start = dates[0];
+        const end   = dates[dates.length - 1];
+        const run: PipelineRun = {
+          id:            `${start}_${end}`,
+          label:         formatPipelineRangeLabel(start, end),
+          startDate:     start,
+          endDate:       end,
+          reportCount:   dates.length,
+          initialCapital:10_000,
+          firstReportDate: start,
+          lastReportDate:  end,
+          type:          'independent',
+        };
+        return [run];
+      }),
+      catchError(() => of([]))
     );
   }
 
@@ -75,6 +108,7 @@ export class PipelineContextService {
   /** Etiqueta legible del rango (selector y cabeceras de vista). */
   rangeLabel(run: PipelineRun | null = this.selectedPipeline()): string {
     if (!run) return '';
+    if (run.label) return run.label;
     return formatPipelineRangeLabel(run.startDate, run.endDate);
   }
 

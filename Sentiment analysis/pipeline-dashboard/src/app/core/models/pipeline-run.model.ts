@@ -1,11 +1,13 @@
-/** Ejecución bootstrap independiente (capital inicial propio, p. ej. 10.000 €). */
+/** Ejecución bootstrap (corrida independiente en reports). */
 export interface PipelineRun {
-  id: string;
-  label: string;
-  startDate: string;
-  endDate: string;
-  reportCount: number;
-  initialCapital: number;
+  id:              string;
+  label:           string;
+  startDate:       string;
+  endDate:         string;
+  reportCount:     number;
+  initialCapital:  number;
   firstReportDate?: string;
-  lastReportDate?: string;
+  lastReportDate?:  string;
+  type?:              'independent';
+  sourcePipelines?:   string[];
 }

@@ -880,7 +880,19 @@ def handler(event, context):
                     vix = macro_detail.get("vix")
                     risk_reg = (macro_context or {}).get("risk_regime")
                     regime = detect_market_regime_simple(vix=vix, risk_regime=risk_reg)
-                    target_exp = prob_to_exposure(prob_up, regime)
+                    base_exp = prob_to_exposure(prob_up, regime)
+
+                    # ── Conviction scaling (Gap 1: position sizing by signal quality) ──
+                    # Los efectos de la contribution_analysis dicen si los indicadores
+                    # apuntan en la misma dirección (high conviction → más exposición)
+                    # o se contradicen (low conviction → más prudencia).
+                    _signal_result_detail = signal_result[3] if len(signal_result) > 3 else {}
+                    _conv_label = _signal_result_detail.get("conviction_label", "unknown") \
+                        if isinstance(_signal_result_detail, dict) else "unknown"
+                    _CONV_MULT = {"high": 1.10, "medium": 1.00, "low": 0.85, "unknown": 0.95}
+                    target_exp = round(
+                        min(1.0, max(0.0, base_exp * _CONV_MULT.get(_conv_label, 1.0))), 3
+                    )
                     fund_stress = None
                     catalyst_count = 0
                     catalyst_net = 0.0

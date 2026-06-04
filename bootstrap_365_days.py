@@ -4,6 +4,17 @@ local_backtest_runner.py — Pipeline TFM local: 365 días de backtesting
 =======================================================================
 Orquesta el flujo de MLOps en local para que sea EXACTAMENTE IGUAL
 al entorno de AWS (Lambdas + StepFunctions).
+
+Modos CLI:
+  (default)           Ingesta noticias + FinBERT + inferencia + reportes.
+  --decisions-only    Re-inferencia sin APIs de noticias (lee sentiment_scores PG).
+  --interpret-only    Igual que decisions-only pero OHLCV/macro desde PG/Mongo,
+                      valida caché por (fecha, ticker); reports llevan
+                      continuous_run_id interpret-YYYY-MM-DD_YYYY-MM-DD
+
+Ejemplo backtest continuo con datos ya cacheados:
+  .venv/bin/python bootstrap_365_days.py --interpret-only --start 2025-01-01 --end 2026-06-02
+  .venv/bin/python scripts/run_interpret_pipeline.py --start 2025-01-01 --end 2026-06-02
 """
 
 import groq
@@ -97,6 +108,15 @@ def get_args():
         help=(
             "Re-ejecuta inferencia/exposición/señales/reportes sin ingesta de noticias "
             "(lee sentiment_scores y macro desde PG). Equivalente a scripts/recompute_decisions.py."
+        ),
+    )
+    parser.add_argument(
+        "--interpret-only",
+        action="store_true",
+        help=(
+            "Backtest continuo solo con datos cacheados (PG/Mongo): sin Finnhub/FinBERT/yfinance. "
+            "Falla si falta technical_indicators, sentiment_scores o macro por día. "
+            "continuous_run_id en reports: interpret-{start}_{end}."
         ),
     )
     return parser.parse_args()
@@ -1056,6 +1076,143 @@ def fetch_ohlcv_all(
             df.index = pd.to_datetime(df.index)
             result[ticker] = df
     return result
+
+
+def fetch_ohlcv_from_pg(
+    conn,
+    tickers: List[str],
+    start_date: date,
+    end_date: date,
+) -> Dict[str, pd.DataFrame]:
+    """
+    Reconstruye series OHLCV desde technical_indicators (sin yfinance).
+    Usa close_price como proxy Open/High/Low cuando no hay barras completas.
+    """
+    download_start = start_date - timedelta(days=350)
+    result: Dict[str, pd.DataFrame] = {}
+    with conn.cursor() as c:
+        for ticker in tickers:
+            c.execute(
+                """
+                SELECT batch_date, close_price
+                FROM technical_indicators
+                WHERE ticker = %s AND batch_date >= %s AND batch_date <= %s
+                ORDER BY batch_date
+                """,
+                (ticker, download_start, end_date),
+            )
+            rows = c.fetchall() or []
+            if not rows:
+                continue
+            idx = pd.to_datetime([r[0] for r in rows])
+            close = pd.Series([float(r[1]) for r in rows], index=idx)
+            df = pd.DataFrame(
+                {
+                    "Close": close,
+                    "Open": close,
+                    "High": close,
+                    "Low": close,
+                    "Volume": 0.0,
+                }
+            )
+            df.index = pd.to_datetime(df.index)
+            result[ticker] = df
+    return result
+
+
+def fetch_vix_from_pg(conn, start_date: date, end_date: date) -> pd.Series:
+    """Serie VIX desde market_regime_state (sin API externa)."""
+    with conn.cursor() as c:
+        c.execute(
+            """
+            SELECT batch_date, vix
+            FROM market_regime_state
+            WHERE batch_date >= %s AND batch_date <= %s AND vix IS NOT NULL
+            ORDER BY batch_date
+            """,
+            (start_date, end_date),
+        )
+        rows = c.fetchall() or []
+    if not rows:
+        return pd.Series(dtype=float)
+    idx = pd.to_datetime([r[0] for r in rows])
+    return pd.Series([float(r[1]) for r in rows], index=idx)
+
+
+def _has_news_cache(cursor, date_str: str, ticker: str) -> bool:
+    cursor.execute(
+        "SELECT 1 FROM sentiment_scores WHERE batch_date = %s AND ticker = %s LIMIT 1",
+        (date_str, ticker),
+    )
+    if cursor.fetchone():
+        return True
+    try:
+        from mongo_utils import read_raw_news_ticker
+
+        return bool(read_raw_news_ticker(date_str, ticker))
+    except Exception:
+        return False
+
+
+def validate_interpret_cache(
+    conn,
+    tickers: List[str],
+    date_strs: List[str],
+) -> None:
+    """Falla con mensaje claro si falta caché requerida para --interpret-only."""
+    missing_ti: List[str] = []
+    missing_news: List[str] = []
+    missing_macro: List[str] = []
+    with conn.cursor() as c:
+        for date_str in date_strs:
+            c.execute(
+                "SELECT 1 FROM market_regime_state WHERE batch_date = %s LIMIT 1",
+                (date_str,),
+            )
+            if not c.fetchone():
+                c.execute(
+                    "SELECT 1 FROM macro_sentiment_scores WHERE batch_date = %s LIMIT 1",
+                    (date_str,),
+                )
+                if not c.fetchone():
+                    missing_macro.append(date_str)
+            for ticker in tickers:
+                c.execute(
+                    """
+                    SELECT 1 FROM technical_indicators
+                    WHERE batch_date = %s AND ticker = %s
+                    """,
+                    (date_str, ticker),
+                )
+                if not c.fetchone():
+                    missing_ti.append(f"{date_str}/{ticker}")
+                if not _has_news_cache(c, date_str, ticker):
+                    missing_news.append(f"{date_str}/{ticker}")
+    problems = []
+    if missing_ti:
+        problems.append(
+            f"technical_indicators ({len(missing_ti)} huecos): "
+            + ", ".join(missing_ti[:8])
+            + ("…" if len(missing_ti) > 8 else "")
+        )
+    if missing_news:
+        problems.append(
+            f"sentiment_scores o raw_news ({len(missing_news)} huecos): "
+            + ", ".join(missing_news[:8])
+            + ("…" if len(missing_news) > 8 else "")
+        )
+    if missing_macro:
+        problems.append(
+            f"market_regime_state/macro_sentiment_scores ({len(missing_macro)} días): "
+            + ", ".join(missing_macro[:8])
+            + ("…" if len(missing_macro) > 8 else "")
+        )
+    if problems:
+        raise SystemExit(
+            "interpret-only: caché incompleta en PostgreSQL.\n  - "
+            + "\n  - ".join(problems)
+            + "\nEjecuta un bootstrap completo previo o acota --start/--end."
+        )
 
 
 def fetch_news_historical(ticker: str, start_d: date, end_d: date) -> Dict[str, List]:
@@ -2532,7 +2689,8 @@ def get_explanations_sample(connection, report_date, limit=10):
     cursor = connection.cursor()
     cursor.execute(
         """
-        SELECT e.ticker, ts.signal, ts.prob_up, ts.prob_down, e.sentiment_state, e.rsi_state, e.trend_state, e.volatility_state
+        SELECT e.ticker, ts.exposure_recommendation, ts.signal, ts.prob_up, ts.prob_down,
+               e.sentiment_state, e.rsi_state, e.trend_state, e.volatility_state
         FROM signal_explanations e JOIN trading_signals ts ON ts.batch_date = e.batch_date AND ts.ticker = e.ticker
         WHERE e.batch_date = %s ORDER BY ts.prob_up DESC LIMIT %s
     """,
@@ -2540,21 +2698,24 @@ def get_explanations_sample(connection, report_date, limit=10):
     )
     rows = cursor.fetchall()
     cursor.close()
-    return [
-        {
-            "ticker": r[0],
-            "signal": r[1],
-            "prob_up": round(float(r[2]), 4) if r[2] is not None else None,
-            "prob_down": round(float(r[3]), 4) if r[3] is not None else None,
-            "evidence": {
-                "sentiment": r[4],
-                "rsi": r[5],
-                "trend": r[6],
-                "volatility": r[7],
-            },
-        }
-        for r in rows
-    ]
+    out = []
+    for r in rows:
+        rec = r[1] or _exposure_recommendation_from_signal({"signal": r[2]})
+        out.append(
+            {
+                "ticker": r[0],
+                "exposure_recommendation": rec,
+                "prob_up": round(float(r[3]), 4) if r[3] is not None else None,
+                "prob_down": round(float(r[4]), 4) if r[4] is not None else None,
+                "evidence": {
+                    "sentiment": r[5],
+                    "rsi": r[6],
+                    "trend": r[7],
+                    "volatility": r[8],
+                },
+            }
+        )
+    return out
 
 
 def compute_benchmark(signals_df):
@@ -2711,6 +2872,7 @@ def _process_ticker_day(
     previous_exposure: float = 0.0,  # exposición suavizada del día anterior (arranca en 0%)
     vix: Optional[float] = None,     # VIX del día (para detect_market_regime)
     decisions_only: bool = False,
+    interpret_only: bool = False,
 ) -> Optional[Dict]:
     """
     Procesa un ticker para un día concreto en un hilo independiente.
@@ -2731,61 +2893,91 @@ def _process_ticker_day(
             else None
         )
         if not ind:
+            if interpret_only:
+                raise RuntimeError(
+                    f"interpret-only: sin OHLCV/indicadores para {date_str}/{ticker} "
+                    f"(revisa technical_indicators y ventana de lookback)"
+                )
             return None
 
-        # ── OHLCV → MongoDB + Aurora ────────────────────────────────────────
-        target_dt = pd.to_datetime(date_str)
-        if target_dt in ohlcv_df.index:
-            row_data = ohlcv_df.loc[target_dt]
-            upsert_ohlcv_bulk(
-                date_str,
-                ticker,
-                [
-                    {
-                        "date": date_str,
-                        "close": ind["close"],
-                        "open": float(row_data.get("Open", 0) or 0),
-                        "high": float(row_data.get("High", 0) or 0),
-                        "low": float(row_data.get("Low", 0) or 0),
-                        "volume": float(row_data.get("Volume", 0) or 0),
-                    }
-                ],
-            )
-
-        with thread_conn.cursor() as c:
-            c.execute(
-                """
-                INSERT INTO technical_indicators
-                    (batch_date, ticker, close_price, rsi_14, sma_20, sma_50, bb_upper, bb_middle, bb_lower)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                ON CONFLICT (batch_date, ticker) DO NOTHING
-            """,
-                (
+        if not interpret_only:
+            # ── OHLCV → MongoDB + Aurora ────────────────────────────────────────
+            target_dt = pd.to_datetime(date_str)
+            if target_dt in ohlcv_df.index:
+                row_data = ohlcv_df.loc[target_dt]
+                upsert_ohlcv_bulk(
                     date_str,
                     ticker,
-                    ind["close"],
-                    ind["rsi_14"],
-                    ind["sma_20"],
-                    ind["sma_50"],
-                    ind["bb_upper"],
-                    ind["bb_middle"],
-                    ind["bb_lower"],
-                ),
-            )
-        thread_conn.commit()
+                    [
+                        {
+                            "date": date_str,
+                            "close": ind["close"],
+                            "open": float(row_data.get("Open", 0) or 0),
+                            "high": float(row_data.get("High", 0) or 0),
+                            "low": float(row_data.get("Low", 0) or 0),
+                            "volume": float(row_data.get("Volume", 0) or 0),
+                        }
+                    ],
+                )
 
-        if decisions_only:
+            with thread_conn.cursor() as c:
+                c.execute(
+                    """
+                    INSERT INTO technical_indicators
+                        (batch_date, ticker, close_price, rsi_14, sma_20, sma_50,
+                         bb_upper, bb_middle, bb_lower,
+                         sma_200, adx_14, ema_55_pct, momentum_20d, momentum_5d)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (batch_date, ticker) DO UPDATE SET
+                        close_price  = EXCLUDED.close_price,
+                        rsi_14       = EXCLUDED.rsi_14,
+                        sma_20       = EXCLUDED.sma_20,
+                        sma_50       = EXCLUDED.sma_50,
+                        bb_upper     = EXCLUDED.bb_upper,
+                        bb_middle    = EXCLUDED.bb_middle,
+                        bb_lower     = EXCLUDED.bb_lower,
+                        sma_200      = EXCLUDED.sma_200,
+                        adx_14       = EXCLUDED.adx_14,
+                        ema_55_pct   = EXCLUDED.ema_55_pct,
+                        momentum_20d = EXCLUDED.momentum_20d,
+                        momentum_5d  = EXCLUDED.momentum_5d
+                """,
+                    (
+                        date_str,
+                        ticker,
+                        ind["close"],
+                        ind["rsi_14"],
+                        ind["sma_20"],
+                        ind["sma_50"],
+                        ind["bb_upper"],
+                        ind["bb_middle"],
+                        ind["bb_lower"],
+                        ind.get("sma_200"),
+                        ind.get("adx_14"),
+                        ind.get("ema_55_pct"),
+                        ind.get("momentum_20d"),
+                        ind.get("momentum_5d"),
+                    ),
+                )
+            thread_conn.commit()
+
+        if decisions_only or interpret_only:
             with thread_conn.cursor() as c:
                 sentiment_samples, n_pg = fetch_sentiment_samples_from_pg(
                     c, date_str, ticker
+                )
+            if interpret_only and n_pg == 0 and not _has_news_cache(c, date_str, ticker):
+                raise RuntimeError(
+                    f"interpret-only: sin sentiment_scores ni raw_news para "
+                    f"{date_str}/{ticker}"
                 )
             kpis = {
                 "total_headlines": n_pg,
                 "processed_headlines": n_pg,
             }
             _news_debug(
-                f"[decisions-only] {date_str} {ticker}: "
-                f"sentiment_scores PG n={n_pg}"
+                f"[{'interpret' if interpret_only else 'decisions'}-only] "
+                f"{date_str} {ticker}: sentiment_scores PG n={n_pg}"
             )
         else:
             # ── Ingesta multi-fuente ─────────────────────────────────────────
@@ -3147,13 +3339,42 @@ def _process_ticker_day(
             vix=vix,
             drawdown_from_ath=ind.get("drawdown_from_ath"),
         )
-        target_exposure   = prob_to_exposure(prob_up, market_regime_exp)
+
+        # ── Conviction Early (para escalar exposición) ────────────────────
+        # Calculamos conviction ANTES del sizing para que influya en la exposición.
+        # Si los indicadores apuntan en la misma dirección → más agresivos.
+        # Si se contradicen → más prudentes. "Position sizing by signal quality."
+        _early_effects = (contribution_analysis or {}).get("effects", {})
+        _early_deltas  = [v.get("delta_prob_up", 0) for v in _early_effects.values()
+                          if v.get("applicable")]
+        if len(_early_deltas) >= 2:
+            _pos = sum(1 for d in _early_deltas if d > 0.02)
+            _neg = sum(1 for d in _early_deltas if d < -0.02)
+            _conv_score = round(max(_pos, _neg) / len(_early_deltas), 2)
+            _conv_label = (
+                "high"   if _conv_score >= 0.75 else
+                "medium" if _conv_score >= 0.50 else
+                "low"
+            )
+        else:
+            _conv_score = 0.5
+            _conv_label = "unknown"
+
+        # Multiplicador de exposición por convicción
+        # Cuando TODOS los indicadores apuntan igual → aumentar exposición un 10%
+        # Cuando las señales se contradicen → reducir un 15% (prudencia ante incertidumbre)
+        _CONV_MULT = {"high": 1.10, "medium": 1.00, "low": 0.85, "unknown": 0.95}
+        _conv_mult  = _CONV_MULT.get(_conv_label, 1.0)
+
+        base_exposure     = prob_to_exposure(prob_up, market_regime_exp)
+        target_exposure   = round(min(1.0, max(0.0, base_exposure * _conv_mult)), 3)
         smoothed_exposure = smooth_exposure(target_exposure, previous_exposure)
         exposure_delta    = round(smoothed_exposure - previous_exposure, 4)
 
         logger.debug(
             f"[EXPOSURE] {ticker} {date_str}: regime={market_regime_exp} "
-            f"prob_up={prob_up:.3f} target={target_exposure:.3f} "
+            f"prob_up={prob_up:.3f} base={base_exposure:.3f} "
+            f"conv={_conv_label}({_conv_mult:.2f}x) → target={target_exposure:.3f} "
             f"smooth={smoothed_exposure:.3f} Δ={exposure_delta:+.3f}"
         )
 
@@ -3381,7 +3602,10 @@ def run_pipeline(
     end_date_str=None,
     tickers_override=None,
     decisions_only: bool = False,
+    interpret_only: bool = False,
 ):
+    if interpret_only:
+        decisions_only = True
     # Fechas por argumento o por defecto
     end_d = (
         pd.to_datetime(end_date_str).date() if end_date_str else datetime.now().date()
@@ -3393,21 +3617,42 @@ def run_pipeline(
     )
 
     active_tickers = tickers_override if tickers_override else TICKERS
-    mode_label = "decisions-only" if decisions_only else "full bootstrap"
+    if interpret_only:
+        mode_label = "interpret-only"
+    elif decisions_only:
+        mode_label = "decisions-only"
+    else:
+        mode_label = "full bootstrap"
+    continuous_run_id = (
+        f"interpret-{start_d.isoformat()}_{end_d.isoformat()}" if interpret_only else None
+    )
     logger.info(
         f"🚀 Iniciando Bootstrap Local TFM ({mode_label}) | "
         f"Rango: {start_d} a {end_d} | Tickers: {active_tickers}"
     )
+    if continuous_run_id:
+        logger.info(f"   run_id continuo: {continuous_run_id}")
     if DEBUG_NEWS:
         logger.info(
             f"🔎 Debug noticias activo | headlines={DEBUG_NEWS_HEADLINES} | "
             f"refresh_cache={REFRESH_NEWS_CACHE}"
         )
 
+    conn = get_db_connection()
+
     # ── 1. DESCARGA INICIAL DE DATOS ──
-    # Para poder calcular indicadores en start_d, la lambda descarga días extra.
-    ohlcv_all = fetch_ohlcv_all(active_tickers, start_d, end_d)
-    vix_series = fetch_vix_historical(start_d, end_d)
+    if interpret_only:
+        ohlcv_all = fetch_ohlcv_from_pg(conn, active_tickers, start_d, end_d)
+        missing_ohlcv = [t for t in active_tickers if t not in ohlcv_all]
+        if missing_ohlcv:
+            raise SystemExit(
+                "interpret-only: sin filas en technical_indicators para tickers: "
+                + ", ".join(missing_ohlcv)
+            )
+        vix_series = fetch_vix_from_pg(conn, start_d, end_d)
+    else:
+        ohlcv_all = fetch_ohlcv_all(active_tickers, start_d, end_d)
+        vix_series = fetch_vix_historical(start_d, end_d)
 
     news_all: Dict[str, Dict] = {}
     alphavantage_news: Dict[str, Dict] = {}
@@ -3434,7 +3679,6 @@ def run_pipeline(
                 newsapi_ticker_news[t] = newsapi_data
         logger.info("✅ Prefetch completado")
 
-    conn = get_db_connection()
     get_bn_model()
     if not decisions_only:
         get_finbert()
@@ -3469,6 +3713,13 @@ def run_pipeline(
     today_date = datetime.now().date()
     business_days = [bd for bd in business_days if bd.date() <= today_date]
 
+    if interpret_only:
+        validate_interpret_cache(
+            conn,
+            active_tickers,
+            [bd.strftime("%Y-%m-%d") for bd in business_days],
+        )
+
     # ── Hysteresis: historial de señales CONFIRMADAS por ticker (ventana deslizante) ──
     # Se mantiene entre días para detectar N SELLs consecutivos antes de salir.
     signal_history_per_ticker: dict = {t: [] for t in active_tickers}
@@ -3492,6 +3743,7 @@ def run_pipeline(
     # ── 2. BUCLE DIARIO ──
     for bd in tqdm(business_days, desc="Simulando días", unit="día"):
         date_str = bd.strftime("%Y-%m-%d")
+        # batch_log tiene UNIQUE(run_id): un id por día; el run continuo va en reports.
         run_id = f"backtest-{date_str}"
         global_kpis = {"total_headlines": 0, "processed_headlines": 0}
         _news_debug(f"[day-start] {date_str}: iniciando simulacion diaria")
@@ -3611,6 +3863,7 @@ def run_pipeline(
                 exposure_history_per_ticker[ticker],        # Fase 1: exposición previa
                 vix,                                        # Fase 1: VIX para detect_regime
                 decisions_only,
+                interpret_only,
             ): ticker
             for ticker in active_tickers
         }
@@ -3670,6 +3923,7 @@ def run_pipeline(
                 "report_date": date_str,
                 "pipeline_start": start_d.isoformat(),
                 "pipeline_end": end_d.isoformat(),
+                "continuous_run_id": continuous_run_id,
                 "data_period_days": period_days,
                 "generated_at": datetime.now().isoformat(),
                 "inference_engine": "bayesian_network",
@@ -3724,9 +3978,22 @@ def run_pipeline(
                     "initial_capital": INITIAL_CAP,
                     "risk_free_rate": RISK_FREE_RATE,
                     "period_days": DAYS_BACK,
-                    "strategy_type": "Probabilistic Exposure",
+                    "strategy_type": (
+                        "Probabilistic Exposure (interpret-only continuous)"
+                        if interpret_only
+                        else "Probabilistic Exposure"
+                    ),
                     "sharpe_annualized": True,
-                    "limitation": "El backtesting asume ejecución al cierre. Estrategia de exposición continua: portfolio_return = market_return × smoothed_exposure. Arranca en 0% invertido.",
+                    "limitation": (
+                        "Backtest continuo interpret-only: sin reinicio trimestral; "
+                        "exposición EWM y métricas acumuladas desde pipeline_start."
+                        if interpret_only
+                        else (
+                            "El backtesting asume ejecución al cierre. Estrategia de "
+                            "exposición continua: portfolio_return = market_return × "
+                            "smoothed_exposure. Arranca en 0% invertido."
+                        )
+                    ),
                 },
                 # ── Fase 1: Probabilistic Exposure Management ─────────────────
                 "exposure_backtesting_metrics": exp_metrics,
@@ -3776,9 +4043,11 @@ if __name__ == "__main__":
     tickers_list = (
         [t.strip().upper() for t in args.tickers.split(",")] if args.tickers else None
     )
+    interpret_only = getattr(args, "interpret_only", False)
     run_pipeline(
         args.start,
         args.end,
         tickers_override=tickers_list,
-        decisions_only=getattr(args, "decisions_only", False),
+        decisions_only=getattr(args, "decisions_only", False) or interpret_only,
+        interpret_only=interpret_only,
     )

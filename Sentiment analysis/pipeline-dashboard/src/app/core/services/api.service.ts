@@ -96,14 +96,16 @@ export class ApiService {
   // ─── Pipelines (ejecuciones bootstrap) ───────────────────────────
   listPipelines(): Observable<{
     pipelines: {
-      id: string;
-      label: string;
-      start_date: string;
-      end_date: string;
-      report_count: number;
-      initial_capital: number;
+      id:                 string;
+      label?:             string;
+      start_date:         string;
+      end_date:           string;
+      report_count:       number;
+      initial_capital:    number;
       first_report_date?: string;
-      last_report_date?: string;
+      last_report_date?:  string;
+      type?:              'independent';
+      source_pipelines?:  string[];
     }[];
     total: number;
   }> {
@@ -115,7 +117,7 @@ export class ApiService {
   listReports(start?: string, end?: string): Observable<{ dates: ReportDateEntry[]; total: number }> {
     let params = new HttpParams();
     if (start) params = params.set('start', start);
-    if (end) params = params.set('end', end);
+    if (end)   params = params.set('end', end);
     return this.http.get<any>(`${this.baseUrl}/reports`,
       { headers: this.authHeaders, params });
   }

@@ -88,7 +88,7 @@
             [constructorType]="'stockChart'"
             [options]="exposureChartOptions"
             [(update)]="exposureChartUpdate"
-            style="display: block; width: 100%; height: 280px"
+            style="display: block; width: 100%; height: 380px"
           >
           </highcharts-chart>
         </div>
@@ -96,6 +96,39 @@
           <span class="th-buy">≥ 70% — Alta convicción alcista</span>
           <span class="th-hold">50–70% — Posición moderada (régimen NEUTRAL)</span>
           <span class="th-sell">≤ 50% — Capital protegido (régimen adverso)</span>
+        </div>
+
+        <div class="cycles-section">
+          <div class="card-head" style="margin: 20px 0 8px">
+            <div class="card-title">
+              <mat-icon>scatter_plot</mat-icon>
+              <span>Calendario de recomendaciones de exposición</span>
+            </div>
+            <span class="card-sub">Marcadores por día y activo según exposure_recommendation (muestra top del informe diario)</span>
+          </div>
+          <div class="exposure-cycle-legend">
+            @for (leg of [
+              { label: '↑↑ Aumentar fuerte', color: '#15803d' },
+              { label: '↑ Aumentar', color: '#22c55e' },
+              { label: '→ Mantener', color: '#94a3b8' },
+              { label: '↓ Reducir', color: '#a78bfa' },
+              { label: '↓↓ Reducir fuerte', color: '#7c3aed' }
+            ]; track leg.label) {
+              <span class="cycle-leg-item">
+                <span class="cycle-leg-dot" [style.background]="leg.color"></span>{{ leg.label }}
+              </span>
+            }
+          </div>
+          <div class="chart-host chart-host-tall">
+            <highcharts-chart
+              [Highcharts]="Highcharts"
+              [constructorType]="'stockChart'"
+              [options]="cyclesChartOptions"
+              [(update)]="cyclesChartUpdate"
+              style="display: block; width: 100%; height: 360px"
+            >
+            </highcharts-chart>
+          </div>
         </div>
 
         <!-- Desglose interactivo por activo -->
@@ -305,8 +338,26 @@
           <span>{{ historyError }}</span>
         </div>
       } @else {
+        <article class="history-compare-card">
+          <header class="history-compare-head">
+            <div>
+              <span class="history-compare-title">Rentabilidad IA vs Mercado (B&H)</span>
+              <span class="history-compare-desc">Comparativa acumulada en el tiempo · zoom, rangos y exportación desde la barra superior</span>
+            </div>
+            <mat-icon class="chart-info-icon" [matTooltip]="chartTooltips['historyCompare']">info_outline</mat-icon>
+          </header>
+          <highcharts-chart
+            [Highcharts]="Highcharts"
+            [constructorType]="'stockChart'"
+            [options]="historyCompareChartOptions"
+            [(update)]="historyCompareChartUpdate"
+            class="history-compare-chart"
+          >
+          </highcharts-chart>
+        </article>
+
         <div class="history-grid d-flex">
-          @for (metric of historyMetricOptions; track metric.value) {
+          @for (metric of historySecondaryMetrics; track metric.value) {
             <article class="history-metric-card">
               <header class="history-metric-head">
                 <span class="history-metric-title">{{ metric.label }}</span>

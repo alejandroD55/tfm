@@ -377,3 +377,18 @@
     }
   }
 }
+
+/* Badge pipeline fusionado */
+.sb-merged-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: rgba(99, 102, 241, .15);
+  color: #6366f1;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}

@@ -18,9 +18,10 @@ import { TraceService } from '../../core/services/trace.service';
 import {
   ApiService, NewsDetailResponse, NewsArticleDetail, MacroContext, MacroArticle,
   TickerPerformanceResponse, FeatureSnapshot, InferenceModelId,
+  ExposurePositionPoint,
 } from '../../core/services/api.service';
 import {
-  TickerView, ReportDateEntry, DailyReport,
+  TickerView, ReportDateEntry, DailyReport, SignalExplanation,
   SentimentState, RsiState, TrendState, VolatilityState,
 } from '../../core/models/report.model';
 import { TickerTrace } from '../../core/models/trace.model';
@@ -55,6 +56,9 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
   selectedDate = '';
   filterExposure = '';   // INCREASE_STRONG | INCREASE_MILD | MAINTAIN | REDUCE_MILD | REDUCE_STRONG | ''
   expandedRows = new Set<string>();
+  currentReport: DailyReport | null = null;
+  positionCache = new Map<string, ExposurePositionPoint | null>();
+  positionLoading = new Set<string>();
 
   // 1. SOLUCIÓN: Declaramos la variable que el HTML está buscando para los Smart Donuts
   tickerViews: TickerView[] = [];
@@ -166,6 +170,8 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     this.performanceChartOptions = {};
     this.performanceError = '';
     this.expandedRows.clear();
+    this.positionCache.clear();
+    this.currentReport = null;
     const entry = this.availableDates.find(d => d.date === date);
     this.hasTraceForDate = !!(entry as any)?.has_trace;
     this.reportSvc.loadReport(date).subscribe({
@@ -179,6 +185,7 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   private processReport(report: DailyReport) {
+    this.currentReport = report;
     const views = this.reportSvc.buildTickerViews(report);
     
     // 2. SOLUCIÓN: Guardamos los datos en la variable para que el HTML pueda contar la longitud
@@ -429,7 +436,94 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
       this.loadTickerTrace(ticker);
       this.loadFeatureSnapshot(ticker);
       this.loadInlinePerformanceChart(ticker);
+      this.loadExposurePosition(ticker);
     }
+  }
+
+  get topDayExplanations(): SignalExplanation[] {
+    return this.currentReport ? this.reportSvc.topSignalExplanations(this.currentReport) : [];
+  }
+
+  getDayExplanation(ticker: string): SignalExplanation | undefined {
+    return this.currentReport ? this.reportSvc.explanationForTicker(this.currentReport, ticker) : undefined;
+  }
+
+  focusTickerExplanation(ticker: string) {
+    if (!this.expandedRows.has(ticker)) {
+      this.toggleRow(ticker);
+    }
+  }
+
+  loadExposurePosition(ticker: string) {
+    if (this.positionCache.has(ticker) || this.positionLoading.has(ticker)) return;
+    this.positionLoading.add(ticker);
+    this.apiSvc.getExposurePositions(ticker, 120).pipe(
+      catchError(() => of(null))
+    ).subscribe(resp => {
+      this.positionLoading.delete(ticker);
+      const pt = resp?.timeline?.find(p => p.date === this.selectedDate) ?? null;
+      this.positionCache.set(ticker, pt);
+    });
+  }
+
+  getExposurePosition(ticker: string): ExposurePositionPoint | null {
+    return this.positionCache.get(ticker) ?? null;
+  }
+
+  isPositionLoading(ticker: string): boolean {
+    return this.positionLoading.has(ticker);
+  }
+
+  smoothedExposurePct(ticker: string): number | null {
+    const expl = this.getDayExplanation(ticker);
+    if (expl?.smoothed_exposure != null) {
+      return Math.round(expl.smoothed_exposure * 1000) / 10;
+    }
+    const pos = this.getExposurePosition(ticker);
+    if (pos?.smoothed_exposure != null) {
+      return Math.round(pos.smoothed_exposure * 1000) / 10;
+    }
+    const row = this.tickerViews.find(v => v.ticker === ticker);
+    return row ? row.exposure_pct : null;
+  }
+
+  marketRegimeForTicker(ticker: string): string | null {
+    const expl = this.getDayExplanation(ticker);
+    if (expl?.market_regime) return expl.market_regime;
+    const pos = this.getExposurePosition(ticker);
+    if (pos?.confirmed_regime) return pos.confirmed_regime;
+    if (pos?.raw_regime) return pos.raw_regime;
+    return null;
+  }
+
+  macroRiskRegime(): string | null {
+    return this.macroContext?.risk_regime
+      ?? this.getFeatureSnapshot(this.performanceTicker)?.macro?.risk_regime
+      ?? null;
+  }
+
+  macroSentimentLabel(): string | null {
+    return this.macroContext?.macro_sentiment
+      ?? this.getFeatureSnapshot(this.performanceTicker)?.macro?.macro_sentiment
+      ?? null;
+  }
+
+  marketRegimeLabel(regime: string | null | undefined): string {
+    if (!regime) return 'N/D';
+    const m: Record<string, string> = {
+      BULL: 'Alcista (BULL)', NEUTRAL: 'Neutral', HIGH_VOL: 'Alta volatilidad', BEAR: 'Bajista (BEAR)',
+      RISK_ON: 'Risk-On', RISK_OFF: 'Risk-Off',
+    };
+    return m[regime] ?? regime;
+  }
+
+  expRecColor(rec: string | null | undefined): string {
+    if (!rec) return '#94a3b8';
+    const m: Record<string, string> = {
+      INCREASE_STRONG: '#15803d', INCREASE_MILD: '#22c55e', MAINTAIN: '#94a3b8',
+      REDUCE_MILD: '#a78bfa', REDUCE_STRONG: '#7c3aed',
+    };
+    return m[rec] ?? '#94a3b8';
   }
 
   loadFeatureSnapshot(ticker: string) {
@@ -502,13 +596,15 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   /** Etiqueta corta para badge de recomendación */
-  expRecBadgeLabel(rec: string): string {
+  expRecBadgeLabel(rec: string | null | undefined): string {
+    if (!rec) return 'N/D';
     const m: Record<string, string> = {
       INCREASE_STRONG: '↑↑ Aumentar fuerte',
       INCREASE_MILD:   '↑ Aumentar',
       MAINTAIN:        '→ Mantener',
       REDUCE_MILD:     '↓ Reducir',
       REDUCE_STRONG:   '↓↓ Reducir fuerte',
+      BUY: 'Comprar', HOLD: 'Mantener', SELL: 'Vender',
     };
     return m[rec] ?? rec.replace(/_/g, ' ');
   }
@@ -568,18 +664,21 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   // ── Helpers de exposición ─────────────────────────────────────────────────
-  expRecLabel(rec: string): string {
+  expRecLabel(rec: string | null | undefined): string {
+    if (!rec) return 'N/D';
     const m: Record<string, string> = {
       INCREASE_STRONG: '↑↑ Aumentar fuerte',
       INCREASE_MILD:   '↑  Aumentar',
       MAINTAIN:        '→  Mantener posición',
       REDUCE_MILD:     '↓  Reducir',
       REDUCE_STRONG:   '↓↓ Reducir fuerte',
+      BUY: 'Comprar', HOLD: 'Mantener', SELL: 'Vender',
     };
     return m[rec] ?? rec;
   }
 
-  expRecIcon(rec: string): string {
+  expRecIcon(rec: string | null | undefined): string {
+    if (!rec) return 'remove';
     const m: Record<string, string> = {
       INCREASE_STRONG: 'arrow_upward',
       INCREASE_MILD:   'trending_up',
@@ -596,8 +695,8 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     return 'exp-low';
   }
 
-  expRecClass(rec: string): string {
-    return (rec ?? '').toLowerCase().replace(/_/g, '-');
+  expRecClass(rec: string | null | undefined): string {
+    return (rec ?? 'unknown').toLowerCase().replace(/_/g, '-');
   }
   sentimentIcon(s: SentimentState) {
     return ({ bullish: 'sentiment_very_satisfied', bearish: 'sentiment_very_dissatisfied', neutral: 'sentiment_neutral' })[s];

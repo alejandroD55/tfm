@@ -4,6 +4,7 @@ No heavy ML imports — safe to import from lightweight tooling.
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -14,7 +15,31 @@ RISK_FREE_RATE = 0.02
 DAYS_BACK = 365
 
 
-def calc_exposure_backtesting(signals_list: List[Dict]) -> Tuple[Dict, Dict]:
+def slice_exposure_rows(
+    all_rows: List[Dict],
+    report_date: str,
+    pipeline_start: Optional[date] = None,
+) -> List[Dict]:
+    """Filas con batch_date en [pipeline_start, report_date]."""
+    from datetime import date as date_cls
+
+    ps = pipeline_start.isoformat() if isinstance(pipeline_start, date_cls) else None
+    out: List[Dict] = []
+    for r in all_rows:
+        bd = str(r.get("batch_date", ""))[:10]
+        if bd > report_date:
+            continue
+        if ps and bd < ps:
+            continue
+        out.append(r)
+    return out
+
+
+def calc_exposure_backtesting(
+    signals_list: List[Dict],
+    *,
+    initial_capital: float = INITIAL_CAP,
+) -> Tuple[Dict, Dict]:
     """
     Backtesting de exposición continua: portfolio_return_t = market_return_t × smoothed_exposure_t.
     Cada fila requiere: batch_date, ticker, close_price, smoothed_exposure, market_regime.
@@ -46,7 +71,7 @@ def calc_exposure_backtesting(signals_list: List[Dict]) -> Tuple[Dict, Dict]:
                 "cumulative_return": 0.0,
                 "sharpe_ratio": 0.0,
                 "max_drawdown": 0.0,
-                "final_equity": round(float(INITIAL_CAP), 2),
+                "final_equity": round(float(initial_capital), 2),
             }
             exp_diagnostics[ticker] = {
                 "avg_exposure": round(exposure, 4),
@@ -62,7 +87,7 @@ def calc_exposure_backtesting(signals_list: List[Dict]) -> Tuple[Dict, Dict]:
         if len(ts) < 2:
             continue
 
-        capital = INITIAL_CAP
+        capital = float(initial_capital)
         equity = [capital]
         daily_exposures: List[float] = []
         regime_days: Dict[str, int] = {"BULL": 0, "NEUTRAL": 0, "HIGH_VOL": 0, "BEAR": 0}
@@ -87,7 +112,7 @@ def calc_exposure_backtesting(signals_list: List[Dict]) -> Tuple[Dict, Dict]:
             equity.append(capital)
 
         final_eq = capital
-        cum_ret = (final_eq - INITIAL_CAP) / INITIAL_CAP
+        cum_ret = (final_eq - initial_capital) / initial_capital if initial_capital else 0.0
 
         if len(equity) > 2:
             eq_arr = np.array(equity)
@@ -145,7 +170,11 @@ def compute_benchmark(signals_df: pd.DataFrame) -> Dict[str, float]:
     return benchmark
 
 
-def calc_binary_backtesting(signals_df: pd.DataFrame) -> Tuple[Dict, Dict]:
+def calc_binary_backtesting(
+    signals_df: pd.DataFrame,
+    *,
+    initial_capital: float = INITIAL_CAP,
+) -> Tuple[Dict, Dict]:
     """Backtesting binario Long/Cash (para exposure_vs_binary_comparison)."""
     metrics, diagnostics = {}, {}
     if signals_df.empty:
@@ -153,7 +182,7 @@ def calc_binary_backtesting(signals_df: pd.DataFrame) -> Tuple[Dict, Dict]:
 
     for ticker in signals_df["ticker"].unique():
         ts = signals_df[signals_df["ticker"] == ticker].sort_values("batch_date")
-        capital = INITIAL_CAP
+        capital = float(initial_capital)
         equity = [capital]
 
         current_position = 1
@@ -197,7 +226,7 @@ def calc_binary_backtesting(signals_df: pd.DataFrame) -> Tuple[Dict, Dict]:
             last_p = float(ts.iloc[-1]["close_price"])
             final_eq = capital * (1 + (last_p - entry_p) / entry_p)
 
-        cum_ret = (final_eq - INITIAL_CAP) / INITIAL_CAP
+        cum_ret = (final_eq - initial_capital) / initial_capital if initial_capital else 0.0
         if len(equity) > 2:
             dr = np.diff(equity) / np.array(equity[:-1])
             excess = dr - (RISK_FREE_RATE / 252)

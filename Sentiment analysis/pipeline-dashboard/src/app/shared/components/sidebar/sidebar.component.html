@@ -18,27 +18,38 @@
     <span class="sb-status-text">Pipeline operativo</span>
   </div>
 
-  @if (pipelineCtx.pipelines().length > 0) {
-    <div class="sb-pipeline">
-      <label class="sb-pipeline-label" for="pipeline-select">Ejecución</label>
+  <div class="sb-pipeline">
+    <label class="sb-pipeline-label" for="pipeline-select">
+      <mat-icon style="font-size:13px;height:13px;width:13px;vertical-align:middle">swap_horiz</mat-icon>
+      Ejecución
+    </label>
+
+    @if (pipelineCtx.loading()) {
+      <div class="sb-pipeline-loading">Cargando pipelines…</div>
+    } @else if (pipelineCtx.pipelines().length === 0) {
+      <div class="sb-pipeline-loading">Sin pipelines disponibles</div>
+    } @else {
       <select
         id="pipeline-select"
         class="sb-pipeline-select"
         [ngModel]="pipelineCtx.selectedPipeline()?.id"
         (ngModelChange)="onPipelineChange($event)"
-        matTooltip="Cada ejecución usa capital inicial independiente (10.000 €)"
+        matTooltip="Ejecución bootstrap · Capital inicial 10.000 €"
         matTooltipPosition="right">
         @for (p of pipelineCtx.pipelines(); track p.id) {
-          <option [value]="p.id">{{ pipelineCtx.rangeLabel(p) }}</option>
+          <option [value]="p.id">
+            {{ pipelineCtx.rangeLabel(p) }}
+          </option>
         }
       </select>
-      @if (pipelineCtx.selectedPipeline(); as p) {
-        <div class="sb-pipeline-meta">
-          {{ pipelineCtx.metaSubtitle(p) }}
-        </div>
-      }
-    </div>
-  }
+    }
+
+    @if (pipelineCtx.selectedPipeline(); as p) {
+      <div class="sb-pipeline-meta">
+        {{ pipelineCtx.metaSubtitle(p) }}
+      </div>
+    }
+  </div>
 
   <!-- Nav: Análisis -->
   <div class="sb-section">

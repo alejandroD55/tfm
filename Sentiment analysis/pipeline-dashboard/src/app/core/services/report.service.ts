@@ -6,6 +6,7 @@ import {
   DailyReport, TickerView, ReportDateEntry,
   ExposureRecommendation, ConvictionLabel,
   ExposureBacktestingMetrics, ExposureBacktestingDiagnostics,
+  SignalExplanation,
 } from '../models/report.model';
 import { ChartDataPoint, ChartSeries } from '../models/pipeline.model';
 
@@ -86,7 +87,8 @@ export class ReportService {
       const prob_up = expl?.prob_up ?? 0.5;
 
       const exposure_pct = this.calcExposurePct(prob_up);
-      const exposure_recommendation = this.calcExposureRec(exposure_pct, prob_up);
+      const exposure_recommendation: ExposureRecommendation =
+        expl?.exposure_recommendation ?? this.calcExposureRec(exposure_pct, prob_up);
       const conviction_label = this.calcConviction(prob_up);
 
       const expBm:   ExposureBacktestingMetrics    = report.exposure_backtesting_metrics?.[ticker]   ?? {} as any;
@@ -211,6 +213,43 @@ export class ReportService {
   avgExposureChart(views: TickerView[]): ChartDataPoint[] {
     return [...views].sort((a, b) => a.ticker.localeCompare(b.ticker))
       .map(v => ({ name: v.ticker, value: +v.avg_exposure.toFixed(1) }));
+  }
+
+  /** Reportes legacy guardaban `signal` (BUY/HOLD/SELL) en lugar de exposure_recommendation. */
+  private legacySignalToExposureRec(signal?: string): ExposureRecommendation {
+    if (signal === 'BUY') return 'INCREASE_MILD';
+    if (signal === 'SELL') return 'REDUCE_MILD';
+    return 'MAINTAIN';
+  }
+
+  private normalizeExplanation(raw: Record<string, unknown>): SignalExplanation {
+    const rec =
+      (raw['exposure_recommendation'] as ExposureRecommendation | undefined)
+      ?? this.legacySignalToExposureRec(raw['signal'] as string | undefined);
+    const prob = raw['prob_up'];
+    return {
+      ticker: String(raw['ticker'] ?? ''),
+      exposure_recommendation: rec,
+      prob_up: typeof prob === 'number' ? prob : 0.5,
+      prob_down: typeof raw['prob_down'] === 'number' ? (raw['prob_down'] as number) : 0.5,
+      evidence: (raw['evidence'] as SignalExplanation['evidence']) ?? {
+        sentiment: 'neutral', rsi: 'neutral', trend: 'uptrend', volatility: 'low',
+      },
+      market_regime: raw['market_regime'] as string | undefined,
+      smoothed_exposure: raw['smoothed_exposure'] as number | undefined,
+    };
+  }
+
+  /** Explicaciones destacadas del día (top N por prob_up en el report). */
+  topSignalExplanations(report: DailyReport): SignalExplanation[] {
+    const raw = report.top_signal_explanations
+      ?? report.top_recommendation_explanations
+      ?? [];
+    return raw.map(e => this.normalizeExplanation(e as unknown as Record<string, unknown>));
+  }
+
+  explanationForTicker(report: DailyReport, ticker: string): SignalExplanation | undefined {
+    return this.topSignalExplanations(report).find(e => e.ticker === ticker);
   }
 
   probUpChart(views: TickerView[]): ChartDataPoint[] {

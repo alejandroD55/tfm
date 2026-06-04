@@ -15,8 +15,13 @@ import { forkJoin, of, catchError, Subject, takeUntil } from 'rxjs';
 import { ApiService, TickerPerformanceResponse } from '../../core/services/api.service';
 import { ReportService } from '../../core/services/report.service';
 import { PipelineContextService } from '../../core/services/pipeline-context.service';
-import { DailyReport, TickerView, ReportDateEntry } from '../../core/models/report.model';
+import { DailyReport, TickerView, ReportDateEntry, ExposureRecommendation } from '../../core/models/report.model';
 import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
+import {
+  demoStockChrome,
+  initDemoHighcharts,
+  mergeStockOptions,
+} from '../../core/charts/highcharts-stock-demo';
 
 type BacktestHistoryMetric = 'ai_return' | 'buy_hold' | 'alpha' | 'sharpe' | 'drawdown' | 'final_equity' | 'avg_exposure';
 
@@ -35,8 +40,17 @@ interface BacktestHistoryPoint {
 interface SignalCyclePoint {
   date: string;
   ticker: string;
-  signal: 'BUY' | 'SELL' | 'HOLD';
+  exposure_recommendation: ExposureRecommendation;
 }
+
+/** Series del scatter de recomendaciones — colores alineados con la vista de Señales */
+const EXPOSURE_CYCLE_SERIES: { key: ExposureRecommendation; label: string; color: string }[] = [
+  { key: 'INCREASE_STRONG', label: '↑↑ Aumentar fuerte', color: '#15803d' },
+  { key: 'INCREASE_MILD',   label: '↑ Aumentar',         color: '#22c55e' },
+  { key: 'MAINTAIN',        label: '→ Mantener',         color: '#94a3b8' },
+  { key: 'REDUCE_MILD',     label: '↓ Reducir',          color: '#a78bfa' },
+  { key: 'REDUCE_STRONG',   label: '↓↓ Reducir fuerte',  color: '#7c3aed' },
+];
 
 @Component({
   selector: 'app-backtesting',
@@ -57,7 +71,7 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
 
   @ViewChild(MatSort) sort!: MatSort;
 
-  Highcharts: typeof Highcharts = Highcharts;
+  Highcharts: typeof Highcharts = initDemoHighcharts();
 
   loading = true;
   selectedDate = '';
@@ -80,6 +94,9 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
     ai_return: false, buy_hold: false, alpha: false, sharpe: false,
     drawdown: false, final_equity: false, avg_exposure: false,
   };
+  /** Gráfico principal: IA vs B&H en una sola vista */
+  historyCompareChartOptions: Highcharts.Options = {};
+  historyCompareChartUpdate = false;
   cyclesChartOptions: Highcharts.Options = {};
   cyclesChartUpdate = false;
   exposureChartOptions: Highcharts.Options = {};
@@ -119,9 +136,17 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
   assetMiniChartOptions: Record<string, Highcharts.Options> = {};
   assetMiniChartUpdates: Record<string, boolean> = {};
 
+  /** Métricas secundarias (sin duplicar IA / B&H — van en el gráfico combinado). */
+  get historySecondaryMetrics() {
+    return this.historyMetricOptions.filter(
+      m => m.value !== 'ai_return' && m.value !== 'buy_hold',
+    );
+  }
+
   /** Tooltips informativos por gráfico */
   chartTooltips: Record<string, string> = {
     returnComparison: 'Compara el retorno acumulado de la estrategia de exposición continua (modula posición día a día desde 0%) frente a comprar y mantener el 100% desde el día 1. Ideal: barras azules por encima de las grises.',
+    historyCompare: 'Evolución temporal de la rentabilidad acumulada: estrategia IA (exposición modulada) frente al mercado Buy & Hold. Usa los botones superiores para acotar fechas, el navigator inferior para desplazarte y el menú ⋮ para exportar imagen o datos.',
     alpha: 'Exceso de retorno de la estrategia de exposición vs Buy & Hold. Positivo = la IA añade valor. Objetivo: > 0% de forma consistente.',
     sharpe: 'Retorno ajustado por riesgo (anualizado). Sharpe > 1 = bueno · > 2 = excelente · < 0 = peor que el activo libre de riesgo.',
     drawdown: 'Mayor caída desde un máximo histórico. Ideal: lo más cercano a 0%. > 15% indica protección insuficiente del capital.',
@@ -263,25 +288,26 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
             avg_exposure: view.avg_exposure,   // % capital desplegado hasta esa fecha
           });
         }
-        for (const explain of report.top_recommendation_explanations ?? []) {
-          const signal = explain.exposure_recommendation.startsWith('INCREASE')
-            ? 'BUY'
-            : explain.exposure_recommendation.startsWith('REDUCE')
-              ? 'SELL'
-              : 'HOLD';
+        const explanations = this.reportSvc.topSignalExplanations(report);
+        for (const explain of explanations) {
+          const rec = explain.exposure_recommendation;
+          if (!rec) continue;
           cycles.push({
             date,
             ticker: explain.ticker,
-            signal: signal as 'BUY' | 'SELL' | 'HOLD',
+            exposure_recommendation: rec,
           });
         }
       });
 
       this.historyRows = rows;
       this.signalCycles = cycles;
+      // Recalcular drawdown/sharpe desde la serie de equity encadenada del rango
+      this.historyRows = this.rechainPeriodMetrics(rows);
       this.historyLoading = false;
       this.refreshAllHistoryCharts();
       this.refreshExposureChart();
+      this.refreshCyclesChart();
       for (const ticker of this.expandedAssets) {
         this.refreshAssetMiniCharts(ticker);
         const cached = this.assetPerformanceCache.get(ticker);
@@ -296,96 +322,235 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
     });
   }
 
+  /**
+   * Recalcula max_drawdown y sharpe desde la serie de equity encadenada.
+   * SOLO estos dos: son correctamente derivables de la equity curve.
+   *
+   * avg_exposure NO se toca aquí — su valor correcto viene de los datos
+   * reales de position_state (via exposure_backtesting_diagnostics).
+   * La gráfica de Capital Desplegado mostrará la media por periodo,
+   * que es el dato real de cuánto capital estuvo invertido cada trimestre.
+   */
+  private rechainPeriodMetrics(rows: BacktestHistoryPoint[]): BacktestHistoryPoint[] {
+    const byTicker = new Map<string, BacktestHistoryPoint[]>();
+    for (const row of rows) {
+      if (!byTicker.has(row.ticker)) byTicker.set(row.ticker, []);
+      byTicker.get(row.ticker)!.push(row);
+    }
+
+    const result: BacktestHistoryPoint[] = [...rows];
+
+    for (const [ticker, series] of byTicker.entries()) {
+      const sorted = [...series].sort((a, b) => a.date.localeCompare(b.date));
+      const equities = sorted.map(r => r.final_equity);
+      const n = equities.length;
+      if (n < 2) continue;
+
+      const dailyReturns: number[] = [];
+      for (let i = 1; i < n; i++) {
+        const prev = equities[i - 1];
+        dailyReturns.push(prev > 0 ? (equities[i] - prev) / prev : 0);
+      }
+
+      for (let i = 0; i < n; i++) {
+        const idx = result.findIndex(r => r.date === sorted[i].date && r.ticker === ticker);
+        if (idx < 0) continue;
+
+        // ── Max drawdown desde el pico histórico acumulado ───────────────
+        const peak = Math.max(...equities.slice(0, i + 1));
+        const dd   = peak > 0 ? ((equities[i] - peak) / peak) * 100 : 0;
+        result[idx] = { ...result[idx], drawdown: dd };
+
+        // ── Sharpe acumulado (todos los retornos desde día 0) ────────────
+        if (i >= 10) {  // mínimo 10 días para un Sharpe significativo
+          const rets     = dailyReturns.slice(0, i);
+          const mean     = rets.reduce((s, r) => s + r, 0) / rets.length;
+          const variance = rets.reduce((s, r) => s + (r - mean) ** 2, 0) / rets.length;
+          const std      = Math.sqrt(variance);
+          const rf       = 0.04 / 252;
+          const sharpe   = std > 1e-8 ? ((mean - rf) / std) * Math.sqrt(252) : 0;
+          result[idx]    = { ...result[idx], sharpe: Math.round(sharpe * 1000) / 1000 };
+        }
+
+        // avg_exposure: NO se modifica — se usa el valor real de los datos
+      }
+    }
+    return result;
+  }
+
   private refreshAllHistoryCharts() {
+    this.refreshHistoryCompareChart();
     const scopedRows = this.pipelineScopedHistoryRows();
     if (!scopedRows.length) {
-      for (const metric of this.historyMetricOptions) {
+      for (const metric of this.historySecondaryMetrics) {
         this.historyChartOptionsByMetric[metric.value] = {};
         this.historyChartUpdates[metric.value] = true;
       }
       return;
     }
 
-    const tickerFilter = this.historyTickerFilter;
-    for (const metric of this.historyMetricOptions) {
-      const valueOf = (row: BacktestHistoryPoint) => row[metric.value];
-      let data: [number, number][];
-      let seriesName: string;
-
-      if (tickerFilter) {
-        const rows = scopedRows
-          .filter(r => r.ticker === tickerFilter)
-          .sort((a, b) => a.date.localeCompare(b.date));
-        data = rows.map(r => [this.toChartTs(r.date), valueOf(r)]);
-        seriesName = `${metric.label} · ${tickerFilter}`;
-      } else {
-        const byDate = new Map<string, BacktestHistoryPoint[]>();
-        for (const row of scopedRows) {
-          if (!byDate.has(row.date)) byDate.set(row.date, []);
-          byDate.get(row.date)!.push(row);
-        }
-        data = [...byDate.entries()]
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([date, rows]) => [this.toChartTs(date), rows.reduce((sum, row) => sum + valueOf(row), 0) / rows.length]);
-        seriesName = `${metric.label} (media cartera)`;
-      }
-
+    for (const metric of this.historySecondaryMetrics) {
+      const data = this.buildHistorySeriesData(metric.value);
       const color = metric.value === 'alpha'
         ? '#15803d'
         : metric.value === 'drawdown'
         ? '#b91c1c'
-        : metric.value === 'buy_hold'
-        ? '#64748b'
         : metric.value === 'final_equity'
         ? '#5b21b6'
-        : '#1d4ed8';
+        : metric.value === 'avg_exposure'
+        ? '#0891b2'
+        : '#06b6d4';
 
-      this.historyChartOptionsByMetric[metric.value] = {
-        chart: {
-          height: 300,
-          backgroundColor: 'transparent',
-          zooming: { type: 'x' },
+      this.historyChartOptionsByMetric[metric.value] = mergeStockOptions(
+        demoStockChrome(340),
+        {
+          title: { text: undefined },
+          legend: { enabled: false },
+          xAxis: this.pipelineXAxis(),
+          yAxis: {
+            title: { text: metric.label },
+            labels: {
+              formatter: function () {
+                const n = Number(this.value);
+                if (metric.unit === '$') return `$${Highcharts.numberFormat(n, 0)}`;
+                if (metric.unit === '%') return `${Highcharts.numberFormat(n, 1)}%`;
+                return Highcharts.numberFormat(n, 2);
+              },
+            },
+            plotLines: metric.unit !== '$' ? [{ value: 0, color: '#94a3b8', width: 1 }] : [],
+          },
+          tooltip: {
+            shared: true,
+            valueDecimals: metric.unit === '$' ? 0 : 2,
+            valuePrefix: metric.unit === '$' ? '$' : undefined,
+            valueSuffix: metric.unit === '%' ? '%' : undefined,
+          },
+          plotOptions: {
+            series: {
+              dataGrouping: { enabled: false },
+              marker: { enabled: false, radius: 3, states: { hover: { enabled: true, radius: 5 } } },
+            } as Highcharts.PlotSeriesOptions,
+          },
+          series: [{
+            type: 'line',
+            name: data.seriesName,
+            data: data.points,
+            color,
+            lineWidth: 2.4,
+          }] as Highcharts.SeriesOptionsType[],
         },
+      );
+      this.historyChartUpdates[metric.value] = true;
+    }
+  }
+
+  /** Gráfico combinado Rentabilidad IA vs Mercado (B&H). */
+  private refreshHistoryCompareChart() {
+    const scopedRows = this.pipelineScopedHistoryRows();
+    if (!scopedRows.length) {
+      this.historyCompareChartOptions = {};
+      this.historyCompareChartUpdate = true;
+      return;
+    }
+
+    const ai = this.buildHistorySeriesData('ai_return');
+    const bh = this.buildHistorySeriesData('buy_hold');
+    const label = this.historyTickerFilter
+      ? `Activo: ${this.historyTickerFilter}`
+      : 'Media cartera (todos los ETFs)';
+
+    this.historyCompareChartOptions = mergeStockOptions(
+      demoStockChrome(440),
+      {
         title: { text: undefined },
-        credits: { enabled: false },
-        rangeSelector: { enabled: false },
-        navigator: { enabled: false },
-        scrollbar: { enabled: false },
-        legend: { enabled: false },
+        subtitle: {
+          text: label,
+          style: { color: '#64748b', fontSize: '12px', fontWeight: '600' },
+        },
+        legend: {
+          enabled: true,
+          align: 'center',
+          verticalAlign: 'bottom',
+          itemStyle: { fontWeight: '600', color: '#334155' },
+        },
         xAxis: this.pipelineXAxis(),
         yAxis: {
-          title: { text: metric.label },
+          title: { text: 'Rentabilidad acumulada (%)' },
+          plotLines: [{ value: 0, color: '#94a3b8', width: 1, zIndex: 2 }],
           labels: {
             formatter: function () {
-              const n = Number(this.value);
-              if (metric.unit === '$') return `$${Highcharts.numberFormat(n, 0)}`;
-              if (metric.unit === '%') return `${Highcharts.numberFormat(n, 1)}%`;
-              return Highcharts.numberFormat(n, 2);
+              return `${Highcharts.numberFormat(Number(this.value), 1)}%`;
             },
           },
-          plotLines: metric.unit !== '$' ? [{ value: 0, color: '#94a3b8', width: 1 }] : [],
         },
         tooltip: {
-          valueDecimals: metric.unit === '$' ? 0 : 2,
-          valuePrefix: metric.unit === '$' ? '$' : undefined,
-          valueSuffix: metric.unit === '%' ? '%' : undefined,
+          shared: true,
+          valueDecimals: 2,
+          valueSuffix: '%',
+          headerFormat: '<span style="font-size:11px">{point.key:%d/%m/%Y}</span><br/>',
         },
         plotOptions: {
           series: {
             dataGrouping: { enabled: false },
-            marker: { enabled: false },
-          } as any,
+            marker: { enabled: false, radius: 3, states: { hover: { enabled: true, radius: 5 } } },
+          } as Highcharts.PlotSeriesOptions,
         },
-        series: [{
-          type: 'line',
-          name: seriesName,
-          data,
-          color,
-          lineWidth: 2.2,
-        }] as any,
+        series: [
+          {
+            type: 'line',
+            name: 'Estrategia IA (exposición)',
+            data: ai.points,
+            color: '#2563eb',
+            lineWidth: 3,
+            zIndex: 2,
+          },
+          {
+            type: 'line',
+            name: 'Mercado Buy & Hold',
+            data: bh.points,
+            color: '#64748b',
+            lineWidth: 2.2,
+            dashStyle: 'ShortDash',
+            zIndex: 1,
+          },
+        ] as Highcharts.SeriesOptionsType[],
+      },
+    );
+    this.historyCompareChartUpdate = true;
+  }
+
+  private buildHistorySeriesData(
+    metric: BacktestHistoryMetric,
+  ): { points: [number, number][]; seriesName: string } {
+    const scopedRows = this.pipelineScopedHistoryRows();
+    const valueOf = (row: BacktestHistoryPoint) => row[metric];
+    const metricMeta = this.historyMetricOptions.find(m => m.value === metric)!;
+    const tickerFilter = this.historyTickerFilter;
+
+    if (tickerFilter) {
+      const rows = scopedRows
+        .filter(r => r.ticker === tickerFilter)
+        .sort((a, b) => a.date.localeCompare(b.date));
+      return {
+        points: rows.map(r => [this.toChartTs(r.date), valueOf(r)]),
+        seriesName: `${metricMeta.label} · ${tickerFilter}`,
       };
-      this.historyChartUpdates[metric.value] = true;
     }
+
+    const byDate = new Map<string, BacktestHistoryPoint[]>();
+    for (const row of scopedRows) {
+      if (!byDate.has(row.date)) byDate.set(row.date, []);
+      byDate.get(row.date)!.push(row);
+    }
+    return {
+      points: [...byDate.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([date, rows]) => [
+          this.toChartTs(date),
+          rows.reduce((sum, row) => sum + valueOf(row), 0) / rows.length,
+        ]),
+      seriesName: `${metricMeta.label} (media cartera)`,
+    };
   }
 
   /** Gráfico de progresión de capital desplegado (% exposición) por ticker a lo largo del backtesting */
@@ -419,36 +584,41 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
       };
     });
 
-    this.exposureChartOptions = {
-      chart: {
-        height: 280,
-        backgroundColor: 'transparent',
-        zooming: { type: 'x' },
+    this.exposureChartOptions = mergeStockOptions(
+      demoStockChrome(380),
+      {
+        title: { text: undefined },
+        legend: { enabled: true, align: 'right', verticalAlign: 'top' },
+        xAxis: this.pipelineXAxis(),
+        yAxis: {
+          title: { text: '% Capital desplegado' },
+          min: 0,
+          max: 100,
+          plotLines: [
+            {
+              value: 50,
+              color: '#94a3b8',
+              width: 1,
+              dashStyle: 'Dash',
+              label: { text: 'Floor 50% (régimen NEUTRAL)', style: { color: '#94a3b8', fontSize: '10px' } },
+            },
+            {
+              value: 70,
+              color: '#22c55e',
+              width: 1,
+              dashStyle: 'Dot',
+              label: { text: '70% — Alta convicción', style: { color: '#16a34a', fontSize: '10px' } },
+            },
+          ],
+          labels: { formatter: function () { return `${this.value}%`; } },
+        },
+        tooltip: { valueSuffix: '%', valueDecimals: 1, shared: true },
+        plotOptions: {
+          series: { dataGrouping: { enabled: false } } as Highcharts.PlotSeriesOptions,
+        },
+        series: series as Highcharts.SeriesOptionsType[],
       },
-      title: { text: undefined },
-      credits: { enabled: false },
-      rangeSelector: { enabled: false },
-      navigator: { enabled: false },
-      scrollbar: { enabled: false },
-      legend: { enabled: true, align: 'right', verticalAlign: 'top' },
-      xAxis: this.pipelineXAxis(),
-      yAxis: {
-        title: { text: '% Capital desplegado' },
-        min: 0, max: 100,
-        plotLines: [
-          { value: 50, color: '#94a3b8', width: 1, dashStyle: 'Dash',
-            label: { text: 'Floor 50% (régimen NEUTRAL)', style: { color: '#94a3b8', fontSize: '10px' } } },
-          { value: 70, color: '#22c55e', width: 1, dashStyle: 'Dot',
-            label: { text: '70% — Alta convicción', style: { color: '#16a34a', fontSize: '10px' } } },
-        ],
-        labels: { formatter: function() { return `${this.value}%`; } },
-      },
-      tooltip: { valueSuffix: '%', valueDecimals: 1, shared: true },
-      plotOptions: {
-        series: { dataGrouping: { enabled: false } } as any,
-      },
-      series: series as any,
-    };
+    );
     this.exposureChartUpdate = true;
   }
 
@@ -462,47 +632,49 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
 
     const tickers = [...new Set(scopedCycles.map(r => r.ticker))].sort();
     const yIndex = new Map(tickers.map((t, i) => [t, i]));
-    const buyData = scopedCycles
-      .filter(point => point.signal === 'BUY')
-      .map(point => ({ x: this.toChartTs(point.date), y: yIndex.get(point.ticker) ?? 0, name: point.ticker }));
-    const sellData = scopedCycles
-      .filter(point => point.signal === 'SELL')
-      .map(point => ({ x: this.toChartTs(point.date), y: yIndex.get(point.ticker) ?? 0, name: point.ticker }));
+    const series = EXPOSURE_CYCLE_SERIES
+      .map(({ key, label, color }) => {
+        const data = scopedCycles
+          .filter(point => point.exposure_recommendation === key)
+          .map(point => ({
+            x: this.toChartTs(point.date),
+            y: yIndex.get(point.ticker) ?? 0,
+            name: point.ticker,
+          }));
+        return data.length
+          ? { type: 'scatter' as const, name: label, data: data as Highcharts.PointOptionsObject[], color }
+          : null;
+      })
+      .filter((s): s is NonNullable<typeof s> => s !== null);
 
-    this.cyclesChartOptions = {
-      chart: {
-        type: 'scatter',
-        height: Math.max(340, tickers.length * 64),
-        backgroundColor: 'transparent',
-        zooming: { type: 'x' },
-      },
-      title: { text: undefined },
-      credits: { enabled: false },
-      xAxis: this.pipelineXAxis(),
-      yAxis: {
-        title: { text: 'Ticker' },
-        categories: tickers,
-        min: -0.5,
-        max: Math.max(tickers.length - 0.5, 0),
-        tickInterval: 1,
-      },
-      legend: { enabled: true },
-      tooltip: {
-        pointFormatter: function () {
-          const d = Highcharts.dateFormat('%Y-%m-%d', Number(this.x));
-          return `<span><b>${this.series.name}</b> · ${this.name}<br/>${d}</span>`;
+    this.cyclesChartOptions = mergeStockOptions(
+      demoStockChrome(Math.max(380, tickers.length * 64)),
+      {
+        chart: { type: 'scatter' },
+        title: { text: undefined },
+        xAxis: this.pipelineXAxis(),
+        yAxis: {
+          title: { text: 'Ticker' },
+          categories: tickers,
+          min: -0.5,
+          max: Math.max(tickers.length - 0.5, 0),
+          tickInterval: 1,
         },
-      },
-      plotOptions: {
-        series: {
-          marker: { radius: 6, symbol: 'circle' },
+        legend: { enabled: true },
+        tooltip: {
+          pointFormatter: function () {
+            const d = Highcharts.dateFormat('%Y-%m-%d', Number(this.x));
+            return `<span><b>${this.series.name}</b> · ${this.name}<br/>${d}</span>`;
+          },
         },
+        plotOptions: {
+          series: {
+            marker: { radius: 6, symbol: 'circle' },
+          },
+        },
+        series: series as Highcharts.SeriesOptionsType[],
       },
-      series: [
-        { type: 'scatter', name: 'BUY', data: buyData as any, color: '#15803d' },
-        { type: 'scatter', name: 'SELL', data: sellData as any, color: '#b91c1c' },
-      ] as any,
-    };
+    );
     this.cyclesChartUpdate = true;
   }
 
@@ -536,6 +708,14 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
       MAINTAIN: 'remove', REDUCE_MILD: 'trending_down', REDUCE_STRONG: 'arrow_downward',
     };
     return m[rec] ?? 'remove';
+  }
+
+  expRecColor(rec: string): string {
+    const m: Record<string, string> = {
+      INCREASE_STRONG: '#15803d', INCREASE_MILD: '#22c55e', MAINTAIN: '#94a3b8',
+      REDUCE_MILD: '#a78bfa', REDUCE_STRONG: '#7c3aed',
+    };
+    return m[rec] ?? '#94a3b8';
   }
 
   getCapitalView(ticker: string): TickerView | undefined {
@@ -650,34 +830,32 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
       .sort((a, b) => a.date.localeCompare(b.date))
       .map(r => [this.toChartTs(r.date), r.avg_exposure]);
 
-    return {
-      chart: { height, backgroundColor: 'transparent', zooming: { type: 'x' } },
-      title: { text: undefined },
-      credits: { enabled: false },
-      rangeSelector: { enabled: false },
-      navigator: { enabled: false },
-      scrollbar: { enabled: false },
-      legend: { enabled: true },
-      xAxis: this.pipelineXAxis(),
-      yAxis: [{
-        title: { text: 'Rentabilidad acumulada (%)' },
-        height: exposure.length ? '58%' : '100%',
-        plotLines: [{ value: 0, color: '#94a3b8', width: 1 }],
-      }, ...(exposure.length ? [{
-        title: { text: 'Capital desplegado (%)' },
-        top: '62%',
-        height: '38%',
-        min: 0,
-        max: 100,
-      }] : [])],
-      tooltip: { shared: true, valueDecimals: 2, valueSuffix: '%' },
-      plotOptions: { series: { dataGrouping: { enabled: false }, marker: { enabled: false } } as any },
-      series: [
-        { type: 'line', name: 'Estrategia (exposición)', data: strategy, color: '#2563eb', lineWidth: 2.2, yAxis: 0 },
-        { type: 'line', name: 'Buy & Hold', data: buyHold, color: '#94a3b8', lineWidth: 1.6, yAxis: 0 },
-        ...(exposure.length ? [{ type: 'area', name: 'Capital desplegado', data: exposure, color: 'rgba(37,99,235,.25)', fillOpacity: 0.3, lineWidth: 1.5, yAxis: 1 }] : []),
-      ] as any,
-    };
+    return mergeStockOptions(
+      demoStockChrome(height),
+      {
+        title: { text: undefined },
+        legend: { enabled: true },
+        xAxis: this.pipelineXAxis(),
+        yAxis: [{
+          title: { text: 'Rentabilidad acumulada (%)' },
+          height: exposure.length ? '58%' : '100%',
+          plotLines: [{ value: 0, color: '#94a3b8', width: 1 }],
+        }, ...(exposure.length ? [{
+          title: { text: 'Capital desplegado (%)' },
+          top: '62%',
+          height: '38%',
+          min: 0,
+          max: 100,
+        }] : [])],
+        tooltip: { shared: true, valueDecimals: 2, valueSuffix: '%' },
+        plotOptions: { series: { dataGrouping: { enabled: false }, marker: { enabled: false } } as Highcharts.PlotSeriesOptions },
+        series: [
+          { type: 'line', name: 'Estrategia (exposición)', data: strategy, color: '#2563eb', lineWidth: 2.2, yAxis: 0 },
+          { type: 'line', name: 'Buy & Hold', data: buyHold, color: '#94a3b8', lineWidth: 1.6, yAxis: 0 },
+          ...(exposure.length ? [{ type: 'area', name: 'Capital desplegado', data: exposure, color: 'rgba(37,99,235,.25)', fillOpacity: 0.3, lineWidth: 1.5, yAxis: 1 }] : []),
+        ] as Highcharts.SeriesOptionsType[],
+      },
+    );
   }
 
   private refreshAssetMiniCharts(ticker: string) {
@@ -689,38 +867,39 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
     const strategyEquity = rows.map(r => [this.toChartTs(r.date), r.final_equity]);
     const buyHoldEquity = rows.map(r => [this.toChartTs(r.date), Math.round(10_000 * (1 + r.buy_hold / 100))]);
 
-    this.assetMiniChartOptions[ticker] = {
-      chart: { height: 240, backgroundColor: 'transparent', zooming: { type: 'x' } },
-      title: { text: undefined },
-      credits: { enabled: false },
-      legend: { enabled: true },
-      xAxis: this.pipelineXAxis(),
-      yAxis: {
-        title: { text: 'Capital (€)' },
-        plotLines: [{
-          value: 10_000,
-          color: '#94a3b8',
-          width: 1,
-          dashStyle: 'Dash',
-          label: { text: 'Capital inicial 10.000 €', style: { color: '#64748b', fontSize: '10px' } },
-        }],
-        labels: {
-          formatter: function () {
-            return `€${Highcharts.numberFormat(Number(this.value), 0)}`;
+    this.assetMiniChartOptions[ticker] = mergeStockOptions(
+      demoStockChrome(300),
+      {
+        title: { text: undefined },
+        legend: { enabled: true },
+        xAxis: this.pipelineXAxis(),
+        yAxis: {
+          title: { text: 'Capital (€)' },
+          plotLines: [{
+            value: 10_000,
+            color: '#94a3b8',
+            width: 1,
+            dashStyle: 'Dash',
+            label: { text: 'Capital inicial 10.000 €', style: { color: '#64748b', fontSize: '10px' } },
+          }],
+          labels: {
+            formatter: function () {
+              return `€${Highcharts.numberFormat(Number(this.value), 0)}`;
+            },
           },
         },
+        tooltip: {
+          shared: true,
+          valueDecimals: 0,
+          valuePrefix: '€',
+        },
+        plotOptions: { series: { marker: { enabled: false }, lineWidth: 2.2 } as Highcharts.PlotSeriesOptions },
+        series: [
+          { type: 'line', name: 'Capital (estrategia)', data: strategyEquity, color: '#2563eb' },
+          { type: 'line', name: 'Capital (B&H)', data: buyHoldEquity, color: '#94a3b8', lineWidth: 1.6 },
+        ] as Highcharts.SeriesOptionsType[],
       },
-      tooltip: {
-        shared: true,
-        valueDecimals: 0,
-        valuePrefix: '€',
-      },
-      plotOptions: { series: { marker: { enabled: false }, lineWidth: 2.2 } as any },
-      series: [
-        { type: 'line', name: 'Capital (estrategia)', data: strategyEquity, color: '#2563eb' },
-        { type: 'line', name: 'Capital (B&H)', data: buyHoldEquity, color: '#94a3b8', lineWidth: 1.6 },
-      ] as any,
-    };
+    );
     this.assetMiniChartUpdates[ticker] = true;
   }
 

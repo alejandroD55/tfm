@@ -48,7 +48,14 @@ export interface RecommendationExplanation {
   prob_up: number;
   prob_down: number;
   evidence: BayesianEvidence;
+  /** Régimen de mercado del día (BULL / NEUTRAL / HIGH_VOL / BEAR) cuando el report lo incluye */
+  market_regime?: string;
+  /** Exposición suavizada EWM [0, 1] cuando el report lo incluye */
+  smoothed_exposure?: number;
 }
+
+/** Alias usado en reportes recientes (top_signal_explanations) */
+export type SignalExplanation = RecommendationExplanation;
 
 // ─── Backtesting ─────────────────────────────────────────────────────────
 
@@ -119,8 +126,11 @@ export interface DailyReport {
   data_period_days:  number;
   pipeline_health:   PipelineHealth;
   recommendation_diagnostics:    Record<string, RecommendationDiagnostics>;
+  /** Alias en reportes generados por lambda_report / bootstrap reciente */
+  signal_diagnostics?:           Record<string, RecommendationDiagnostics>;
   benchmark_comparison:  Record<string, BenchmarkComparison>;
   top_recommendation_explanations: RecommendationExplanation[];
+  top_signal_explanations?:      SignalExplanation[];
   backtesting_metrics:   Record<string, BacktestingMetrics>;
   summary:               ReportSummary;
   // Backtesting de exposición continua (output primario)
