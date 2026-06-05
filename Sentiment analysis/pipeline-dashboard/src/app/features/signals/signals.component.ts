@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, AfterViewInit, ViewChild, inject } from '@angular/core';
+import { Component, OnInit, OnDestroy, AfterViewInit, ViewChild, inject, ElementRef, NgZone } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatTableModule, MatTableDataSource } from '@angular/material/table';
@@ -12,6 +12,8 @@ import { NgxChartsModule } from '@swimlane/ngx-charts';
 import Highcharts from 'highcharts/highstock';
 import { HighchartsChartModule } from 'highcharts-angular';
 import { switchMap, catchError, of, Subject, takeUntil } from 'rxjs';
+import { HttpErrorResponse } from '@angular/common/http';
+import { ActivatedRoute } from '@angular/router';
 import { ReportService } from '../../core/services/report.service';
 import { PipelineContextService } from '../../core/services/pipeline-context.service';
 import { TraceService } from '../../core/services/trace.service';
@@ -42,6 +44,8 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
 })
 export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
   private reportSvc = inject(ReportService);
+  private route      = inject(ActivatedRoute);
+  private ngZone     = inject(NgZone);
   private traceSvc  = inject(TraceService);
   private apiSvc    = inject(ApiService);
   private pipelineCtx = inject(PipelineContextService);
@@ -137,11 +141,18 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
 
   private loadInitial() {
     this.loading = true;
+    // Leer fecha y ticker desde query param (navegación desde Backtesting)
+    const dateFromUrl   = this.route.snapshot.queryParamMap.get('date');
+    const tickerFromUrl = this.route.snapshot.queryParamMap.get('ticker');
     this.reportSvc.listAvailableDates().pipe(
       switchMap(dates => {
         this.availableDates = dates;
         if (!dates.length) { this.loading = false; return []; }
-        this.selectedDate = this.pipelineCtx.pipelineEndDate() ?? dates[0].date;
+        // Prioridad: query param → último día del pipeline → primera fecha disponible
+        const defaultDate = this.pipelineCtx.pipelineEndDate() ?? dates[0].date;
+        this.selectedDate = (dateFromUrl && dates.find(d => d.date === dateFromUrl))
+          ? dateFromUrl
+          : defaultDate;
         const entry = dates.find(d => d.date === this.selectedDate) ?? dates[0];
         this.hasTraceForDate = !!(entry as any).has_trace;
         return this.reportSvc.loadReport(this.selectedDate);
@@ -151,9 +162,57 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
         if (r) this.processReport(r);
         this.loading = false;
         this.loadMacroContext(this.selectedDate);
+        // Si hay ticker en la URL, expandir esa fila y hacer scroll a ella
+        if (tickerFromUrl) {
+          this.ngZone.runOutsideAngular(() => {
+            setTimeout(() => this.scrollAndExpandTicker(tickerFromUrl), 400);
+          });
+        }
       },
       error: () => { this.loading = false; },
     });
+  }
+
+  /** Expande la fila de un ticker y hace scroll animado hasta ella */
+  scrollAndExpandTicker(ticker: string): void {
+    // 1. Expandir la fila dentro de la zona Angular (dispara change detection)
+    this.ngZone.run(() => {
+      if (!this.expandedRows.has(ticker)) {
+        this.toggleRow(ticker);
+      }
+    });
+
+    // 2. Intentar scroll con reintentos hasta que el DOM esté listo
+    //    Angular Material puede tardar varios ciclos en renderizar la fila expandida
+    let attempts = 0;
+    const MAX_ATTEMPTS = 12;   // max 12 × 150ms = 1.8s
+    const tryScroll = () => {
+      attempts++;
+      // Selector primario: data-ticker attribute
+      let row = document.querySelector(`tr[data-ticker="${ticker}"]`) as HTMLElement | null;
+
+      // Fallback: buscar por el texto del ticker-name dentro de las filas de datos
+      if (!row) {
+        const allRows = document.querySelectorAll('tr.data-row');
+        for (let i = 0; i < allRows.length; i++) {
+          const cell = allRows[i].querySelector('.ticker-name');
+          if (cell && cell.textContent?.trim() === ticker) {
+            row = allRows[i] as HTMLElement;
+            break;
+          }
+        }
+      }
+
+      if (row) {
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        row.classList.add('row-highlight-flash');
+        setTimeout(() => row!.classList.remove('row-highlight-flash'), 2200);
+      } else if (attempts < MAX_ATTEMPTS) {
+        setTimeout(tryScroll, 150);
+      }
+    };
+    // Primer intento después de que Angular haya procesado el ciclo actual
+    setTimeout(tryScroll, 300);
   }
 
   ngAfterViewInit() {
@@ -458,7 +517,11 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     if (this.positionCache.has(ticker) || this.positionLoading.has(ticker)) return;
     this.positionLoading.add(ticker);
     this.apiSvc.getExposurePositions(ticker, 120).pipe(
-      catchError(() => of(null))
+      catchError((err: HttpErrorResponse) => {
+        // 404 = sin datos de exposición para este ticker (normal si el endpoint no está disponible)
+        if (err?.status !== 404) console.warn('[ExposurePositions]', err.message);
+        return of(null);
+      })
     ).subscribe(resp => {
       this.positionLoading.delete(ticker);
       const pt = resp?.timeline?.find(p => p.date === this.selectedDate) ?? null;
@@ -530,7 +593,12 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     if (this.featureCache.has(ticker) || this.featureLoading.has(ticker)) return;
     this.featureLoading.add(ticker);
     this.apiSvc.getFeatures(this.selectedDate, ticker).pipe(
-      catchError(() => of(null))
+      catchError((err: HttpErrorResponse) => {
+        // 404 = feature_snapshot no generado (requiere lambda_features en AWS)
+        // en entorno local es normal, no mostramos error
+        if (err?.status !== 404) console.warn('[FeatureSnapshot]', err.message);
+        return of(null);
+      })
     ).subscribe(doc => {
       this.featureLoading.delete(ticker);
       this.featureCache.set(ticker, doc);

@@ -919,11 +919,9 @@ def get_feature_snapshot(date: str, ticker: str, x_api_key: str = Header(default
         {"batch_date": date, "ticker": ticker_u}, {"_id": 0}
     )
     if not doc:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No hay feature_snapshot para {ticker_u} en {date}. "
-            "Ejecuta lambda_features tras sentiment+indicators.",
-        )
+        # Devolver objeto vacío en lugar de 404 para evitar ruido en el frontend
+        # en entorno local donde lambda_features no se ejecuta.
+        return {"batch_date": date, "ticker": ticker_u, "_empty": True}
     return _serialize_doc(doc)
 
 

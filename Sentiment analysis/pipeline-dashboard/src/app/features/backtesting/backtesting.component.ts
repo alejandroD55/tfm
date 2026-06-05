@@ -1,4 +1,5 @@
 import { Component, OnInit, OnDestroy, AfterViewInit, ViewChild, inject } from '@angular/core';
+import { Router } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatTableModule, MatTableDataSource } from '@angular/material/table';
@@ -65,6 +66,7 @@ const EXPOSURE_CYCLE_SERIES: { key: ExposureRecommendation; label: string; color
 })
 export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
   private reportSvc = inject(ReportService);
+  private router    = inject(Router);
   private pipelineCtx = inject(PipelineContextService);
   private apiSvc = inject(ApiService);
   private destroy$ = new Subject<void>();
@@ -429,6 +431,11 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
             series: {
               dataGrouping: { enabled: false },
               marker: { enabled: false, radius: 3, states: { hover: { enabled: true, radius: 5 } } },
+              cursor: 'pointer',
+              point: { events: { click: ((comp) => function(this: any) {
+                const d = new Date(this.x);
+                comp.navigateToDate(d.toISOString().split('T')[0]);
+              })(this) } },
             } as Highcharts.PlotSeriesOptions,
           },
           series: [{
@@ -614,7 +621,15 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
         },
         tooltip: { valueSuffix: '%', valueDecimals: 1, shared: true },
         plotOptions: {
-          series: { dataGrouping: { enabled: false } } as Highcharts.PlotSeriesOptions,
+          series: {
+            dataGrouping: { enabled: false },
+            cursor: 'pointer',
+            point: { events: { click: ((comp) => function(this: any) {
+              const d = new Date(this.x);
+              const ticker = (this.series && this.series.name) ? this.series.name : null;
+              comp.navigateToDate(d.toISOString().split('T')[0], ticker);
+            })(this) } },
+          } as Highcharts.PlotSeriesOptions,
         },
         series: series as Highcharts.SeriesOptionsType[],
       },
@@ -689,6 +704,19 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
     const perBar = 44;
     const chrome = 120;
     this.sharpeDrawdownChartHeight = Math.min(720, Math.max(260, n * perBar + chrome));
+  }
+
+  /** Navega a Análisis de Activos con la fecha y ticker seleccionados del gráfico */
+  navigateToDate(isoDate: string, ticker?: string | null): void {
+    if (!isoDate) return;
+    let dateStr = isoDate;
+    if (typeof isoDate === 'number' || /^\d+$/.test(String(isoDate))) {
+      const d = new Date(Number(isoDate));
+      dateStr = d.toISOString().split('T')[0];
+    }
+    const params: any = { date: dateStr };
+    if (ticker) params['ticker'] = ticker;
+    this.router.navigate(['/signals'], { queryParams: params });
   }
 
   // ── Helpers exposición (mirrors dashboard) ───────────────────────────────

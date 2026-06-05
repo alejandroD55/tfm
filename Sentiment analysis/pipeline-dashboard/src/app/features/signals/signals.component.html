@@ -979,6 +979,7 @@
 
         <tr mat-header-row *matHeaderRowDef="displayedColumns; sticky: true"></tr>
         <tr mat-row *matRowDef="let row; columns: displayedColumns;" class="data-row"
+            [attr.data-ticker]="row.ticker"
             (click)="toggleRow(row.ticker)"></tr>
         <tr mat-row *matRowDef="let row; columns: ['expandedDetail']" class="detail-cell-wrapper"></tr>
 

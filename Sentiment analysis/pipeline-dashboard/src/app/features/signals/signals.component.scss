@@ -1178,3 +1178,14 @@
   &.sell { background: rgba(124,58,237,.15); color: #7c3aed; }
   &.hold { background: rgba(245,158,11,.15); color: #b45309; }
 }
+
+/* Flash de highlight cuando se navega desde Backtesting a un ticker específico */
+@keyframes row-flash {
+  0%   { background-color: transparent; }
+  15%  { background-color: rgba(37, 99, 235, 0.18); }
+  70%  { background-color: rgba(37, 99, 235, 0.10); }
+  100% { background-color: transparent; }
+}
+.row-highlight-flash {
+  animation: row-flash 2.2s ease-out forwards;
+}
