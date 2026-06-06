@@ -74,6 +74,21 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
   performanceChartUpdate = false;
   performanceCache = new Map<string, TickerPerformanceResponse>();
 
+  // ── Chart type selector ──────────────────────────────────────────────────
+  /** Tipo de gráfico para el chart principal: 'candlestick' | 'line' | 'area' */
+  performanceChartType: 'candlestick' | 'line' | 'area' = 'candlestick';
+  /** Tipo por ticker para los inline charts */
+  inlineChartTypes: Record<string, 'candlestick' | 'line' | 'area'> = {};
+
+  setPerformanceChartType(type: 'candlestick' | 'line' | 'area'): void {
+    this.performanceChartType = type;
+    const cached = this.performanceCache.get(`${this.selectedDate}:${this.performanceTicker}`);
+    if (cached) {
+      this.performanceChartOptions = this.buildPerformanceChartOptions(cached, 540, type);
+      this.performanceChartUpdate = true;
+    }
+  }
+
   tableSource = new MatTableDataSource<TickerView>();
   tableCols = ['ticker', 'exp_return', 'exp_sharpe', 'exp_drawdown', 'exp_equity', 'avg_exp', 'bh', 'alpha'];
 
@@ -249,7 +264,7 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
     return { start: p.startDate, end: p.endDate };
   }
 
-  private buildPerformanceChartOptions(resp: TickerPerformanceResponse, height = 680): Highcharts.Options {
+  private buildPerformanceChartOptions(resp: TickerPerformanceResponse, height = 680, chartType: 'candlestick' | 'line' | 'area' = 'candlestick'): Highcharts.Options {
     const toTs = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
     const points = resp.points;
     const targetTs = toTs(resp.target_date);
@@ -399,7 +414,12 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
         candlestick: { color: '#ef4444', upColor: '#22c55e', lineColor: '#dc2626', upLineColor: '#16a34a' } as any,
       },
       series: [
-        { type: 'candlestick', id: 'ohlc', name: `${resp.ticker} Precio`, data: ohlc, yAxis: 0 },
+        (chartType === 'candlestick'
+          ? { type: 'candlestick', id: 'ohlc', name: `${resp.ticker} Precio`, data: ohlc, yAxis: 0 }
+          : chartType === 'line'
+          ? { type: 'line', id: 'ohlc', name: `${resp.ticker} Precio`, data: ohlc.map(p => [p[0], p[4]]), yAxis: 0, color: '#2563eb', lineWidth: 2 }
+          : { type: 'area', id: 'ohlc', name: `${resp.ticker} Precio`, data: ohlc.map(p => [p[0], p[4]]), yAxis: 0, color: '#2563eb', lineWidth: 2, fillColor: { linearGradient: { x1:0, y1:0, x2:0, y2:1 }, stops: [[0,'rgba(37,99,235,0.25)'],[1,'rgba(37,99,235,0.02)']] } }
+        ) as any,
         { type: 'line', name: 'Media Bollinger', data: bbMiddle, yAxis: 0, color: '#64748b', dashStyle: 'ShortDot', lineWidth: 1 },
         { type: 'line', name: 'Rendimiento IA', data: strategy, yAxis: 1, color: '#2563eb', lineWidth: 2.2, valueSuffix: '%' }, // Nombre simplificado
         { type: 'line', name: 'Buy & Hold', data: buyHold, yAxis: 1, color: '#94a3b8', lineWidth: 1.6, valueSuffix: '%' },

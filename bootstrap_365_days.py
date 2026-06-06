@@ -2719,6 +2719,10 @@ def get_explanations_sample(connection, report_date, limit=10):
 
 
 def compute_benchmark(signals_df):
+    """
+    Buy & hold = (último close − primer close) / primer close en el DataFrame dado.
+    El caller debe pasar filas que cubran todo el periodo a comparar (p. ej. pipeline completo).
+    """
     benchmark = {}
     for ticker in signals_df["ticker"].unique():
         ticker_df = signals_df[signals_df["ticker"] == ticker].sort_values("batch_date")
@@ -3899,8 +3903,17 @@ def run_pipeline(
             metrics, diagnostics = _calc_backtesting(hist_signals_df)
             # Fase 1: backtesting de exposición continua usando datos in-memory
             exp_metrics, exp_diagnostics = _calc_exposure_backtesting(all_signal_records)
+            # B&H: todo el pipeline (no ventana móvil DAYS_BACK — si no, >365d trunca el inicio)
+            pipeline_days = (pd.to_datetime(date_str).date() - start_d).days + 1
+            bench_signals_df = get_trading_data(
+                conn,
+                date_str,
+                days_back=pipeline_days,
+                tickers=active_tickers,
+                pipeline_start=start_d,
+            )
             benchmark = (
-                compute_benchmark(hist_signals_df) if not hist_signals_df.empty else {}
+                compute_benchmark(bench_signals_df) if not bench_signals_df.empty else {}
             )
             health = get_pipeline_health(conn, date_str, run_id) if run_id else {}
             explanations = get_explanations_sample(conn, date_str, limit=10)

@@ -45,6 +45,19 @@
 .performance-chart { display: block; width: 100%; min-height: 680px; }
 .perf-loading, .perf-error { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 220px; border: 1px dashed var(--border); border-radius: var(--r-sm); background: var(--slate-50); color: var(--slate-500); font-size: 13px; }
 .perf-error mat-icon { color: var(--warn-600); font-size: 18px; }
+.perf-controls { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+
+.chart-type-toggle {
+  display: flex; gap: 4px; align-items: center;
+  button {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 38px; height: 38px; border: 1px solid var(--border);
+    border-radius: var(--r-sm); background: var(--bg-elevated);
+    color: var(--slate-500); cursor: pointer; transition: all .15s;
+    &:hover { border-color: var(--brand-400); color: var(--brand-600); }
+    &.active { background: var(--brand-600); border-color: var(--brand-600); color: #fff; }
+  }
+}
 
 /* Selector nativo */
 .filter-group { display: flex; flex-direction: column; gap: 4px; }

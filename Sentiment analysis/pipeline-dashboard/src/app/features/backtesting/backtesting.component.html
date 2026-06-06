@@ -90,13 +90,20 @@
             Velas de cotización, dictámenes de la IA, rendimiento frente al mercado pasivo (B&H) y niveles evolutivos de la exposición.
           </p>
         </div>
-        <div class="filter-group">
-          <label>Selecciona Activo</label>
-          <select class="aurora-select" [(ngModel)]="performanceTicker" (ngModelChange)="onPerformanceTickerChange($event)">
-            @for (row of tickerViews; track row.ticker) {
-              <option [value]="row.ticker">{{ row.ticker }}</option>
-            }
-          </select>
+        <div class="perf-controls">
+          <div class="filter-group">
+            <label>Ticker</label>
+            <select class="aurora-select" [(ngModel)]="performanceTicker" (ngModelChange)="onPerformanceTickerChange($event)">
+              @for (row of tickerViews; track row.ticker) {
+                <option [value]="row.ticker">{{ row.ticker }}</option>
+              }
+            </select>
+          </div>
+          <div class="chart-type-toggle">
+            <button [class.active]="performanceChartType==='candlestick'" (click)="setPerformanceChartType('candlestick')" matTooltip="Velas OHLC"><mat-icon>candlestick_chart</mat-icon></button>
+            <button [class.active]="performanceChartType==='line'" (click)="setPerformanceChartType('line')" matTooltip="Línea"><mat-icon>show_chart</mat-icon></button>
+            <button [class.active]="performanceChartType==='area'" (click)="setPerformanceChartType('area')" matTooltip="Montaña"><mat-icon>area_chart</mat-icon></button>
+          </div>
         </div>
       </div>
 
