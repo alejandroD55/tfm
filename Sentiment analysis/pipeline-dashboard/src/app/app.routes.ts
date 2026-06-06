@@ -36,11 +36,6 @@ export const routes: Routes = [
       loadComponent: () =>
         import('./features/watchlist/watchlist.component').then(m => m.WatchlistComponent),
     },
-    {
-      path: 'exposure',
-      loadComponent: () =>
-        import('./features/exposure/exposure.component').then(m => m.ExposureComponent),
-    },
   {
     path: '',
     redirectTo: 'dashboard',

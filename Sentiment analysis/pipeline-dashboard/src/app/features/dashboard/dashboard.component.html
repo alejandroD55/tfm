@@ -8,9 +8,9 @@
       </div>
       <h1 class="page-title">Resumen Operativo</h1>
       <p class="page-sub">
-        Plataforma de recomendación de exposición · Red Bayesiana + FinBERT
+        Plataforma de exposición continua · Red Bayesiana + FinBERT
         @if (pipelineLabel) {
-          · Pipeline <strong>{{ pipelineLabel }}</strong> · {{ initialCapital | number:'1.0-0' }} € iniciales
+          · Ejecución <strong>{{ pipelineLabel }}</strong> · {{ initialCapital | number:'1.0-0' }} € iniciales
         } @else {
           · Evaluando los últimos {{ report?.data_period_days || 365 }} días
         }
@@ -32,40 +32,39 @@
     </div>
   </header>
 
-  <mat-accordion class="glossary-accordion">
-    <mat-expansion-panel class="glossary-panel">
-      <mat-expansion-panel-header>
-        <mat-panel-title>
-          <mat-icon>lightbulb</mat-icon>
-          <span>¿Cómo interpretar estas métricas? (Glosario)</span>
-        </mat-panel-title>
-      </mat-expansion-panel-header>
-      <div class="glossary-content">
-        <div class="g-col">
-          <strong>Exposición (%):</strong> Fracción del capital asignado a cada activo. La IA no entra o sale bruscamente — modula la exposición de forma continua (0–100%) según el régimen de mercado y las recomendaciones bayesianas. Empezamos en 0% y escalamos gradualmente.
-        </div>
-        <div class="g-col">
-          <strong>Recomendación de posición:</strong> En lugar de BUY/SELL, el sistema emite 5 niveles: <em>Aumentar fuerte · Aumentar · Mantener · Reducir · Reducir fuerte</em>. Nunca sale completamente salvo condición de mercado extrema (VIX > 45).
-        </div>
-        <div class="g-col">
-          <strong>Ratio de Sharpe:</strong> Mide la calidad de la inversión ajustada al riesgo. Un valor superior a 1.0 indica rentabilidad por encima del mercado para el riesgo asumido. > 2.0 es excelente.
-        </div>
-        <div class="g-col">
-          <strong>Caída Máxima:</strong> El mayor porcentaje de pérdida desde un máximo histórico. El sistema de exposición continua amortigua caídas reduciendo gradualmente la posición cuando detecta deterioro del régimen.
-        </div>
+<mat-accordion class="glossary-accordion">
+  <mat-expansion-panel class="glossary-panel">
+    <mat-expansion-panel-header>
+      <mat-panel-title>
+        <mat-icon>lightbulb</mat-icon>
+        <span>¿Cómo interpretar estas métricas? (Glosario)</span>
+      </mat-panel-title>
+    </mat-expansion-panel-header>
+    <div class="glossary-content">
+      <div class="g-col">
+        <strong>Exposición (%):</strong> Fracción del capital asignada a cada activo. La exposición se ajusta de forma continua (0–100%) según el régimen de mercado y las señales bayesianas, sin entrar o salir de golpe.
       </div>
-    </mat-expansion-panel>
-  </mat-accordion>
+      <div class="g-col">
+        <strong>Recomendación de posición:</strong> Señal operativa del sistema en cinco niveles: <em>Aumentar fuerte · Aumentar · Mantener · Reducir · Reducir fuerte</em>. Solo se desactiva completamente en escenarios extremos.
+      </div>
+      <div class="g-col">
+        <strong>Ratio de Sharpe:</strong> Mide la rentabilidad ajustada al riesgo. Valores superiores a 1.0 suelen considerarse buenos; por encima de 2.0, excelentes.
+      </div>
+      <div class="g-col">
+        <strong>Caída Máxima:</strong> Mayor pérdida porcentual desde un máximo histórico de la cartera. El sistema busca reducir este valor disminuyendo la exposición cuando detecta deterioro del régimen.
+      </div>
+    </div>
+  </mat-expansion-panel>
+</mat-accordion>
 
   @if (loading) {
     <div class="loader">
       <mat-spinner diameter="40"></mat-spinner>
-      <p>Extrayendo datos del Data Lake de AWS…</p>
+      <p>Cargando datos del motor de backtesting…</p>
     </div>
   } @else if (report) {
 
     <section class="kpi-grid">
-
       <article class="kpi" [class.kpi-pos]="report.summary.avg_cumulative_return > 0" [class.kpi-neg]="report.summary.avg_cumulative_return < 0">
         <div class="kpi-head">
           <span class="kpi-label">Beneficio Estrategia (Exposición)</span>
@@ -97,7 +96,7 @@
 
       <article class="kpi" [class.kpi-pos]="report.summary.avg_sharpe_ratio > 1">
         <div class="kpi-head">
-          <span class="kpi-label">Ratio de Sharpe (Riesgo)</span>
+          <span class="kpi-label">Ratio de Sharpe Promedio</span>
           <span class="kpi-icon"><mat-icon>balance</mat-icon></span>
         </div>
         <div class="kpi-value">{{ report.summary.avg_sharpe_ratio | number:'1.2-2' }}</div>
@@ -110,7 +109,7 @@
 
       <article class="kpi kpi-neg">
         <div class="kpi-head">
-          <span class="kpi-label">Caída Máxima</span>
+          <span class="kpi-label">Caída Máxima Promedio</span>
           <span class="kpi-icon"><mat-icon>water_drop</mat-icon></span>
         </div>
         <div class="kpi-value">{{ (report.summary.avg_max_drawdown * 100) | number:'1.2-2' }}<span class="unit">%</span></div>
@@ -118,112 +117,96 @@
           <span class="delta down"><mat-icon>security</mat-icon> Protección de capital</span>
         </div>
       </article>
-
     </section>
 
-    <!-- ── Exposición actual por activo (OUTPUT PRIMARIO) ─────────────────── -->
     <section class="row">
       <div class="card chart-card span-12">
         <div class="card-head">
           <div class="card-title">
-            <mat-icon>area_chart</mat-icon>
-            <span>Exposición Actual por Activo</span>
+            <mat-icon>view_comfy</mat-icon>
+            <span>Estado de Activos y Recomendaciones</span>
           </div>
           <span class="card-sub">
-            Fracción del capital asignado a cada ETF hoy · La IA modula continuamente en función del régimen de mercado y las recomendaciones bayesianas
+            Exposición dictada por la Red Bayesiana al cierre de la sesión
           </span>
         </div>
 
-        <div class="exposure-grid">
+        <div class="asset-grid">
           @for (tv of tickerViews; track tv.ticker) {
-            <div class="exp-ticker-card">
-              <div class="exp-ticker-header">
-                <span class="exp-ticker-name">{{ tv.ticker }}</span>
-                <span [class]="'exp-rec-badge ' + expRecClass(tv.exposure_recommendation)"
-                      [matTooltip]="expRecLabel(tv.exposure_recommendation)">
-                  <mat-icon>{{ expRecIcon(tv.exposure_recommendation) }}</mat-icon>
-                  {{ expRecLabel(tv.exposure_recommendation) }}
-                </span>
-              </div>
-
-              <div class="exp-bar-row">
-                <div class="exp-bar-track">
-                  <div [class]="'exp-bar-fill ' + expBarClass(tv.exposure_pct)"
-                       [style.width.%]="tv.exposure_pct">
-                  </div>
-                  <!-- Marker de floor (50%) -->
-                  <div class="exp-floor-marker" matTooltip="Floor mínimo (50% régimen NEUTRAL)"></div>
+            <div class="asset-card" [class.active-border]="tv.exposure_pct > 0">
+              
+              <div class="asset-header">
+                <div class="asset-title">
+                  <h2>{{ tv.ticker }}</h2>
+                  <span class="prob-badge" matTooltip="Probabilidad de Subida">P(↑) {{ (tv.prob_up * 100) | number:'1.0-0' }}%</span>
                 </div>
-                <span class="exp-pct-label" [ngClass]="expBarClass(tv.exposure_pct)">
-                  {{ tv.exposure_pct | number:'1.0-1' }}%
-                </span>
+                <div class="asset-rec" [ngClass]="expRecClass(tv.exposure_recommendation)">
+                  <mat-icon>{{ expRecIcon(tv.exposure_recommendation) }}</mat-icon>
+                  <span>{{ expRecLabel(tv.exposure_recommendation) }}</span>
+                </div>
               </div>
 
-              <div class="exp-ticker-meta">
-                <span class="ev-chip {{ sentimentClass(tv.evidence.sentiment) }}" matTooltip="Sentimiento FinBERT">
-                  <mat-icon>{{ sentimentIcon(tv.evidence.sentiment) }}</mat-icon>
-                  {{ translateState(tv.evidence.sentiment) }}
-                </span>
-                <span class="ev-chip {{ trendClass(tv.evidence.trend) }}" matTooltip="Tendencia técnica">
-                  <mat-icon>{{ tv.evidence.trend === 'uptrend' ? 'trending_up' : 'trending_down' }}</mat-icon>
-                  {{ tv.evidence.trend === 'uptrend' ? 'Alcista' : 'Bajista' }}
-                </span>
-                <span class="exp-prob" matTooltip="Probabilidad bayesiana de subida">
-                  P(↑) {{ (tv.prob_up * 100) | number:'1.0-0' }}%
-                </span>
+              <div class="asset-exposure">
+                <div class="exp-info">
+                  <span class="exp-label">Nivel de Inversión</span>
+                  <span class="exp-val">{{ tv.exposure_pct | number:'1.0-1' }}%</span>
+                </div>
+                <div class="progress-bar">
+                  <div class="progress-fill" [style.width.%]="tv.exposure_pct" [class.high]="tv.exposure_pct >= 70" [class.low]="tv.exposure_pct < 40"></div>
+                </div>
               </div>
+
+              <div class="asset-indicators">
+                <div class="ind-item" matTooltip="Sentimiento General (FinBERT)">
+                  <span class="ind-lbl">Sentimiento</span>
+                  <span class="ind-val" [ngClass]="sentimentClass(tv.evidence.sentiment)">{{ translateState(tv.evidence.sentiment) }}</span>
+                </div>
+                <div class="ind-item" matTooltip="Tendencia Técnica">
+                  <span class="ind-lbl">Tendencia</span>
+                  <span class="ind-val" [ngClass]="trendClass(tv.evidence.trend)">{{ translateState(tv.evidence.trend) }}</span>
+                </div>
+                <div class="ind-item" matTooltip="Nivel de Volatilidad">
+                  <span class="ind-lbl">Volatilidad</span>
+                  <span class="ind-val">{{ translateState(tv.evidence.volatility) }}</span>
+                </div>
+              </div>
+
             </div>
           }
         </div>
       </div>
     </section>
 
-    <!-- ── Win Rate + P(up) ──────────────────────────────────────────────── -->
     <section class="row portfolio-main-row">
-
-      <div class="card chart-card span-6">
+      <div class="card chart-card span-12">
         <div class="card-head">
-          <div class="card-title"><mat-icon>track_changes</mat-icon> <span>Tasa de Acierto por ETF</span></div>
-          <span class="card-sub">Efectividad de los ciclos cerrados en el periodo</span>
+          <div class="card-title"><mat-icon>bar_chart</mat-icon> <span>Comparativa de Rendimiento Acumulado</span></div>
+          <span class="card-sub">Estrategia de Exposición IA vs. Buy & Hold tradicional por activo</span>
         </div>
-        <div class="chart-host">
-          <ngx-charts-bar-vertical
-            [results]="winRateChart"
-            [xAxis]="true" [yAxis]="true" [showGridLines]="true"
-            [customColors]="customWinRateColors"
-            yAxisLabel="Acierto (%)" [showYAxisLabel]="true"
-            [showDataLabel]="true" [yScaleMax]="100" [barPadding]="4" [roundEdges]="true">
-          </ngx-charts-bar-vertical>
+        <div class="chart-host" style="height: 350px;">
+          <ngx-charts-bar-vertical-2d
+            [results]="returnComparisonChart"
+            [scheme]="colorScheme"
+            [legend]="true"
+            legendTitle="Estrategia"
+            [xAxis]="true" 
+            [yAxis]="true" 
+            [showGridLines]="true"
+            [showDataLabel]="true"
+            yAxisLabel="Rentabilidad Neta (%)" 
+            [showYAxisLabel]="true"
+            [barPadding]="4" 
+            [groupPadding]="16"
+            [roundEdges]="false">
+          </ngx-charts-bar-vertical-2d>
         </div>
       </div>
-
-      <div class="card chart-card span-6">
-        <div class="card-head">
-          <div class="card-title"><mat-icon>psychology</mat-icon> <span>Confianza Bayesiana P(↑) por ETF</span></div>
-          <span class="card-sub">Probabilidad de subida calculada por la Red Bayesiana · condicionada por noticias, RSI y tendencia</span>
-        </div>
-        <div class="chart-host">
-          <ngx-charts-bar-vertical
-            [results]="probUpChart"
-            [xAxis]="true" [yAxis]="true" [showGridLines]="true"
-            [customColors]="customProbColors"
-            yAxisLabel="P(subida) (%)" [showYAxisLabel]="true"
-            [showDataLabel]="true" [yScaleMax]="100" [barPadding]="4" [roundEdges]="true">
-          </ngx-charts-bar-vertical>
-        </div>
-        <div class="thresholds">
-          <span class="th-buy">Alta confianza ≥ 65%</span>
-          <span class="th-hold">Incertidumbre 35–65%</span>
-          <span class="th-sell">Baja confianza ≤ 35%</span>
-        </div>
-      </div>
-
     </section>
 
   } @else {
     <div class="empty">
       <mat-icon>inbox</mat-icon>
-      <p>No hay informes disponibles todavía.</p>
+      <p>No hay informes disponibles para esta fecha.</p>
     </div>
   }
 </div>

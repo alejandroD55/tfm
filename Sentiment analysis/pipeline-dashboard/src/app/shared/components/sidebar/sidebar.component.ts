@@ -36,7 +36,7 @@ export class SidebarComponent {
       description: 'Exposición actual por activo · KPIs de rendimiento · resumen ejecutivo',
     },
     {
-      label:       'Análisis de Activos',
+      label:       'Análisis de Sentimiento',
       icon:        'psychology',
       route:       '/signals',
       description: 'Por qué cada activo tiene ese % de exposición · cadena de decisión bayesiana · noticias',
@@ -47,12 +47,6 @@ export class SidebarComponent {
       icon:        'insights',
       route:       '/backtesting',
       description: 'Sharpe · Drawdown · Alpha vs Buy & Hold · rendimiento histórico validado',
-    },
-    {
-      label:       'Exposición',
-      icon:        'area_chart',
-      route:       '/exposure',
-      description: 'Evolución de exposición continua · Régimen de mercado · Probabilístico vs Binario',
     },
   ];
 

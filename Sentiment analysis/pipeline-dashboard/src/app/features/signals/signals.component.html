@@ -21,26 +21,6 @@
           }
         </select>
       </div>
-      
-      <div class="filter-group">
-        <label>Filtrar por Recomendación</label>
-        <select class="aurora-select" [(ngModel)]="filterExposure" (change)="applyFilter()">
-          <option value="">Todas las recomendaciones</option>
-          <option value="INCREASE_STRONG">↑↑ Aumentar fuerte</option>
-          <option value="INCREASE_MILD">↑ Aumentar</option>
-          <option value="MAINTAIN">→ Mantener posición</option>
-          <option value="REDUCE_MILD">↓ Reducir</option>
-          <option value="REDUCE_STRONG">↓↓ Reducir fuerte</option>
-        </select>
-      </div>
-
-      <div class="filter-group">
-        <label>Modelo de inferencia</label>
-        <select class="aurora-select" [(ngModel)]="selectedModelId">
-          <option value="bayesian_v1.2">Bayesiano v1.2</option>
-          <option value="gbm_v1">GBM v1 (LightGBM)</option>
-        </select>
-      </div>
     </div>
   </header>
 
@@ -65,7 +45,7 @@
               <div><div class="bn-label">Sentimiento</div><small>Modelo FinBERT</small></div>
             </div>
             <div class="f-text">
-              <strong>Análisis Lingüístico (NLP):</strong> FinBERT lee titulares financieros y decide si el tono global del día es:<br>
+              <strong>Análisis Lingüístico (NLP):</strong> FinBERT lee titulares financieros y clasifica el tono global del día:<br>
               <ul>
                 <li><span class="dot" style="background:#22C55E"></span> <strong>Alcista</strong></li>
                 <li><span class="dot" style="background:#94A3B8"></span> <strong>Neutral</strong></li>
@@ -84,9 +64,9 @@
             <div class="f-text">
               <strong>Velocidad del precio:</strong><br>
               <ul>
-                <li><strong>≥ 70: Sobrecompra.</strong> Mucha fuerza alcista (o riesgo de caída).</li>
+                <li><strong>≥ 70: Sobrecompra.</strong> Exceso de optimismo (riesgo de caída).</li>
                 <li><strong>30 - 70: Neutral.</strong></li>
-                <li><strong>≤ 30: Sobreventa.</strong> Caída excesiva, posible rebote.</li>
+                <li><strong>≤ 30: Sobreventa.</strong> Pesimismo excesivo (posible rebote).</li>
               </ul>
             </div>
           </div>
@@ -101,7 +81,7 @@
             <div class="f-text">
               <strong>Dirección del mercado:</strong><br>
               <ul>
-                <li><strong>Alcista:</strong> Media de 20 días superando a la de 50 días.</li>
+                <li><strong>Alcista:</strong> Media de 20 días por encima de la de 50 días.</li>
                 <li><strong>Bajista:</strong> Media de 20 días por debajo de la de 50 días.</li>
               </ul>
             </div>
@@ -117,7 +97,7 @@
             <div class="f-text">
               <strong>Bandas de Bollinger:</strong><br>
               <ul>
-                <li><strong>Alta:</strong> Bandas separadas >5% del precio (mucha incertidumbre).</li>
+                <li><strong>Alta:</strong> Bandas separadas >5% (mucha incertidumbre/ruido).</li>
                 <li><strong>Baja:</strong> Mercado tranquilo y comprimido.</li>
               </ul>
             </div>
@@ -131,22 +111,22 @@
               <div><div class="bn-label">Confianza Alcista</div><small>Decisión de Inversión</small></div>
             </div>
             <div class="f-text result-text">
-              <strong>Regla de Decisión:</strong><br>
-              Si Confianza Alcista es:<br>
+              <strong>Regla de Exposición Continua:</strong><br>
+              Si la P(↑) Bayesiana es:<br>
               <ul>
-                <li style="color: #15803D; font-weight: 600;">≥ 65% → Aumentar exposición</li>
-                <li style="color: #2563EB; font-weight: 600;">50–65% → Mantener posición</li>
-                <li style="color: #B45309; font-weight: 600;">≤ 50% → Reducir exposición</li>
+                <li style="color: #15803D; font-weight: 600;">≥ 75% → Aumentar Fuerte</li>
+                <li style="color: #16A34A; font-weight: 600;">62% – 74% → Aumentar</li>
+                <li style="color: #4338CA; font-weight: 600;">52% – 61% → Mantener</li>
+                <li style="color: #B45309; font-weight: 600;">50% – 51% → Reducir</li>
+                <li style="color: #B91C1C; font-weight: 600;">< 50% → Reducir Fuerte</li>
               </ul>
             </div>
           </div>
-
         </div>
       </div>
     </mat-expansion-panel>
   </mat-accordion>
 
-  <!-- ══ MACRO CONTEXT ══════════════════════════════════════════════════════ -->
   <section class="macro-section">
 
     @if (macroLoading) {
@@ -156,7 +136,6 @@
       </div>
     } @else if (macroContext) {
 
-      <!-- Banner principal -->
       <div class="macro-banner">
         <div class="macro-banner-left">
           <div class="macro-title">
@@ -165,7 +144,6 @@
           </div>
 
           <div class="macro-badges">
-            <!-- MacroSentiment -->
             <div class="macro-badge"
                  [style.background]="macroSentimentBg(macroContext.macro_sentiment)"
                  [style.border-color]="macroSentimentColor(macroContext.macro_sentiment) + '40'">
@@ -182,7 +160,6 @@
               </div>
             </div>
 
-            <!-- RiskRegime -->
             <div class="macro-badge"
                  [style.background]="regimeBg(macroContext.risk_regime)"
                  [style.border-color]="regimeColor(macroContext.risk_regime) + '40'">
@@ -190,7 +167,7 @@
                 {{ regimeIcon(macroContext.risk_regime) }}
               </mat-icon>
               <div class="macro-badge-info">
-                <span class="macro-badge-label">Régimen de Mercado</span>
+                <span class="macro-badge-label">Régimen Mercado</span>
                 <span class="macro-badge-value" [style.color]="regimeColor(macroContext.risk_regime)">
                   {{ macroContext.risk_regime }}
                 </span>
@@ -200,51 +177,52 @@
               </div>
             </div>
 
-            <!-- Macro Adjustment -->
             <div class="macro-badge macro-badge-adj"
                  [class.adj-pos]="macroContext.macro_adjustment > 0"
                  [class.adj-neg]="macroContext.macro_adjustment < 0"
                  [class.adj-neu]="macroContext.macro_adjustment === 0">
               <mat-icon>tune</mat-icon>
               <div class="macro-badge-info">
-                <span class="macro-badge-label">Ajuste a prob_up</span>
+                <span class="macro-badge-label">Ajuste Bayesiano</span>
                 <span class="macro-badge-value">
                   {{ macroContext.macro_adjustment > 0 ? '+' : '' }}{{ macroContext.macro_adjustment | number:'1.2-2' }}
                 </span>
-                <span class="macro-badge-sub">{{ macroContext.detail.n_articles }} artículos analizados</span>
+                <span class="macro-badge-sub">{{ macroContext.detail.n_articles }} artículos base</span>
               </div>
             </div>
           </div>
-
-          <!-- Eventos detectados -->
-          <div class="macro-events">
-            @if (macroContext.detail.events.geopolitical) {
-              <span class="macro-event-chip event-danger"><mat-icon>flag</mat-icon>Tensión Geopolítica</span>
-            }
-            @if (macroContext.detail.events.hawkish_fed) {
-              <span class="macro-event-chip event-warn"><mat-icon>account_balance</mat-icon>FED Hawkish</span>
-            }
-            @if (macroContext.detail.events.dovish_fed) {
-              <span class="macro-event-chip event-ok"><mat-icon>account_balance</mat-icon>FED Dovish</span>
-            }
-            @if (macroContext.detail.events.inflation_shock) {
-              <span class="macro-event-chip event-danger"><mat-icon>price_change</mat-icon>Inflación Sorpresa</span>
-            }
-            @if (!macroContext.detail.events.geopolitical && !macroContext.detail.events.hawkish_fed &&
-                 !macroContext.detail.events.dovish_fed && !macroContext.detail.events.inflation_shock) {
-              <span class="macro-event-chip event-neutral"><mat-icon>check_circle</mat-icon>Sin eventos de alto impacto</span>
-            }
-          </div>
         </div>
 
-        <!-- Botón noticias macro -->
-        <button class="btn-macro-news" (click)="macroNewsExpanded = !macroNewsExpanded">
-          <mat-icon>{{ macroNewsExpanded ? 'expand_less' : 'newspaper' }}</mat-icon>
-          {{ macroNewsExpanded ? 'Ocultar noticias' : 'Ver noticias macro (' + macroNews.length + ')' }}
-        </button>
+        <div class="macro-banner-right">
+          <div class="macro-events-container">
+            <span class="macro-events-title">Eventos Clave Detectados:</span>
+            <div class="macro-events">
+              @if (macroContext.detail.events.geopolitical) {
+                <span class="macro-event-chip event-danger"><mat-icon>flag</mat-icon>Tensión Geopolítica</span>
+              }
+              @if (macroContext.detail.events.hawkish_fed) {
+                <span class="macro-event-chip event-warn"><mat-icon>account_balance</mat-icon>FED Hawkish</span>
+              }
+              @if (macroContext.detail.events.dovish_fed) {
+                <span class="macro-event-chip event-ok"><mat-icon>account_balance</mat-icon>FED Dovish</span>
+              }
+              @if (macroContext.detail.events.inflation_shock) {
+                <span class="macro-event-chip event-danger"><mat-icon>price_change</mat-icon>Inflación Sorpresa</span>
+              }
+              @if (!macroContext.detail.events.geopolitical && !macroContext.detail.events.hawkish_fed &&
+                   !macroContext.detail.events.dovish_fed && !macroContext.detail.events.inflation_shock) {
+                <span class="macro-event-chip event-neutral"><mat-icon>check_circle</mat-icon>Sin eventos de alto impacto</span>
+              }
+            </div>
+          </div>
+
+          <button class="btn-macro-news" (click)="macroNewsExpanded = !macroNewsExpanded">
+            <mat-icon>{{ macroNewsExpanded ? 'expand_less' : 'newspaper' }}</mat-icon>
+            {{ macroNewsExpanded ? 'Ocultar noticias' : 'Ver noticias macro (' + macroNews.length + ')' }}
+          </button>
+        </div>
       </div>
 
-      <!-- Panel de noticias macro -->
       @if (macroNewsExpanded) {
         <div class="macro-news-panel">
           <div class="mnp-header">
@@ -314,59 +292,6 @@
     }
   </section>
 
-  @if (!loading && selectedDate && currentReport) {
-    <section class="card day-why-section">
-      <div class="day-why-head">
-        <mat-icon>help_outline</mat-icon>
-        <div>
-          <h2 class="day-why-title">¿Por qué este día?</h2>
-          <p class="day-why-sub">
-            Resumen del informe del <strong>{{ selectedDate }}</strong> — drivers macro, régimen y explicaciones destacadas del motor bayesiano.
-          </p>
-        </div>
-      </div>
-
-      <div class="day-why-macro-row">
-        <div class="dwm-chip">
-          <span class="dwm-label">Macro (risk_regime)</span>
-          @if (macroContext) {
-            <span class="dwm-value" [style.color]="regimeColor(macroContext.risk_regime)">{{ macroContext.risk_regime }}</span>
-            <span class="dwm-hint">sentimiento {{ macroContext.macro_sentiment }} · ajuste {{ macroContext.macro_adjustment > 0 ? '+' : '' }}{{ macroContext.macro_adjustment | number:'1.2-2' }}</span>
-          } @else {
-            <span class="dwm-value muted">Sin contexto macro cargado</span>
-          }
-        </div>
-        <div class="dwm-chip">
-          <span class="dwm-label">Confianza media cartera</span>
-          <span class="dwm-value" [style.color]="probGradientColor(avgProbUp / 100)">P(↑) {{ avgProbUp | number:'1.1-1' }}%</span>
-        </div>
-      </div>
-
-      @if (topDayExplanations.length) {
-        <div class="day-why-list">
-          <h3 class="day-why-list-title">Top explicaciones del día (signal_explanations)</h3>
-          @for (exp of topDayExplanations; track exp.ticker) {
-            <button type="button" class="day-why-item" (click)="focusTickerExplanation(exp.ticker)">
-              <span class="day-why-ticker">{{ exp.ticker }}</span>
-              <span class="day-why-rec {{ expRecClass(exp.exposure_recommendation) }}"
-                    [style.border-color]="expRecColor(exp.exposure_recommendation) + '55'"
-                    [style.color]="expRecColor(exp.exposure_recommendation)">
-                <mat-icon>{{ expRecIcon(exp.exposure_recommendation) }}</mat-icon>
-                {{ expRecBadgeLabel(exp.exposure_recommendation) }}
-              </span>
-              <span class="day-why-prob">P(↑) {{ (exp.prob_up * 100) | number:'1.1-1' }}%</span>
-              @if (exp.market_regime) {
-                <span class="day-why-regime">{{ marketRegimeLabel(exp.market_regime) }}</span>
-              }
-            </button>
-          }
-        </div>
-      } @else {
-        <p class="day-why-empty muted">No hay top_signal_explanations en el report de esta fecha.</p>
-      }
-    </section>
-  }
-
   @if (loading) {
     <div class="loader">
       <mat-spinner diameter="40"></mat-spinner>
@@ -384,7 +309,7 @@
               <ngx-charts-pie-chart [results]="sentimentChart" [labels]="false" [legend]="false" [doughnut]="true" [arcWidth]="0.35" [customColors]="customSentimentColors"></ngx-charts-pie-chart>
               <div class="donut-center">
                 <div class="dc-num">{{ tickerViews.length }}</div>
-                <div class="dc-lbl">ETFs</div>
+                <div class="dc-lbl">Activos</div>
               </div>
             </div>
             <div class="custom-legend">
@@ -406,7 +331,7 @@
               <ngx-charts-pie-chart [results]="rsiChart" [labels]="false" [legend]="false" [doughnut]="true" [arcWidth]="0.35" [customColors]="customRsiColors"></ngx-charts-pie-chart>
               <div class="donut-center">
                 <div class="dc-num">{{ tickerViews.length }}</div>
-                <div class="dc-lbl">ETFs</div>
+                <div class="dc-lbl">Activos</div>
               </div>
             </div>
             <div class="custom-legend">
@@ -428,7 +353,7 @@
               <ngx-charts-pie-chart [results]="trendChart" [labels]="false" [legend]="false" [doughnut]="true" [arcWidth]="0.35" [customColors]="customTrendColors"></ngx-charts-pie-chart>
               <div class="donut-center">
                 <div class="dc-num">{{ tickerViews.length }}</div>
-                <div class="dc-lbl">ETFs</div>
+                <div class="dc-lbl">Activos</div>
               </div>
             </div>
             <div class="custom-legend">
@@ -450,7 +375,7 @@
               <ngx-charts-pie-chart [results]="volatilityChart" [labels]="false" [legend]="false" [doughnut]="true" [arcWidth]="0.35" [customColors]="customVolColors"></ngx-charts-pie-chart>
               <div class="donut-center">
                 <div class="dc-num">{{ tickerViews.length }}</div>
-                <div class="dc-lbl">ETFs</div>
+                <div class="dc-lbl">Activos</div>
               </div>
             </div>
             <div class="custom-legend">
@@ -489,56 +414,6 @@
       </div>
     </section>
 
-    <section class="card performance-card">
-      <div class="perf-head">
-        <div>
-          <div class="perf-title">
-            <mat-icon>monitoring</mat-icon>
-            <span>Evolución de Rendimiento por Etapas</span>
-          </div>
-          <p class="perf-sub">
-            Velas OHLC con Bandas de Bollinger, recomendaciones de exposición y rendimiento Long/Cash hasta {{ selectedDate }}.
-            Usa el selector de rango, el navigator o arrastra sobre el gráfico para hacer zoom.
-          </p>
-        </div>
-        <div class="filter-group">
-          <label>Ticker del gráfico</label>
-          <select class="aurora-select" [(ngModel)]="performanceTicker" (ngModelChange)="onPerformanceTickerChange($event)">
-            @for (row of tickerViews; track row.ticker) {
-              <option [value]="row.ticker">{{ row.ticker }}</option>
-            }
-          </select>
-        </div>
-      </div>
-
-      <div class="perf-legend">
-        <span><i class="leg-box long"></i>Etapa LONG</span>
-        <span><i class="leg-box cash"></i>Etapa CASH</span>
-        <span><i class="leg-line bb"></i>Bandas Bollinger</span>
-        <span><i class="leg-dot dd"></i>Max drawdown</span>
-      </div>
-
-      @if (performanceLoading) {
-        <div class="perf-loading">
-          <mat-spinner diameter="30"></mat-spinner>
-          <span>Cargando histórico de {{ performanceTicker }}...</span>
-        </div>
-      } @else if (performanceError) {
-        <div class="perf-error">
-          <mat-icon>info_outline</mat-icon>
-          <span>{{ performanceError }}</span>
-        </div>
-      } @else if (performanceChartOptions.series?.length) {
-        <highcharts-chart
-          [Highcharts]="Highcharts"
-          [constructorType]="'stockChart'"
-          [options]="performanceChartOptions"
-          [(update)]="performanceChartUpdate"
-          class="performance-chart">
-        </highcharts-chart>
-      }
-    </section>
-    
     <div class="card table-card signals-table-desktop">
       <table mat-table [dataSource]="dataSource" multiTemplateDataRows matSort class="aurora-table">
 
@@ -549,16 +424,14 @@
           </td>
         </ng-container>
 
-        <!-- ── Exposición (output primario) ── -->
         <ng-container matColumnDef="exposure">
-          <th mat-header-cell *matHeaderCellDef mat-sort-header="exposure_pct">Exposición</th>
+          <th mat-header-cell *matHeaderCellDef mat-sort-header="exposure_pct">Exposición Act.</th>
           <td mat-cell *matCellDef="let row">
             <div class="exposure-cell">
               <div class="exp-bar-track-sm">
                 <div [class]="'exp-bar-fill-sm ' + expBarClass(row.exposure_pct)"
                      [style.width.%]="row.exposure_pct">
                 </div>
-                <div class="exp-floor-line-sm" matTooltip="Floor mínimo 50%"></div>
               </div>
               <span [class]="'exp-pct-sm ' + expBarClass(row.exposure_pct)">{{ row.exposure_pct | number:'1.0-1' }}%</span>
               <span [class]="'exp-rec-icon-pill ' + expRecClass(row.exposure_recommendation)"
@@ -569,19 +442,8 @@
           </td>
         </ng-container>
 
-        <!-- ── Recomendación BN (referencia secundaria) ── -->
-        <ng-container matColumnDef="signal">
-          <th mat-header-cell *matHeaderCellDef mat-sort-header>Recomendación BN</th>
-          <td mat-cell *matCellDef="let row">
-            <span class="prob-badge"
-                  [matTooltip]="'P(↑) ' + (row.prob_up*100 | number: '1.0-0') + '% · Confianza bayesiana'">
-              P(↑) {{ (row.prob_up*100)|number:'1.0-0' }}%
-            </span>
-          </td>
-        </ng-container>
-
         <ng-container matColumnDef="prob_up">
-          <th mat-header-cell *matHeaderCellDef mat-sort-header>Confianza Alcista</th>
+          <th mat-header-cell *matHeaderCellDef mat-sort-header>Confianza Alcista (IA)</th>
           <td mat-cell *matCellDef="let row">
             <div class="prob-cell">
               <div class="prob-gauge">
@@ -620,24 +482,8 @@
           </td>
         </ng-container>
 
-        <ng-container matColumnDef="trades">
-          <th mat-header-cell *matHeaderCellDef mat-sort-header="trades_closed">Ciclos Cerrados</th>
-          <td mat-cell *matCellDef="let row">
-            <span class="num" matTooltip="Veces que la IA compró y vendió este ETF en un año">{{ row.trades_closed }}</span>
-          </td>
-        </ng-container>
-
-        <ng-container matColumnDef="winrate">
-          <th mat-header-cell *matHeaderCellDef mat-sort-header="win_rate">Tasa de Acierto</th>
-          <td mat-cell *matCellDef="let row">
-            <span class="ts-chip wr" [class.good]="row.win_rate>=0.5">
-              <mat-icon>track_changes</mat-icon>{{ (row.win_rate*100)|number:'1.0-0' }}%
-            </span>
-          </td>
-        </ng-container>
-
         <ng-container matColumnDef="return">
-          <th mat-header-cell *matHeaderCellDef mat-sort-header="exp_cumulative_return">Rentabilidad (Exposición)</th>
+          <th mat-header-cell *matHeaderCellDef mat-sort-header="exp_cumulative_return">Rentabilidad Acum.</th>
           <td mat-cell *matCellDef="let row">
             <span class="ret-val" [class.pos]="row.exp_cumulative_return>0" [class.neg]="row.exp_cumulative_return<0">
               {{ row.exp_cumulative_return>0?'+':'' }}{{ (row.exp_cumulative_return*100)|number:'1.2-2' }}%
@@ -646,7 +492,7 @@
         </ng-container>
 
         <ng-container matColumnDef="alpha">
-          <th mat-header-cell *matHeaderCellDef mat-sort-header="alpha_vs_benchmark">Mejora vs Mercado</th>
+          <th mat-header-cell *matHeaderCellDef mat-sort-header="alpha_vs_benchmark">Alpha (vs Mercado)</th>
           <td mat-cell *matCellDef="let row">
             <span class="ret-val" [class.pos]="row.alpha_vs_benchmark>0" [class.neg]="row.alpha_vs_benchmark<0">
               {{ row.alpha_vs_benchmark>0?'+':'' }}{{ (row.alpha_vs_benchmark*100)|number:'1.2-2' }}%
@@ -668,128 +514,17 @@
           <td mat-cell *matCellDef="let row" [attr.colspan]="displayedColumns.length" class="detail-cell">
             <div class="detail-row" [class.expanded]="expandedRows.has(row.ticker)">
               <div class="exp-panel">
-
-                <!-- ── FILA 1: Justificación + FinBERT ── -->
                 <div class="exp-grid">
-
                   <div class="exp-card">
-                    <h4><mat-icon>account_tree</mat-icon> Justificación de la IA para {{ row.ticker }}</h4>
-
-                    <!-- Score de confianza compuesto -->
-                    <div class="composite-score-block">
-                      <div class="cs-gauge-wrap">
-                        <svg class="cs-ring" viewBox="0 0 80 80">
-                          <circle class="cs-track" cx="40" cy="40" r="34" fill="none" stroke-width="7"/>
-                          <circle class="cs-fill {{ getCompositeClass(getCompositeScore(row)) }}"
-                            cx="40" cy="40" r="34" fill="none" stroke-width="7"
-                            stroke-dasharray="213.6"
-                            [attr.stroke-dashoffset]="213.6 - (213.6 * getCompositeScore(row) / 100)"
-                            stroke-linecap="round"
-                            transform="rotate(-90 40 40)"/>
-                        </svg>
-                        <div class="cs-center">
-                          <span class="cs-num">{{ getCompositeScore(row) }}</span>
-                          <span class="cs-of">/100</span>
-                        </div>
-                      </div>
-                      <div class="cs-meta">
-                        <div class="cs-label-badge {{ getCompositeClass(getCompositeScore(row)) }}">
-                          Confianza {{ getCompositeLabel(getCompositeScore(row)) }}
-                        </div>
-                        <div class="cs-factors">
-                          <div class="csf-row">
-                            <span class="csf-name">Prob. alcista</span>
-                            <div class="csf-bar-wrap"><div class="csf-bar" [style.width.%]="row.prob_up*100"></div></div>
-                            <span class="csf-val">{{ (row.prob_up*100)|number:'1.0-0' }}%</span>
-                          </div>
-                          <div class="csf-row">
-                            <span class="csf-name">Tasa de acierto</span>
-                            <div class="csf-bar-wrap"><div class="csf-bar" [style.width.%]="row.win_rate*100"></div></div>
-                            <span class="csf-val">{{ (row.win_rate*100)|number:'1.0-0' }}%</span>
-                          </div>
-                          <div class="csf-row">
-                            <span class="csf-name">Alpha vs mercado</span>
-                            <div class="csf-bar-wrap">
-                              <div class="csf-bar" [class.neg-bar]="(row.alpha_vs_benchmark??0)<0"
-                                [style.width.%]="(((row.alpha_vs_benchmark??0)+0.5)*100)"></div>
-                            </div>
-                            <span class="csf-val" [class.pos]="(row.alpha_vs_benchmark??0)>0" [class.neg]="(row.alpha_vs_benchmark??0)<0">
-                              {{ (row.alpha_vs_benchmark??0)>0?'+':'' }}{{ ((row.alpha_vs_benchmark??0)*100)|number:'1.1-1' }}%
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <!-- ¿Por qué este día? — panel estructurado -->
+                    <h4><mat-icon>account_tree</mat-icon> Razonamiento Bayesiano: {{ row.ticker }}</h4>
                     <div class="day-why-panel">
                       <div class="wn-header">
                         <mat-icon>help_outline</mat-icon>
-                        <span>¿Por qué este día?</span>
-                      </div>
-                      <dl class="day-why-grid">
-                        <dt>P(↑)</dt>
-                        <dd [style.color]="probGradientColor(row.prob_up)">{{ (row.prob_up * 100) | number:'1.1-1' }}%</dd>
-                        <dt>Régimen activo</dt>
-                        <dd>
-                          @if (isPositionLoading(row.ticker)) {
-                            <span class="muted">Cargando…</span>
-                          } @else {
-                            {{ marketRegimeLabel(marketRegimeForTicker(row.ticker)) }}
-                          }
-                        </dd>
-                        <dt>Macro</dt>
-                        <dd>
-                          @if (macroContext) {
-                            {{ macroContext.risk_regime }} · {{ macroContext.macro_sentiment }}
-                          } @else {
-                            @if (getFeatureSnapshot(row.ticker)?.macro; as mac) {
-                              {{ mac.risk_regime || 'N/D' }} · {{ mac.macro_sentiment || 'N/D' }}
-                            } @else {
-                              <span class="muted">N/D</span>
-                            }
-                          }
-                        </dd>
-                        <dt>Recomendación</dt>
-                        <dd>
-                          <span class="day-why-rec-inline {{ expRecClass(row.exposure_recommendation) }}"
-                                [style.color]="expRecColor(row.exposure_recommendation)">
-                            <mat-icon>{{ expRecIcon(row.exposure_recommendation) }}</mat-icon>
-                            {{ expRecBadgeLabel(row.exposure_recommendation) }}
-                          </span>
-                        </dd>
-                        <dt>Exposición suavizada</dt>
-                        <dd>
-                          @if (isPositionLoading(row.ticker)) {
-                            <span class="muted">Cargando…</span>
-                          } @else if (smoothedExposurePct(row.ticker) !== null) {
-                            {{ smoothedExposurePct(row.ticker) }}%
-                          } @else {
-                            <span class="muted">N/D</span>
-                          }
-                        </dd>
-                      </dl>
-                      @if (getDayExplanation(row.ticker); as dayExp) {
-                        <div class="day-why-evidence">
-                          <span class="day-why-ev-label">Evidencia bayesiana:</span>
-                          {{ translateState(dayExp.evidence.sentiment) }} ·
-                          RSI {{ translateState(dayExp.evidence.rsi) }} ·
-                          {{ translateState(dayExp.evidence.trend) }} ·
-                          vol. {{ translateState(dayExp.evidence.volatility) }}
-                        </div>
-                      }
-                    </div>
-
-                    <!-- Narrativa ampliada -->
-                    <div class="why-now-block">
-                      <div class="wn-header">
-                        <mat-icon>bolt</mat-icon>
-                        <span>Resumen narrativo</span>
+                        <span>¿Por qué la IA recomienda {{ expRecLabel(row.exposure_recommendation) }} hoy?</span>
                       </div>
                       <p class="wn-text">{{ buildWhyNow(row) }}</p>
                     </div>
 
-                    <!-- Cadena de decisión -->
                     <div class="dec-chain">
                       <div class="dec-node {{ sentimentClass(row.evidence.sentiment) }}">
                         <span class="dec-cap">Sentimiento</span>
@@ -817,57 +552,7 @@
                           <mat-icon>{{ expRecIcon(row.exposure_recommendation) }}</mat-icon>
                           {{ expRecBadgeLabel(row.exposure_recommendation) }}
                         </span>
-                        <div class="dec-conf-row">
-                          <span class="dec-sub">Confianza Alcista:</span>
-                          <span class="dec-conf-val" [style.color]="probGradientColor(row.prob_up)">
-                            {{ (row.prob_up*100)|number:'1.1-1' }}%
-                          </span>
-                          <div class="dec-conf-bar">
-                            <div class="dec-conf-fill"
-                                 [style.width.%]="row.prob_up*100"
-                                 [style.background]="'linear-gradient(to right, #dc2626, #f59e0b 50%, #16a34a)'">
-                            </div>
-                            <div class="dec-conf-marker" [style.left.%]="row.prob_up*100"></div>
-                          </div>
-                        </div>
-                        @if (getRecommendedExposure(row.ticker) !== null) {
-                          <span class="dec-sub">Exposición recomendada: {{ getRecommendedExposure(row.ticker) }}%</span>
-                        }
                       </div>
-                    </div>
-
-                    @if (isFeatureLoading(row.ticker)) {
-                      <p class="feature-loading">Cargando capa de features…</p>
-                    } @else {
-                      @if (getFeatureSnapshot(row.ticker); as feat) {
-                        <div class="feature-panels">
-                          <div class="feat-mini-card">
-                            <h5><mat-icon>bolt</mat-icon> Catalizadores (7d)</h5>
-                            <p>{{ feat.catalysts?.catalyst_count_7d ?? 0 }} eventos · neto {{ feat.catalysts?.catalyst_sentiment_net ?? 0 }}</p>
-                            @for (ev of feat.catalysts?.events_sample?.slice(0, 3) ?? []; track ev.headline) {
-                              <small class="catalyst-line">{{ ev.event_type }} · {{ ev.headline }}</small>
-                            }
-                          </div>
-                          <div class="feat-mini-card">
-                            <h5><mat-icon>account_balance</mat-icon> Fundamentales</h5>
-                            <p>
-                              Crecimiento ingresos: {{ feat.fundamental?.revenue_growth_yoy != null ? (feat.fundamental!.revenue_growth_yoy! * 100 | number:'1.0-1') + '%' : 'N/D' }}
-                              · Estrés: {{ feat.fundamental?.fundamental_stress ?? 'N/D' }}
-                              <span class="feat-src">({{ feat.fundamental?.source ?? '—' }})</span>
-                            </p>
-                          </div>
-                        </div>
-                      }
-                    }
-
-                    <div class="explainer">
-                      <mat-icon>info</mat-icon>
-                      <span>
-                        <strong>Razonamiento Bayesiano:</strong> Se emite orden de
-                        {{ expRecLabel(row.exposure_recommendation) }}
-                        porque la combinación actual de indicadores y noticias produce una confianza alcista del
-                        <strong>{{ (row.prob_up*100)|number:'1.1-1' }}%</strong>.
-                      </span>
                     </div>
                   </div>
 
@@ -875,12 +560,11 @@
                     <div class="exp-card-head-row">
                       <h4><mat-icon>article</mat-icon> Análisis de Titulares de Hoy (FinBERT)</h4>
                       <button class="btn-news-detail" (click)="openNewsModal(row.ticker); $event.stopPropagation()"
-                              matTooltip="Ver todas las noticias con resumen IA y decisión FinBERT">
+                              matTooltip="Ver todas las noticias con resumen IA">
                         <mat-icon>open_in_new</mat-icon>
                         Más detalle
                       </button>
                     </div>
-
                     @if (isTraceLoading(row.ticker)) {
                       <div class="trace-loading">
                         <mat-spinner diameter="30"></mat-spinner>
@@ -898,9 +582,8 @@
                           </div>
                         }
                       </div>
-
                       <div class="headlines-list">
-                        <p class="hl-title">Titulares más relevantes clasificados por FinBERT:</p>
+                        <p class="hl-title">Titulares destacados:</p>
                         @for (h of getTickerTrace(row.ticker)?.sentiment_detail?.headlines_sample?.slice(0, 3); track $index) {
                           <div class="hl-row">
                             <span class="ev-chip ev-{{ h.sentiment }} small">{{ translateState(h.sentiment) | uppercase }}</span>
@@ -913,35 +596,8 @@
                       <p class="muted">No hay titulares relevantes para este activo hoy.</p>
                     }
                   </div>
-
                 </div>
 
-                <!-- ── Evolución de rendimiento por etapas (inline) ─────────── -->
-                <div class="inline-perf-section">
-                  <div class="wcs-header">
-                    <mat-icon>monitoring</mat-icon>
-                    <span>Evolución de Rendimiento por Etapas — {{ row.ticker }}</span>
-                  </div>
-
-                  @if (isInlineChartLoading(row.ticker)) {
-                    <div class="wcs-loading">
-                      <mat-spinner diameter="22"></mat-spinner>
-                      <span>Cargando histórico de {{ row.ticker }}...</span>
-                    </div>
-                  } @else if (hasInlineChart(row.ticker)) {
-                    <highcharts-chart
-                      [Highcharts]="Highcharts"
-                      [constructorType]="'stockChart'"
-                      [options]="getInlineChartOptions(row.ticker)"
-                      [(update)]="inlineChartUpdates[row.ticker]"
-                      class="inline-perf-chart">
-                    </highcharts-chart>
-                  } @else {
-                    <p class="wcs-empty">Sin datos de rendimiento disponibles. Ejecuta el bootstrap hasta {{ selectedDate }}.</p>
-                  }
-                </div>
-
-                <!-- ── FILA 2: Recomendaciones por perfil de riesgo ── -->
                 <div class="risk-profiles-section">
                   <div class="rp-header">
                     <mat-icon>manage_accounts</mat-icon>
@@ -971,7 +627,6 @@
                     }
                   </div>
                 </div>
-
               </div>
             </div>
           </td>
@@ -992,105 +647,12 @@
       </table>
     </div>
 
-    <section class="signals-cards-mobile" aria-label="Recomendaciones en tarjetas">
-      @if (dataSource.filteredData.length > 0) {
-        <div class="carousel-hint" aria-hidden="true">
-          <span>Desliza para recorrer recomendaciones</span>
-          <span class="hint-dots">• • •</span>
-        </div>
-        <div class="signals-cards-track" role="list" aria-label="Lista horizontal de recomendaciones">
-          @for (row of dataSource.filteredData; track row.ticker) {
-            <article class="signal-card" role="listitem" [attr.aria-label]="'Recomendación para ' + row.ticker">
-              <header class="signal-card-head">
-                <span class="ticker-name">{{ row.ticker }}</span>
-                <span class="signal-pill {{ expRecClass(row.exposure_recommendation) }}">
-                  <mat-icon>{{ signalIcon(row.exposure_recommendation) }}</mat-icon>
-                  {{ expRecBadgeLabel(row.exposure_recommendation) }}
-                </span>
-              </header>
-
-              <div class="signal-card-block">
-                <p class="sc-label">Confianza Alcista</p>
-                <div class="prob-cell">
-                  <div class="prob-gauge">
-                    <div class="gauge-fill"
-                        [style.width.%]="row.prob_up*100"
-                        [ngClass]="getProbClass(row.prob_up)"></div>
-                  </div>
-                  <span class="prob-pct" [ngClass]="getTextClass(row.prob_up)">
-                    {{ (row.prob_up*100)|number:'1.1-1' }}%
-                  </span>
-                </div>
-              </div>
-
-              <div class="signal-card-block">
-                <p class="sc-label">Estado de los Nodos</p>
-                <div class="ev-row">
-                  <span class="ev-chip {{ sentimentClass(row.evidence.sentiment) }}">
-                    <mat-icon>{{ sentimentIcon(row.evidence.sentiment) }}</mat-icon>
-                    {{ translateState(row.evidence.sentiment) }}
-                  </span>
-                  <span class="ev-chip {{ rsiClass(row.evidence.rsi) }}">
-                    <mat-icon>show_chart</mat-icon>
-                    {{ translateState(row.evidence.rsi) }}
-                  </span>
-                  <span class="ev-chip {{ trendClass(row.evidence.trend) }}">
-                    <mat-icon>{{ row.evidence.trend === 'uptrend' ? 'trending_up' : 'trending_down' }}</mat-icon>
-                    {{ translateState(row.evidence.trend) }}
-                  </span>
-                  <span class="ev-chip {{ volClass(row.evidence.volatility) }}">
-                    <mat-icon>swap_vert</mat-icon>
-                    {{ translateState(row.evidence.volatility) }}
-                  </span>
-                </div>
-              </div>
-
-              <div class="signal-card-metrics">
-                <div class="metric-item">
-                  <span class="metric-label">Ciclos Cerrados</span>
-                  <span class="num">{{ row.trades_closed }}</span>
-                </div>
-                <div class="metric-item">
-                  <span class="metric-label">Tasa de Acierto</span>
-                  <span class="ts-chip wr" [class.good]="row.win_rate>=0.5">
-                    <mat-icon>track_changes</mat-icon>{{ (row.win_rate*100)|number:'1.0-0' }}%
-                  </span>
-                </div>
-                <div class="metric-item">
-                  <span class="metric-label">Rentabilidad (Exposición)</span>
-                  <span class="ret-val" [class.pos]="row.exp_cumulative_return>0" [class.neg]="row.exp_cumulative_return<0">
-                    {{ row.exp_cumulative_return>0?'+':'' }}{{ (row.exp_cumulative_return*100)|number:'1.2-2' }}%
-                  </span>
-                </div>
-                <div class="metric-item">
-                  <span class="metric-label">Mejora vs Mercado</span>
-                  <span class="ret-val" [class.pos]="row.alpha_vs_benchmark>0" [class.neg]="row.alpha_vs_benchmark<0">
-                    {{ row.alpha_vs_benchmark>0?'+':'' }}{{ (row.alpha_vs_benchmark*100)|number:'1.2-2' }}%
-                  </span>
-                </div>
-              </div>
-            </article>
-          }
-        </div>
-      } @else {
-        <div class="no-data mobile-no-data">
-          <mat-icon>filter_alt_off</mat-icon>
-          <p>Sin tickers para los filtros aplicados</p>
-        </div>
-      }
-    </section>
-
   }
 </div>
 
-<!-- ══════════════════════════════════════════════════════════════
-     MODAL — Detalle completo de noticias
-══════════════════════════════════════════════════════════════ -->
 @if (newsModalOpen) {
   <div class="news-modal-backdrop" (click)="closeNewsModal()">
     <div class="news-modal" (click)="$event.stopPropagation()">
-
-      <!-- Cabecera -->
       <div class="nm-header">
         <div class="nm-title">
           <mat-icon>newspaper</mat-icon>
@@ -1102,9 +664,7 @@
         </button>
       </div>
 
-      <!-- Contenido -->
       <div class="nm-body">
-
         @if (newsModalLoading) {
           <div class="nm-loading">
             <mat-spinner diameter="36"></mat-spinner>
@@ -1116,22 +676,9 @@
             <p>{{ newsModalError }}</p>
           </div>
         } @else if (newsModalData) {
-
-          <!-- Contexto diario de Bedrock -->
-          @if (newsModalData.daily_context) {
-            <div class="nm-context">
-              <mat-icon>auto_awesome</mat-icon>
-              <span><strong>Contexto del día (Bedrock):</strong> {{ newsModalData.daily_context }}</span>
-            </div>
-          }
-
-          <p class="nm-count">{{ newsModalData.total }} artículos analizados</p>
-
-          <!-- Lista de artículos -->
+          <p class="nm-count">{{ newsModalData.total }} artículos analizados por FinBERT</p>
           @for (art of newsModalData.articles; track $index) {
             <div class="nm-article">
-
-              <!-- Cabecera artículo: sentimiento FinBERT + fuente + fecha -->
               <div class="nma-header">
                 <span class="nma-sentiment"
                       [style.background]="sentimentBg(art.sentiment)"
@@ -1142,35 +689,18 @@
                 <span class="nma-source">{{ art.source }}</span>
                 <span class="nma-date">{{ art.datetime | date:'dd/MM HH:mm' }}</span>
               </div>
-
-              <!-- Titular original -->
               <p class="nma-headline">{{ art.headline }}</p>
-
-              <!-- Resumen Bedrock -->
-              @if (art.bedrock_summary && art.bedrock_summary !== art.headline) {
-                <div class="nma-summary">
-                  <span class="nma-summary-label">
-                    <mat-icon>auto_awesome</mat-icon> Resumen IA
-                  </span>
-                  <p>{{ art.bedrock_summary }}</p>
-                </div>
-              }
-
-              <!-- Justificación FinBERT -->
               @if (art.justification) {
                 <p class="nma-justification">{{ art.justification }}</p>
               }
-
-              <!-- Enlace a la noticia -->
               @if (art.url) {
                 <a class="nma-link" [href]="art.url" target="_blank" rel="noopener noreferrer">
                   <mat-icon>open_in_new</mat-icon>
-                  Leer artículo completo
+                  Leer artículo
                 </a>
               }
             </div>
           }
-
           @if (newsModalData.total === 0) {
             <div class="nm-empty">
               <mat-icon>inbox</mat-icon>

@@ -12,7 +12,7 @@ import { Subject, switchMap, takeUntil } from 'rxjs';
 import { ReportService } from '../../core/services/report.service';
 import { PipelineContextService } from '../../core/services/pipeline-context.service';
 import { DailyReport, TickerView, ReportDateEntry, ExposureRecommendation, SentimentState, TrendState } from '../../core/models/report.model';
-import { ChartDataPoint } from '../../core/models/pipeline.model';
+import { ChartSeries } from '../../core/models/pipeline.model';
 
 @Component({
   selector: 'app-dashboard',
@@ -36,31 +36,12 @@ export class DashboardComponent implements OnInit, OnDestroy {
   availableDates: ReportDateEntry[] = [];
   selectedDate = '';
 
-  probUpChart: ChartDataPoint[] = [];
-  winRateChart: ChartDataPoint[] = [];
-  
   avgBenchmark: number = 0; 
+  returnComparisonChart: ChartSeries[] = [];
 
-  customSignalColors = (name: string) => {
-    if (name === 'COMPRAR') return '#22C55E';
-    if (name === 'CASH') return '#7C3AED';
-    return '#F59E0B'; 
+  colorScheme: any = {
+    domain: ['#2563eb', '#94a3b8']
   };
-
-  customProbColors = (name: string) => {
-    const item = this.probUpChart.find(d => d.name === name);
-    if (!item) return '#3B82F6';
-    if (item.value >= 65) return '#22C55E'; 
-    if (item.value <= 35) return '#7C3AED'; 
-    return '#F59E0B'; 
-  };
-
-  customWinRateColors = (name: string) => {
-    const item = this.winRateChart.find(d => d.name === name);
-    if (!item) return '#3B82F6';
-    return item.value >= 50 ? '#06B6D4' : '#EF4444'; 
-  };
-
 
   get pipelineLabel(): string {
     return this.pipelineCtx.rangeLabel();
@@ -111,17 +92,20 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   private processReport(report: DailyReport) {
     this.report = report;
-    this.tickerViews = this.reportSvc.buildTickerViews(report).sort((a, b) => b.prob_up - a.prob_up);
+    // Ordenamos por los que tienen más exposición actualmente
+    this.tickerViews = this.reportSvc.buildTickerViews(report).sort((a, b) => b.exposure_pct - a.exposure_pct);
     
     const sumBH = this.tickerViews.reduce((acc, curr) => acc + curr.buy_hold_return, 0);
     this.avgBenchmark = this.tickerViews.length > 0 ? (sumBH / this.tickerViews.length) : 0;
 
-    this.probUpChart = this.reportSvc.probUpChart(this.tickerViews);
-
-    this.winRateChart = this.tickerViews.map(t => ({
-      name: t.ticker,
-      value: t.win_rate * 100
-    })).sort((a, b) => b.value - a.value);
+    // Generar datos agrupando por Ticker en el eje X
+    this.returnComparisonChart = this.tickerViews.map(v => ({
+      name: v.ticker,
+      series: [
+        { name: 'Estrategia IA', value: +(v.exp_cumulative_return * 100).toFixed(2) },
+        { name: 'Buy & Hold', value: +(v.buy_hold_return * 100).toFixed(2) }
+      ]
+    }));
   }
 
   qualityLabel(s: number) {
@@ -139,54 +123,42 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   expRecLabel(rec: ExposureRecommendation): string {
     const map: Record<ExposureRecommendation, string> = {
-      INCREASE_STRONG: '↑↑ Aumentar fuerte',
-      INCREASE_MILD:   '↑  Aumentar',
-      MAINTAIN:        '→  Mantener',
-      REDUCE_MILD:     '↓  Reducir',
-      REDUCE_STRONG:   '↓↓ Reducir fuerte',
+      INCREASE_STRONG: 'Aumentar Fuerte',
+      INCREASE_MILD:   'Aumentar',
+      MAINTAIN:        'Mantener',
+      REDUCE_MILD:     'Reducir',
+      REDUCE_STRONG:   'Reducir Fuerte',
     };
     return map[rec] ?? rec;
   }
 
   expRecIcon(rec: ExposureRecommendation): string {
     const map: Record<ExposureRecommendation, string> = {
-      INCREASE_STRONG: 'arrow_upward',
-      INCREASE_MILD:   'trending_up',
-      MAINTAIN:        'remove',
-      REDUCE_MILD:     'trending_down',
-      REDUCE_STRONG:   'arrow_downward',
+      INCREASE_STRONG: 'keyboard_double_arrow_up',
+      INCREASE_MILD:   'keyboard_arrow_up',
+      MAINTAIN:        'drag_handle',
+      REDUCE_MILD:     'keyboard_arrow_down',
+      REDUCE_STRONG:   'keyboard_double_arrow_down',
     };
-    return map[rec] ?? 'remove';
-  }
-
-  expBarClass(pct: number): string {
-    if (pct >= 72) return 'exp-high';
-    if (pct >= 58) return 'exp-mid';
-    return 'exp-low';
+    return map[rec] ?? 'drag_handle';
   }
 
   sentimentClass(s: SentimentState): string {
-    if (s === 'bullish') return 'chip-bull';
-    if (s === 'bearish') return 'chip-bear';
-    return 'chip-neu';
-  }
-
-  sentimentIcon(s: SentimentState): string {
-    if (s === 'bullish') return 'sentiment_very_satisfied';
-    if (s === 'bearish') return 'sentiment_very_dissatisfied';
-    return 'sentiment_neutral';
+    if (s === 'bullish') return 'color-bull';
+    if (s === 'bearish') return 'color-bear';
+    return 'color-neu';
   }
 
   trendClass(t: TrendState): string {
-    return t === 'uptrend' ? 'chip-bull' : 'chip-bear';
+    return t === 'uptrend' ? 'color-bull' : 'color-bear';
   }
 
   translateState(s: string): string {
     const m: Record<string, string> = {
       bullish: 'Alcista', bearish: 'Bajista', neutral: 'Neutral',
       oversold: 'Sobrevendido', overbought: 'Sobrecomprado',
-      uptrend: 'Tendencia ↑', downtrend: 'Tendencia ↓',
-      low: 'Baja vol.', high: 'Alta vol.',
+      uptrend: 'Alcista', downtrend: 'Bajista',
+      low: 'Baja', high: 'Alta',
     };
     return m[s] ?? s;
   }

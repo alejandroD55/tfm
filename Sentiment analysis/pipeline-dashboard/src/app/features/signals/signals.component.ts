@@ -9,8 +9,6 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatExpansionModule } from '@angular/material/expansion';
 import { NgxChartsModule } from '@swimlane/ngx-charts';
-import Highcharts from 'highcharts/highstock';
-import { HighchartsChartModule } from 'highcharts-angular';
 import { switchMap, catchError, of, Subject, takeUntil } from 'rxjs';
 import { HttpErrorResponse } from '@angular/common/http';
 import { ActivatedRoute } from '@angular/router';
@@ -18,9 +16,8 @@ import { ReportService } from '../../core/services/report.service';
 import { PipelineContextService } from '../../core/services/pipeline-context.service';
 import { TraceService } from '../../core/services/trace.service';
 import {
-  ApiService, NewsDetailResponse, NewsArticleDetail, MacroContext, MacroArticle,
-  TickerPerformanceResponse, FeatureSnapshot, InferenceModelId,
-  ExposurePositionPoint,
+  ApiService, NewsDetailResponse, MacroContext, MacroArticle,
+  FeatureSnapshot, ExposurePositionPoint,
 } from '../../core/services/api.service';
 import {
   TickerView, ReportDateEntry, DailyReport, SignalExplanation,
@@ -37,7 +34,7 @@ import { ChartDataPoint } from '../../core/models/pipeline.model';
     MatTableModule, MatSortModule,
     MatButtonModule, MatIconModule,
     MatProgressSpinnerModule, MatTooltipModule, MatExpansionModule,
-    NgxChartsModule, HighchartsChartModule
+    NgxChartsModule
   ],
   templateUrl: './signals.component.html',
   styleUrl: './signals.component.scss',
@@ -53,22 +50,18 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
 
   @ViewChild(MatSort) sort!: MatSort;
 
-  Highcharts: typeof Highcharts = Highcharts;
-
   loading = true;
   availableDates: ReportDateEntry[] = [];
   selectedDate = '';
-  filterExposure = '';   // INCREASE_STRONG | INCREASE_MILD | MAINTAIN | REDUCE_MILD | REDUCE_STRONG | ''
   expandedRows = new Set<string>();
   currentReport: DailyReport | null = null;
   positionCache = new Map<string, ExposurePositionPoint | null>();
   positionLoading = new Set<string>();
 
-  // 1. SOLUCIÓN: Declaramos la variable que el HTML está buscando para los Smart Donuts
   tickerViews: TickerView[] = [];
 
-  // Exposición primero, recomendación bayesiana como referencia secundaria
-  displayedColumns = ['ticker', 'exposure', 'evidence', 'winrate', 'return', 'alpha', 'expand'];
+  // Se eliminan winrate y trades. Se mantiene el foco en evidencia y rentabilidad acumulada.
+  displayedColumns = ['ticker', 'exposure', 'prob_up', 'evidence', 'return', 'alpha', 'expand'];
   dataSource = new MatTableDataSource<TickerView>();
 
   // Gráficos de Resumen
@@ -78,50 +71,30 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
   trendChart: ChartDataPoint[] = [];
   volatilityChart: ChartDataPoint[] = [];
 
-  increaseStrongCount = 0;
-  increaseMildCount   = 0;
-  maintainCount       = 0;
-  reduceMildCount     = 0;
-  reduceStrongCount   = 0;
   avgProbUp = 0;
 
   tickerTraceCache = new Map<string, TickerTrace | null>();
   tickerTraceLoading = new Set<string>();
   featureCache = new Map<string, FeatureSnapshot | null>();
   featureLoading = new Set<string>();
-  selectedModelId: InferenceModelId = 'bayesian_v1.2';
-  hasTraceForDate = false;
 
-  // ── Stage evolution chart (inline en filas expandibles) ─────────────────
-  inlineChartCache = new Map<string, Highcharts.Options>();
-  inlineChartUpdates: Record<string, boolean> = {};
-  inlineChartLoading = new Set<string>();
-
-  // ── Highcharts performance chart ──────────────────────────────────────────
-  performanceTicker = '';
-  performanceLoading = false;
-  performanceError = '';
-  performanceChartOptions: Highcharts.Options = {};
-  performanceChartUpdate = false;
-  performanceCache = new Map<string, TickerPerformanceResponse>();
-
-  // Funciones de Coloreado Dinámico (Para NGX-Charts)
+  // Funciones de Coloreado Dinámico
   customSignalColors = (name: string) => {
-    if (name.startsWith('↑↑')) return '#15803d';
-    if (name.startsWith('↑'))  return '#22c55e';
-    if (name.startsWith('→'))  return '#3b82f6';
-    if (name.startsWith('↓↓')) return '#b91c1c';
-    return '#f59e0b';  // ↓ Reducir
+    if (name.includes('Aumentar Fuerte')) return '#15803d';
+    if (name.includes('Aumentar'))  return '#22c55e';
+    if (name.includes('Mantener'))  return '#3b82f6';
+    if (name.includes('Reducir Fuerte')) return '#b91c1c';
+    return '#f59e0b';
   };
   customSentimentColors = (name: string) => {
     if (name === 'ALCISTA') return '#22C55E';
     if (name === 'BAJISTA') return '#EF4444';
-    return '#94A3B8'; // NEUTRAL
+    return '#94A3B8';
   };
   customRsiColors = (name: string) => {
     if (name === 'SOBREVENTA') return '#22C55E';
     if (name === 'SOBRECOMPRA') return '#EF4444';
-    return '#94A3B8'; // NEUTRAL
+    return '#94A3B8';
   };
   customTrendColors = (name: string) => name === 'ALCISTA' ? '#22C55E' : '#EF4444';
   customVolColors = (name: string) => name === 'BAJA' ? '#3B82F6' : '#F59E0B';
@@ -141,20 +114,17 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
 
   private loadInitial() {
     this.loading = true;
-    // Leer fecha y ticker desde query param (navegación desde Backtesting)
     const dateFromUrl   = this.route.snapshot.queryParamMap.get('date');
     const tickerFromUrl = this.route.snapshot.queryParamMap.get('ticker');
+    
     this.reportSvc.listAvailableDates().pipe(
       switchMap(dates => {
         this.availableDates = dates;
         if (!dates.length) { this.loading = false; return []; }
-        // Prioridad: query param → último día del pipeline → primera fecha disponible
         const defaultDate = this.pipelineCtx.pipelineEndDate() ?? dates[0].date;
         this.selectedDate = (dateFromUrl && dates.find(d => d.date === dateFromUrl))
           ? dateFromUrl
           : defaultDate;
-        const entry = dates.find(d => d.date === this.selectedDate) ?? dates[0];
-        this.hasTraceForDate = !!(entry as any).has_trace;
         return this.reportSvc.loadReport(this.selectedDate);
       })
     ).subscribe({
@@ -162,7 +132,6 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
         if (r) this.processReport(r);
         this.loading = false;
         this.loadMacroContext(this.selectedDate);
-        // Si hay ticker en la URL, expandir esa fila y hacer scroll a ella
         if (tickerFromUrl) {
           this.ngZone.runOutsideAngular(() => {
             setTimeout(() => this.scrollAndExpandTicker(tickerFromUrl), 400);
@@ -173,25 +142,19 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     });
   }
 
-  /** Expande la fila de un ticker y hace scroll animado hasta ella */
   scrollAndExpandTicker(ticker: string): void {
-    // 1. Expandir la fila dentro de la zona Angular (dispara change detection)
     this.ngZone.run(() => {
       if (!this.expandedRows.has(ticker)) {
         this.toggleRow(ticker);
       }
     });
 
-    // 2. Intentar scroll con reintentos hasta que el DOM esté listo
-    //    Angular Material puede tardar varios ciclos en renderizar la fila expandida
     let attempts = 0;
-    const MAX_ATTEMPTS = 12;   // max 12 × 150ms = 1.8s
+    const MAX_ATTEMPTS = 12;
     const tryScroll = () => {
       attempts++;
-      // Selector primario: data-ticker attribute
       let row = document.querySelector(`tr[data-ticker="${ticker}"]`) as HTMLElement | null;
 
-      // Fallback: buscar por el texto del ticker-name dentro de las filas de datos
       if (!row) {
         const allRows = document.querySelectorAll('tr.data-row');
         for (let i = 0; i < allRows.length; i++) {
@@ -211,7 +174,6 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
         setTimeout(tryScroll, 150);
       }
     };
-    // Primer intento después de que Angular haya procesado el ciclo actual
     setTimeout(tryScroll, 300);
   }
 
@@ -222,17 +184,10 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
   onDateChange(date: string) {
     this.loading = true;
     this.tickerTraceCache.clear();
-    this.inlineChartCache.clear();
-    this.inlineChartUpdates = {};
-    this.inlineChartLoading.clear();
-    this.performanceCache.clear();
-    this.performanceChartOptions = {};
-    this.performanceError = '';
     this.expandedRows.clear();
     this.positionCache.clear();
     this.currentReport = null;
-    const entry = this.availableDates.find(d => d.date === date);
-    this.hasTraceForDate = !!(entry as any)?.has_trace;
+    
     this.reportSvc.loadReport(date).subscribe({
       next: r => {
         this.processReport(r);
@@ -247,7 +202,6 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     this.currentReport = report;
     const views = this.reportSvc.buildTickerViews(report);
     
-    // 2. SOLUCIÓN: Guardamos los datos en la variable para que el HTML pueda contar la longitud
     this.tickerViews = views; 
     this.dataSource.data = views;
     
@@ -255,22 +209,26 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
       this.dataSource.sort = this.sort;
     }
 
-    this.dataSource.filterPredicate = (row, filter) => !filter || row.exposure_recommendation === filter;
+    let increaseStrongCount = 0;
+    let increaseMildCount   = 0;
+    let maintainCount       = 0;
+    let reduceMildCount     = 0;
+    let reduceStrongCount   = 0;
 
-    this.increaseStrongCount = views.filter(v => v.exposure_recommendation === 'INCREASE_STRONG').length;
-    this.increaseMildCount   = views.filter(v => v.exposure_recommendation === 'INCREASE_MILD').length;
-    this.maintainCount       = views.filter(v => v.exposure_recommendation === 'MAINTAIN').length;
-    this.reduceMildCount     = views.filter(v => v.exposure_recommendation === 'REDUCE_MILD').length;
-    this.reduceStrongCount   = views.filter(v => v.exposure_recommendation === 'REDUCE_STRONG').length;
-    this.avgProbUp = views.length ? (views.reduce((s, v) => s + v.prob_up, 0) / views.length) * 100 : 0;
-
-    // Procesar datos para gráficos de Nodos (Con nombres en castellano)
     const sent = { ALCISTA: 0, BAJISTA: 0, NEUTRAL: 0 };
     const rsi = { SOBREVENTA: 0, SOBRECOMPRA: 0, NEUTRAL: 0 };
     const trend = { ALCISTA: 0, BAJISTA: 0 };
     const vol = { ALTA: 0, BAJA: 0 };
 
     views.forEach(v => {
+      // Recommendations Count
+      if (v.exposure_recommendation === 'INCREASE_STRONG') increaseStrongCount++;
+      else if (v.exposure_recommendation === 'INCREASE_MILD') increaseMildCount++;
+      else if (v.exposure_recommendation === 'MAINTAIN') maintainCount++;
+      else if (v.exposure_recommendation === 'REDUCE_MILD') reduceMildCount++;
+      else if (v.exposure_recommendation === 'REDUCE_STRONG') reduceStrongCount++;
+
+      // Evidence Count
       const e = v.evidence;
       if (e.sentiment === 'bullish') sent.ALCISTA++;
       else if (e.sentiment === 'bearish') sent.BAJISTA++;
@@ -287,204 +245,20 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
       else vol.BAJA++;
     });
 
+    this.avgProbUp = views.length ? (views.reduce((s, v) => s + v.prob_up, 0) / views.length) * 100 : 0;
+
     this.signalChart = [
-      { name: '↑↑ Aumentar fuerte', value: this.increaseStrongCount },
-      { name: '↑  Aumentar',        value: this.increaseMildCount   },
-      { name: '→  Mantener',        value: this.maintainCount       },
-      { name: '↓  Reducir',         value: this.reduceMildCount     },
-      { name: '↓↓ Reducir fuerte',  value: this.reduceStrongCount   },
+      { name: 'Aumentar Fuerte', value: increaseStrongCount },
+      { name: 'Aumentar',        value: increaseMildCount   },
+      { name: 'Mantener',        value: maintainCount       },
+      { name: 'Reducir',         value: reduceMildCount     },
+      { name: 'Reducir Fuerte',  value: reduceStrongCount   },
     ].filter(i => i.value > 0);
 
     this.sentimentChart = Object.entries(sent).map(([name, value]) => ({ name, value })).filter(i => i.value > 0);
     this.rsiChart = Object.entries(rsi).map(([name, value]) => ({ name, value })).filter(i => i.value > 0);
     this.trendChart = Object.entries(trend).map(([name, value]) => ({ name, value })).filter(i => i.value > 0);
     this.volatilityChart = Object.entries(vol).map(([name, value]) => ({ name, value })).filter(i => i.value > 0);
-
-    if (!views.some(v => v.ticker === this.performanceTicker)) {
-      this.performanceTicker = views[0]?.ticker ?? '';
-    }
-    if (this.performanceTicker) {
-      this.loadPerformanceChart(this.performanceTicker);
-    }
-  }
-
-  applyFilter() {
-    this.dataSource.filter = this.filterExposure;
-  }
-
-  onPerformanceTickerChange(ticker: string) {
-    this.performanceTicker = ticker;
-    this.loadPerformanceChart(ticker);
-  }
-
-  loadPerformanceChart(ticker: string) {
-    if (!ticker || !this.selectedDate) return;
-    const key = `${this.selectedDate}:${ticker}`;
-    const cached = this.performanceCache.get(key);
-    if (cached) {
-      this.performanceChartOptions = this.buildPerformanceChartOptions(cached);
-      this.performanceChartUpdate = true;
-      return;
-    }
-
-    this.performanceLoading = true;
-    this.performanceError = '';
-    this.apiSvc.getTickerPerformance(ticker, this.selectedDate, 365).pipe(
-      catchError(() => {
-        this.performanceError = `No se pudo cargar el histórico de ${ticker}. Ejecuta el bootstrap hasta ${this.selectedDate}.`;
-        this.performanceLoading = false;
-        return of(null);
-      })
-    ).subscribe(resp => {
-      this.performanceLoading = false;
-      if (!resp) return;
-      this.performanceCache.set(key, resp);
-      this.performanceChartOptions = this.buildPerformanceChartOptions(resp);
-      this.performanceChartUpdate = true;
-    });
-  }
-
-  private buildPerformanceChartOptions(resp: TickerPerformanceResponse, height = 540): Highcharts.Options {
-    const toTs = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
-    const points = resp.points;
-    const targetTs = toTs(resp.target_date);
-    const visibleStart = targetTs - 1000 * 60 * 60 * 24 * 120;
-
-    const ohlc = points.map(p => [toTs(p.date), p.open, p.high, p.low, p.close]);
-    const bbUpper = points.map(p => [toTs(p.date), p.bb_upper]);
-    const bbMiddle = points.map(p => [toTs(p.date), p.bb_middle]);
-    const bbLower = points.map(p => [toTs(p.date), p.bb_lower]);
-    const strategy = points.map(p => [toTs(p.date), p.strategy_return]);
-    const buyHold = points.map(p => [toTs(p.date), p.buy_hold_return]);
-    const drawdownPoint = points.find(p => p.date === resp.max_drawdown.date);
-
-    const stageBands = resp.stages.map(stage => ({
-      from: toTs(stage.from),
-      to: toTs(stage.to) + 1000 * 60 * 60 * 24,
-      color: stage.stage === 'LONG' ? 'rgba(34,197,94,.055)' : 'rgba(124,58,237,.055)',
-      label: {
-        text: stage.stage,
-        style: { color: stage.stage === 'LONG' ? '#15803d' : '#6d28d9', fontSize: '10px', fontWeight: '600' },
-      },
-    }));
-
-    // Flags del gráfico de precio — traducimos la recomendación interna BN a lenguaje de exposición
-    const flagColor = (rec: string) =>
-      rec.startsWith('INCREASE') ? '#16a34a' : rec.startsWith('REDUCE') ? '#7c3aed' : '#94a3b8';
-    const flagTitle = (rec: string) =>
-      rec === 'INCREASE_STRONG' ? '↑↑' : rec === 'INCREASE_MILD' ? '↑' : rec === 'REDUCE_STRONG' ? '↓↓' : rec === 'REDUCE_MILD' ? '↓' : '→';
-    const flagText  = (rec: string, probUp: number | null) => {
-      const pct = probUp != null ? ` · P(↑) ${(probUp * 100).toFixed(1)}%` : '';
-      return rec.startsWith('INCREASE')  ? `Aumentar exposición${pct}`
-           : rec.startsWith('REDUCE') ? `Reducir exposición${pct}`
-           : `Mantener exposición${pct}`;
-    };
-
-    const signalFlags = resp.recommendations
-      .filter(s => s.exposure_recommendation !== 'MAINTAIN')
-      .map(s => ({
-        x: toTs(s.date),
-        title: flagTitle(s.exposure_recommendation),
-        text:  flagText(s.exposure_recommendation, s.prob_up),
-        fillColor: flagColor(s.exposure_recommendation),
-      }));
-
-    return {
-      chart: {
-        height,
-        backgroundColor: 'transparent',
-        zooming: { type: 'x' },
-      },
-      title: { text: undefined },
-      credits: { enabled: false },
-      rangeSelector: {
-        selected: 2,
-        inputEnabled: height >= 500,
-        enabled: height >= 500,
-        buttons: height >= 500 ? [
-          { type: 'month', count: 1, text: '1M' },
-          { type: 'month', count: 3, text: '3M' },
-          { type: 'month', count: 6, text: '6M' },
-          { type: 'all', text: 'Todo' },
-        ] : [],
-      },
-      navigator: { enabled: height >= 500 },
-      scrollbar: { enabled: height >= 500 },
-      legend: { enabled: true },
-      xAxis: {
-        type: 'datetime',
-        min: Math.max(points.length ? toTs(points[0].date) : visibleStart, visibleStart),
-        max: targetTs,
-        plotBands: stageBands as any,
-        plotLines: [{
-          value: targetTs,
-          color: '#2563eb',
-          width: 2,
-          dashStyle: 'Dash',
-          label: { text: `Fecha seleccionada: ${resp.target_date}`, rotation: 0, y: 14, style: { color: '#2563eb', fontWeight: '600' } },
-        }],
-      },
-      yAxis: [{
-        title: { text: 'Precio' },
-        height: '62%',
-        resize: { enabled: true },
-        gridLineColor: 'rgba(148,163,184,.18)',
-      }, {
-        title: { text: 'Rendimiento (%)' },
-        top: '68%',
-        height: '32%',
-        offset: 0,
-        opposite: false,
-        gridLineColor: 'rgba(148,163,184,.18)',
-        plotLines: [{ value: 0, color: '#94a3b8', width: 1 }],
-      }],
-      tooltip: {
-        split: true,
-        valueDecimals: 2,
-      },
-      plotOptions: {
-        series: {
-          dataGrouping: { enabled: false },
-          marker: { enabled: false },
-        } as any,
-        candlestick: {
-          color: '#ef4444',
-          upColor: '#22c55e',
-          lineColor: '#dc2626',
-          upLineColor: '#16a34a',
-        } as any,
-      },
-      series: [
-        { type: 'candlestick', id: 'ohlc', name: `${resp.ticker} OHLC`, data: ohlc, yAxis: 0 },
-        { type: 'line', name: 'Bollinger superior', data: bbUpper, yAxis: 0, color: '#f59e0b', dashStyle: 'ShortDash', lineWidth: 1.4 },
-        { type: 'line', name: 'Media Bollinger', data: bbMiddle, yAxis: 0, color: '#64748b', dashStyle: 'ShortDot', lineWidth: 1 },
-        { type: 'line', name: 'Bollinger inferior', data: bbLower, yAxis: 0, color: '#f59e0b', dashStyle: 'ShortDash', lineWidth: 1.4 },
-        { type: 'line', name: 'Rendimiento estrategia', data: strategy, yAxis: 1, color: '#2563eb', lineWidth: 2.2 },
-        { type: 'line', name: 'Buy & Hold', data: buyHold, yAxis: 1, color: '#94a3b8', lineWidth: 1.6 },
-        {
-          type: 'scatter',
-          name: 'Max drawdown',
-          data: drawdownPoint ? [[toTs(drawdownPoint.date), drawdownPoint.strategy_return]] : [],
-          yAxis: 1,
-          color: '#ef4444',
-          marker: { enabled: true, symbol: 'triangle-down', radius: 7 },
-          tooltip: {
-            pointFormatter: function () {
-              return `<span style="color:#ef4444">●</span> Max drawdown: <b>${(resp.max_drawdown.drawdown * 100).toFixed(2)}%</b><br/>`;
-            },
-          },
-        },
-        {
-          type: 'flags',
-          name: 'Recomendaciones',
-          data: signalFlags,
-          onSeries: 'ohlc',
-          shape: 'squarepin',
-          width: 18,
-          style: { color: '#fff', fontSize: '9px', fontWeight: '700' },
-        } as any,
-      ] as any,
-    };
   }
 
   toggleRow(ticker: string) {
@@ -494,7 +268,6 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
       this.expandedRows.add(ticker);
       this.loadTickerTrace(ticker);
       this.loadFeatureSnapshot(ticker);
-      this.loadInlinePerformanceChart(ticker);
       this.loadExposurePosition(ticker);
     }
   }
@@ -518,7 +291,6 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     this.positionLoading.add(ticker);
     this.apiSvc.getExposurePositions(ticker, 120).pipe(
       catchError((err: HttpErrorResponse) => {
-        // 404 = sin datos de exposición para este ticker (normal si el endpoint no está disponible)
         if (err?.status !== 404) console.warn('[ExposurePositions]', err.message);
         return of(null);
       })
@@ -561,13 +333,13 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
 
   macroRiskRegime(): string | null {
     return this.macroContext?.risk_regime
-      ?? this.getFeatureSnapshot(this.performanceTicker)?.macro?.risk_regime
+      ?? this.getFeatureSnapshot(this.tickerViews[0]?.ticker ?? '')?.macro?.risk_regime
       ?? null;
   }
 
   macroSentimentLabel(): string | null {
     return this.macroContext?.macro_sentiment
-      ?? this.getFeatureSnapshot(this.performanceTicker)?.macro?.macro_sentiment
+      ?? this.getFeatureSnapshot(this.tickerViews[0]?.ticker ?? '')?.macro?.macro_sentiment
       ?? null;
   }
 
@@ -594,8 +366,6 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     this.featureLoading.add(ticker);
     this.apiSvc.getFeatures(this.selectedDate, ticker).pipe(
       catchError((err: HttpErrorResponse) => {
-        // 404 = feature_snapshot no generado (requiere lambda_features en AWS)
-        // en entorno local es normal, no mostramos error
         if (err?.status !== 404) console.warn('[FeatureSnapshot]', err.message);
         return of(null);
       })
@@ -619,41 +389,6 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     return c != null ? Math.round(c * 1000) / 10 : null;
   }
 
-  loadInlinePerformanceChart(ticker: string) {
-    if (this.inlineChartCache.has(ticker) || this.inlineChartLoading.has(ticker)) return;
-    this.inlineChartLoading.add(ticker);
-    const key = `${this.selectedDate}:${ticker}`;
-    const cached = this.performanceCache.get(key);
-    if (cached) {
-      this.inlineChartCache.set(ticker, this.buildPerformanceChartOptions(cached, 380));
-      this.inlineChartUpdates[ticker] = true;
-      this.inlineChartLoading.delete(ticker);
-      return;
-    }
-    this.apiSvc.getTickerPerformance(ticker, this.selectedDate, 365).pipe(
-      catchError(() => of(null))
-    ).subscribe(resp => {
-      this.inlineChartLoading.delete(ticker);
-      if (!resp) return;
-      this.performanceCache.set(key, resp);
-      this.inlineChartCache.set(ticker, this.buildPerformanceChartOptions(resp, 380));
-      this.inlineChartUpdates[ticker] = true;
-    });
-  }
-
-  getInlineChartOptions(ticker: string): Highcharts.Options {
-    return this.inlineChartCache.get(ticker) ?? {};
-  }
-
-  isInlineChartLoading(ticker: string): boolean {
-    return this.inlineChartLoading.has(ticker);
-  }
-
-  hasInlineChart(ticker: string): boolean {
-    const opts = this.inlineChartCache.get(ticker);
-    return !!(opts?.series && (opts.series as any[]).length);
-  }
-
   /** Color de gradiente para Confianza Alcista: rojo (baja) → verde (alta) */
   probGradientColor(prob: number): string {
     const t = Math.max(0, Math.min(1, prob));
@@ -663,16 +398,14 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     return `rgb(${r}, ${g}, ${b})`;
   }
 
-  /** Etiqueta corta para badge de recomendación */
   expRecBadgeLabel(rec: string | null | undefined): string {
     if (!rec) return 'N/D';
     const m: Record<string, string> = {
-      INCREASE_STRONG: '↑↑ Aumentar fuerte',
-      INCREASE_MILD:   '↑ Aumentar',
-      MAINTAIN:        '→ Mantener',
-      REDUCE_MILD:     '↓ Reducir',
-      REDUCE_STRONG:   '↓↓ Reducir fuerte',
-      BUY: 'Comprar', HOLD: 'Mantener', SELL: 'Vender',
+      INCREASE_STRONG: 'Aumentar fuerte',
+      INCREASE_MILD:   'Aumentar',
+      MAINTAIN:        'Mantener',
+      REDUCE_MILD:     'Reducir',
+      REDUCE_STRONG:   'Reducir fuerte',
     };
     return m[rec] ?? rec.replace(/_/g, ' ');
   }
@@ -704,7 +437,6 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     }));
   }
 
-  // Utilidad de Traducción
   translateState(state: string): string {
     const dict: Record<string, string> = {
       bullish: 'Alcista', bearish: 'Bajista', neutral: 'Neutral',
@@ -718,7 +450,7 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
   getProbClass(prob: number): string {
     if (prob >= 0.65) return 'high';
     if (prob <= 0.35) return 'low';
-    return 'mid'; // Mantener (Amarillo)
+    return 'mid'; 
   }
 
   getTextClass(prob: number): string {
@@ -731,30 +463,28 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     return this.expRecIcon(rec);
   }
 
-  // ── Helpers de exposición ─────────────────────────────────────────────────
   expRecLabel(rec: string | null | undefined): string {
     if (!rec) return 'N/D';
     const m: Record<string, string> = {
-      INCREASE_STRONG: '↑↑ Aumentar fuerte',
-      INCREASE_MILD:   '↑  Aumentar',
-      MAINTAIN:        '→  Mantener posición',
-      REDUCE_MILD:     '↓  Reducir',
-      REDUCE_STRONG:   '↓↓ Reducir fuerte',
-      BUY: 'Comprar', HOLD: 'Mantener', SELL: 'Vender',
+      INCREASE_STRONG: 'Aumentar Fuerte',
+      INCREASE_MILD:   'Aumentar',
+      MAINTAIN:        'Mantener',
+      REDUCE_MILD:     'Reducir',
+      REDUCE_STRONG:   'Reducir Fuerte'
     };
     return m[rec] ?? rec;
   }
 
   expRecIcon(rec: string | null | undefined): string {
-    if (!rec) return 'remove';
+    if (!rec) return 'drag_handle';
     const m: Record<string, string> = {
-      INCREASE_STRONG: 'arrow_upward',
-      INCREASE_MILD:   'trending_up',
-      MAINTAIN:        'remove',
-      REDUCE_MILD:     'trending_down',
-      REDUCE_STRONG:   'arrow_downward',
+      INCREASE_STRONG: 'keyboard_double_arrow_up',
+      INCREASE_MILD:   'keyboard_arrow_up',
+      MAINTAIN:        'drag_handle',
+      REDUCE_MILD:     'keyboard_arrow_down',
+      REDUCE_STRONG:   'keyboard_double_arrow_down',
     };
-    return m[rec] ?? 'remove';
+    return m[rec] ?? 'drag_handle';
   }
 
   expBarClass(pct: number): string {
@@ -766,14 +496,13 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
   expRecClass(rec: string | null | undefined): string {
     return (rec ?? 'unknown').toLowerCase().replace(/_/g, '-');
   }
+
   sentimentIcon(s: SentimentState) {
     return ({ bullish: 'sentiment_very_satisfied', bearish: 'sentiment_very_dissatisfied', neutral: 'sentiment_neutral' })[s];
   }
 
   sentimentClass(v: SentimentState)  { return `ev-${v}`; }
-  rsiClass(v: RsiState)              {
-    return v === 'oversold' ? 'ev-oversold' : v === 'overbought' ? 'ev-overbought' : 'ev-neutral-rsi';
-  }
+  rsiClass(v: RsiState)              { return v === 'oversold' ? 'ev-oversold' : v === 'overbought' ? 'ev-overbought' : 'ev-neutral-rsi'; }
   trendClass(v: TrendState)          { return `ev-${v}`; }
   volClass(v: VolatilityState)       { return v === 'low' ? 'ev-low-vol' : 'ev-high-vol'; }
 
@@ -860,7 +589,7 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     this.macroError   = '';
     this.apiSvc.getMacroContext(date).pipe(
       catchError(() => {
-        this.macroError   = 'Sin datos macro para esta fecha. El pipeline debe haber ejecutado lambda_macro_context.';
+        this.macroError   = 'Sin datos macro para esta fecha.';
         this.macroLoading = false;
         return of(null);
       })
@@ -965,9 +694,9 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
 
   getCompositeScore(row: TickerView): number {
     const probScore  = row.prob_up * 100;
-    const wrScore    = row.win_rate * 100;
+    // Eliminamos winrate de la ecuación del score compuesto
     const alphaScore = Math.min(Math.max(((row.alpha_vs_benchmark ?? 0) + 0.5) * 100, 0), 100);
-    return Math.round(0.40 * probScore + 0.30 * wrScore + 0.30 * alphaScore);
+    return Math.round(0.60 * probScore + 0.40 * alphaScore);
   }
 
   getCompositeLabel(score: number): string {
@@ -1012,21 +741,15 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
     let text = `${row.ticker} genera recomendación ${signalLabel} con ${bullishCount} de 4 condiciones favorables alineadas: `;
     text += factors.slice(0, 3).join('; ') + '. ';
 
-    if (row.trades_closed > 0) {
-      const wr = Math.round(row.win_rate * 100);
-      const alpha = row.alpha_vs_benchmark ?? 0;
-      const alphaStr = alpha >= 0 ? `+${(alpha * 100).toFixed(1)}%` : `${(alpha * 100).toFixed(1)}%`;
-      text += `En ${row.trades_closed} ciclos históricos, el modelo acertó el ${wr}% de las operaciones `;
-      text += `con un alpha de ${alphaStr} frente al benchmark de mercado.`;
-    } else {
-      text += 'No hay ciclos históricos cerrados para este activo en el periodo analizado.';
-    }
+    const alpha = row.alpha_vs_benchmark ?? 0;
+    const alphaStr = alpha >= 0 ? `+${(alpha * 100).toFixed(1)}%` : `${(alpha * 100).toFixed(1)}%`;
+    text += ` El modelo ha logrado un Alpha histórico de ${alphaStr} frente al comportamiento pasivo del mercado para este activo.`;
+    
     return text;
   }
 
   getRiskProfiles(row: TickerView): { type: string; label: string; icon: string; color: string; action: string; rationale: string; suitable: boolean }[] {
     const score = this.getCompositeScore(row);
-    // Exposure-based risk assessment (replaces binary BUY/SELL/HOLD)
     const isBuy  = ['INCREASE_STRONG', 'INCREASE_MILD'].includes(row.exposure_recommendation);
     const isHold = row.exposure_recommendation === 'MAINTAIN';
     const isSell = ['REDUCE_MILD', 'REDUCE_STRONG'].includes(row.exposure_recommendation);
@@ -1037,14 +760,14 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
         label: 'Perfil Conservador',
         icon: 'shield',
         color: '#3B82F6',
-        action: isBuy && score >= 70 && row.win_rate >= 0.55
+        action: isBuy && score >= 70
           ? 'Entrada permitida — recomendación sólida'
           : isHold ? 'Mantener posición si ya invertido'
           : 'No actuar — esperar recomendación más clara',
-        rationale: isBuy && score >= 70 && row.win_rate >= 0.55
-          ? `Confianza compuesta ${score}/100 y tasa de acierto ${Math.round(row.win_rate*100)}% superan los umbrales mínimos para perfil conservador (≥70 y ≥55%).`
-          : `La confianza compuesta (${score}/100) o la tasa de acierto (${Math.round(row.win_rate*100)}%) no alcanzan los umbrales requeridos para asumir riesgo.`,
-        suitable: isBuy && score >= 70 && row.win_rate >= 0.55,
+        rationale: isBuy && score >= 70
+          ? `Confianza compuesta ${score}/100 supera el umbral mínimo para perfil conservador (≥70).`
+          : `La confianza compuesta (${score}/100) no alcanza el umbral requerido para asumir riesgo.`,
+        suitable: isBuy && score >= 70,
       },
       {
         type: 'moderate',
@@ -1056,8 +779,8 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
           : isHold ? 'Mantener con stop-loss ajustado'
           : 'Reducir exposición o no entrar',
         rationale: isBuy && score >= 55
-          ? `Confianza compuesta ${score}/100 con probabilidad alcista del ${Math.round(row.prob_up*100)}%. Adecuado para posición de tamaño estándar.`
-          : `Recomendación ${this.expRecLabel(row.exposure_recommendation)} con confianza ${score}/100. El perfil moderado requiere ≥55 de confianza compuesta para abrir posición.`,
+          ? `Confianza compuesta ${score}/100 con probabilidad alcista del ${Math.round(row.prob_up*100)}%.`
+          : `Recomendación ${this.expRecLabel(row.exposure_recommendation)} con confianza ${score}/100. El perfil moderado requiere ≥55 de confianza compuesta.`,
         suitable: isBuy && score >= 55,
       },
       {
@@ -1070,10 +793,10 @@ export class SignalsComponent implements OnInit, OnDestroy, AfterViewInit {
           : isHold ? 'Mantener con trailing stop'
           : 'Salir del mercado y buscar alternativas',
         rationale: isBuy
-          ? `Probabilidad alcista del ${Math.round(row.prob_up*100)}%. El perfil agresivo ejecuta cualquier recomendación de incremento de exposición sin filtros adicionales de confianza.`
+          ? `Probabilidad alcista del ${Math.round(row.prob_up*100)}%. El perfil agresivo ejecuta cualquier recomendación de incremento de exposición sin filtros adicionales.`
           : isSell
-          ? `El modelo recomienda reducir exposición. El perfil agresivo prioriza preservar capital y esperar mejor punto de reentrada.`
-          : `Recomendación MANTENER — el perfil agresivo conserva posición existente pero activa trailing stop del 3%.`,
+          ? `El modelo recomienda reducir exposición. Priorizar capital y esperar reentrada.`
+          : `Recomendación MANTENER — el perfil agresivo conserva posición activa con stop del 3%.`,
         suitable: isBuy,
       },
     ];
