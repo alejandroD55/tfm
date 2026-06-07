@@ -15,9 +15,20 @@
         La IA empieza en <strong>0% invertido</strong> y aumenta gradualmente la exposición según las recomendaciones bayesianas.
       </p>
     </div>
-    <div class="snapshot-pill">
-      <mat-icon>event</mat-icon>
-      <span>Cierre del pipeline: {{ selectedDate || "—" }}</span>
+    
+    <div class="page-actions">
+      <div class="filter-group">
+        <label>Fecha del Informe</label>
+        <select class="aurora-select" [(ngModel)]="selectedDate" (change)="onDateChange(selectedDate)">
+          @for (d of availableDates; track d.date) {
+            <option [value]="d.date">{{ d.date }}</option>
+          }
+        </select>
+      </div>
+      <button class="btn btn-ghost" (click)="refresh()" matTooltip="Recargar último informe">
+        <mat-icon>refresh</mat-icon>
+        <span>Actualizar</span>
+      </button>
     </div>
   </header>
 
@@ -107,13 +118,6 @@
         </div>
       </div>
 
-      <div class="perf-legend">
-        <span><i class="leg-box long"></i>IA Expuesta (Invirtiendo)</span>
-        <span><i class="leg-box cash"></i>IA Defensiva (Reduciendo)</span>
-        <span><i class="leg-line bb"></i>Media Bollinger</span>
-        <span><i class="leg-dot dd"></i>Max Drawdown (Pico Caída)</span>
-      </div>
-
       @if (performanceLoading) {
         <div class="perf-loading">
           <mat-spinner diameter="30"></mat-spinner>
@@ -125,13 +129,15 @@
           <span>{{ performanceError }}</span>
         </div>
       } @else if (performanceChartOptions.series?.length) {
-        <highcharts-chart
-          [Highcharts]="Highcharts"
-          [constructorType]="'stockChart'"
-          [options]="performanceChartOptions"
-          [(update)]="performanceChartUpdate"
-          class="performance-chart">
-        </highcharts-chart>
+        <div class="performance-chart-wrapper">
+            <highcharts-chart
+            [Highcharts]="Highcharts"
+            [constructorType]="'stockChart'"
+            [options]="performanceChartOptions"
+            [(update)]="performanceChartUpdate"
+            class="performance-chart">
+            </highcharts-chart>
+        </div>
       }
     </section>
 

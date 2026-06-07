@@ -11,17 +11,13 @@ import { MatExpansionModule } from '@angular/material/expansion';
 import { NgxChartsModule, LegendPosition } from '@swimlane/ngx-charts';
 import Highcharts from 'highcharts/highstock';
 import { HighchartsChartModule } from 'highcharts-angular';
-import { forkJoin, of, catchError, Subject, takeUntil } from 'rxjs';
+import { forkJoin, of, catchError, Subject, takeUntil, switchMap } from 'rxjs';
 import { ApiService, TickerPerformanceResponse } from '../../core/services/api.service';
 import { ReportService } from '../../core/services/report.service';
 import { PipelineContextService } from '../../core/services/pipeline-context.service';
 import { DailyReport, TickerView, ReportDateEntry } from '../../core/models/report.model';
 import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
-import {
-  demoStockChrome,
-  initDemoHighcharts,
-  mergeStockOptions,
-} from '../../core/charts/highcharts-stock-demo';
+import { initDemoHighcharts } from '../../core/charts/highcharts-stock-demo';
 
 interface BacktestHistoryPoint {
   date: string;
@@ -52,7 +48,10 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
   Highcharts: typeof Highcharts = initDemoHighcharts();
 
   loading = true;
+  
+  availableDates: ReportDateEntry[] = [];
   selectedDate = '';
+
   tickerViews: TickerView[] = [];
   summary: any = { total_tickers: 0, avg_cumulative_return: 0, avg_sharpe_ratio: 0, avg_max_drawdown: 0, total_closed_trades: 0 };
 
@@ -74,11 +73,7 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
   performanceChartUpdate = false;
   performanceCache = new Map<string, TickerPerformanceResponse>();
 
-  // ── Chart type selector ──────────────────────────────────────────────────
-  /** Tipo de gráfico para el chart principal: 'candlestick' | 'line' | 'area' */
   performanceChartType: 'candlestick' | 'line' | 'area' = 'candlestick';
-  /** Tipo por ticker para los inline charts */
-  inlineChartTypes: Record<string, 'candlestick' | 'line' | 'area'> = {};
 
   setPerformanceChartType(type: 'candlestick' | 'line' | 'area'): void {
     this.performanceChartType = type;
@@ -114,9 +109,9 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
   ngOnInit() {
     this.pipelineCtx.pipelineChanged$.pipe(takeUntil(this.destroy$)).subscribe(() => {
       this.reportSvc.clearCache();
-      this.loadPipelineData();
+      this.loadDates();
     });
-    this.loadPipelineData();
+    this.loadDates();
   }
 
   ngOnDestroy() {
@@ -128,33 +123,43 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
     this.tableSource.sort = this.sort;
   }
 
-  private loadPipelineData() {
+  private loadDates() {
     this.loading = true;
-    this.performanceCache.clear();
-    
-    this.reportSvc.listAvailableDates().subscribe({
-      next: (dates) => {
-        this.loadBacktestingHistory(dates);
-        if (!dates.length) {
+    this.reportSvc.listAvailableDates().pipe(
+      switchMap(dates => {
+        this.availableDates = dates;
+        if (dates.length === 0) {
           this.loading = false;
-          return;
+          return [];
         }
-        this.selectedDate = this.pipelineCtx.pipelineEndDate() ?? dates[0].date;
-        this.reportSvc.loadReport(this.selectedDate).subscribe({
-          next: (report) => {
-            this.processReport(report);
-            this.loading = false;
-          },
-          error: () => {
-            this.loading = false;
-          },
-        });
-      },
-      error: () => {
-        this.loading = false;
-      },
+        const endDate = this.pipelineCtx.pipelineEndDate() ?? dates[0].date;
+        this.selectedDate = endDate;
+        
+        this.loadBacktestingHistory(dates);
+        return this.reportSvc.loadReport(this.selectedDate);
+      })
+    ).subscribe({
+      next: (report: any) => { if (report) this.processReport(report); this.loading = false; },
+      error: () => { this.loading = false; },
     });
   }
+
+  onDateChange(date: string) {
+    this.loading = true;
+    this.reportSvc.loadReport(date).subscribe({
+      next: r => { 
+        this.processReport(r); 
+        this.loading = false; 
+        
+        if (this.performanceTicker) {
+            this.loadPerformanceChart(this.performanceTicker);
+        }
+      },
+      error: () => { this.loading = false; },
+    });
+  }
+
+  refresh() { this.loading = true; this.loadDates(); }
 
   private processReport(report: DailyReport) {
     this.summary = report.summary;
@@ -219,7 +224,7 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
       
       if (this.performanceTicker && this.performanceCache.has(`${this.selectedDate}:${this.performanceTicker}`)) {
         const cached = this.performanceCache.get(`${this.selectedDate}:${this.performanceTicker}`)!;
-        this.performanceChartOptions = this.buildPerformanceChartOptions(cached);
+        this.performanceChartOptions = this.buildPerformanceChartOptions(cached, 540, this.performanceChartType);
         this.performanceChartUpdate = true;
       }
     });
@@ -232,10 +237,12 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
 
   loadPerformanceChart(ticker: string) {
     if (!ticker || !this.selectedDate) return;
+    
     const key = `${this.selectedDate}:${ticker}`;
     const cached = this.performanceCache.get(key);
+    
     if (cached) {
-      this.performanceChartOptions = this.buildPerformanceChartOptions(cached);
+      this.performanceChartOptions = this.buildPerformanceChartOptions(cached, 540, this.performanceChartType);
       this.performanceChartUpdate = true;
       return;
     }
@@ -243,8 +250,10 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
     this.performanceLoading = true;
     this.performanceError = '';
     
-    this.apiSvc.getTickerPerformance(ticker, this.selectedDate, 365).pipe(
-      catchError(() => {
+    // 1. REVERTIMOS AL LÍMITE SEGURO DE 365 DÍAS PARA EVITAR CRASHES DEL BACKEND
+    this.apiSvc.getTickerPerformance(ticker, this.selectedDate, 365).pipe( 
+      catchError((err) => {
+        console.error("Error API Performance:", err);
         this.performanceError = `No se pudo cargar el histórico de ${ticker}.`;
         this.performanceLoading = false;
         return of(null);
@@ -253,7 +262,7 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
       this.performanceLoading = false;
       if (!resp) return;
       this.performanceCache.set(key, resp);
-      this.performanceChartOptions = this.buildPerformanceChartOptions(resp);
+      this.performanceChartOptions = this.buildPerformanceChartOptions(resp, 540, this.performanceChartType);
       this.performanceChartUpdate = true;
     });
   }
@@ -264,45 +273,102 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
     return { start: p.startDate, end: p.endDate };
   }
 
-  private buildPerformanceChartOptions(resp: TickerPerformanceResponse, height = 680, chartType: 'candlestick' | 'line' | 'area' = 'candlestick'): Highcharts.Options {
-    const toTs = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
-    const points = resp.points;
-    const targetTs = toTs(resp.target_date);
-    const visibleStart = targetTs - 1000 * 60 * 60 * 24 * 120;
-
-    const ohlc = points.map(p => [
-      toTs(p.date), 
-      +Number(p.open).toFixed(6), 
-      +Number(p.high).toFixed(6), 
-      +Number(p.low).toFixed(6), 
-      +Number(p.close).toFixed(6)
-    ]);
-    const bbMiddle = points.map(p => [toTs(p.date), p.bb_middle]);
+  private buildPerformanceChartOptions(resp: TickerPerformanceResponse, height = 540, chartType: 'candlestick' | 'line' | 'area' = 'candlestick'): Highcharts.Options {
+    // 1. FORMATO BLINDADO: Cogemos siempre solo los 10 primeros caracteres (YYYY-MM-DD)
+    const toTs = (dateStr: string) => {
+      if (!dateStr) return 0;
+      const iso = dateStr.substring(0, 10); 
+      return new Date(`${iso}T00:00:00Z`).getTime();
+    };
     
-    // Tratamos los valores crudos directos de rendimiento acumulado tal como vienen de la API
-    const strategy = points.map(p => [toTs(p.date), p.strategy_return]);
-    const buyHold = points.map(p => [toTs(p.date), p.buy_hold_return]);
+    const pBounds = this.pipelineBounds();
+    const startTs = pBounds ? toTs(pBounds.start) : 0;
+    const endTs = toTs(this.selectedDate);
+    
+    const validPoints = resp.points.filter(p => toTs(p.date) >= startTs);
+    
+    if (validPoints.length === 0) {
+        console.warn("No hay puntos para el rango solicitado en buildPerformanceChartOptions");
+        return {}; 
+    }
 
-    const exposure = this.historyRows
-      .filter(r => r.ticker === resp.ticker)
+    const ohlc = validPoints.map(p => [
+      toTs(p.date), +Number(p.open).toFixed(6), +Number(p.high).toFixed(6), +Number(p.low).toFixed(6), +Number(p.close).toFixed(6)
+    ]);
+    const bbMiddle = validPoints.map(p => [toTs(p.date), p.bb_middle]);
+
+    const initialPrice = validPoints[0].close;
+
+    const buyHold = validPoints.map(p => {
+      const ret = initialPrice > 0 ? (p.close - initialPrice) / initialPrice : 0;
+      return [toTs(p.date), +(ret * 100).toFixed(2)];
+    });
+
+    const strategy = this.historyRows
+      .filter(r => r.ticker === resp.ticker && toTs(r.date) >= startTs && toTs(r.date) <= endTs)
       .sort((a, b) => a.date.localeCompare(b.date))
-      .map(r => [toTs(r.date), +Number(r.avg_exposure).toFixed(2)]);
+      .map(r => [toTs(r.date), +(100 * (r.final_equity - 10000) / 10000).toFixed(2)]);
 
-    const stageBands = resp.stages.map(stage => ({
-      from: toTs(stage.from),
-      to: toTs(stage.to) + 1000 * 60 * 60 * 24,
-      color: stage.stage === 'LONG' ? 'rgba(34,197,94,.055)' : 'rgba(124,58,237,.055)',
-      label: {
-        text: stage.stage,
-        style: { color: stage.stage === 'LONG' ? '#15803d' : '#6d28d9', fontSize: '10px', fontWeight: '600' },
-      },
-    }));
+    const exposurePoints = this.historyRows
+      .filter(r => r.ticker === resp.ticker && toTs(r.date) >= startTs && toTs(r.date) <= endTs)
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    const exposureSeriesData = exposurePoints.map(r => [toTs(r.date), +Number(r.avg_exposure).toFixed(2)]);
+
+    // 2. CREAMOS EL DICCIONARIO DE COLORES (Tus 5 niveles)
+    const colorMap: Record<string, string> = {
+      'INCREASE_STRONG': '#15803d', // Verde oscuro
+      'INCREASE_MILD': '#22c55e',   // Verde claro
+      'MAINTAIN': '#3b82f6',        // Azul
+      'REDUCE_MILD': '#f59e0b',     // Naranja
+      'REDUCE_STRONG': '#b91c1c'    // Rojo
+    };
+
+    const rgbMap: Record<string, string> = {
+      'INCREASE_STRONG': '21, 128, 61',
+      'INCREASE_MILD': '34, 197, 94',
+      'MAINTAIN': '59, 130, 246',
+      'REDUCE_MILD': '245, 158, 11',
+      'REDUCE_STRONG': '185, 28, 28'
+    };
+
+    // Mapeamos las recomendaciones limpiando la fecha
+    const recMap = new Map<number, string>();
+    resp.recommendations.forEach(r => recMap.set(toTs(r.date), r.exposure_recommendation));
+
+    // 3. CONSTRUIMOS LAS ZONAS DINÁMICAS
+    let lastRec = 'MAINTAIN'; // Memoria por si algún día no hay dato en la API
+    const exposureZones = exposurePoints.map((pt, i) => {
+      const ts = toTs(pt.date);
+      
+      // Si hoy no hay recomendación, heredamos la de ayer
+      const rec = recMap.get(ts) || lastRec;
+      lastRec = rec;
+
+      const baseColor = colorMap[rec] || colorMap['MAINTAIN'];
+      const rgb = rgbMap[rec] || rgbMap['MAINTAIN'];
+      
+      // La zona aplica el color hasta el "siguiente" día
+      const nextTs = i < exposurePoints.length - 1 ? toTs(exposurePoints[i+1].date) : ts + 86400000;
+      
+      return {
+        value: nextTs,
+        color: baseColor,
+        fillColor: {
+          linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+          stops: [
+            [0, `rgba(${rgb}, 0.35)`], // Degradado suave arriba
+            [1, `rgba(${rgb}, 0.0)`]   // Transparente abajo
+          ]
+        }
+      };
+    });
 
     const flagColor = (rec: string) => rec.startsWith('INCREASE') ? '#16a34a' : rec.startsWith('REDUCE') ? '#7c3aed' : '#94a3b8';
     const flagTitle = (rec: string) => rec === 'INCREASE_STRONG' ? '↑↑' : rec === 'INCREASE_MILD' ? '↑' : rec === 'REDUCE_STRONG' ? '↓↓' : rec === 'REDUCE_MILD' ? '↓' : '→';
     
     const signalFlags = resp.recommendations
-      .filter(s => s.exposure_recommendation !== 'MAINTAIN')
+      .filter(s => s.exposure_recommendation !== 'MAINTAIN' && toTs(s.date) >= startTs && toTs(s.date) <= endTs)
       .map(s => ({
         x: toTs(s.date),
         title: flagTitle(s.exposure_recommendation),
@@ -310,7 +376,7 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
         fillColor: flagColor(s.exposure_recommendation),
       }));
 
-    const drawdownPoint = points.find(p => p.date === resp.max_drawdown.date);
+    const drawdownPoint = validPoints.find(p => p.date === resp.max_drawdown.date);
 
     return {
       chart: { 
@@ -318,149 +384,76 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
         backgroundColor: 'transparent', 
         zooming: { type: 'x' },
         events: {
-          // Interceptamos los datos justo antes de exportar a CSV o Tabla
           exportData: function (event: any) {
             const dataRows = event.dataRows;
             if (!dataRows || dataRows.length <= 1) return;
             
-            // 1. Renombramos la cabecera 'DateTime' a 'Fecha'
-            dataRows[0][0] = 'Fecha';
+            dataRows[0][0] = 'Fecha'; 
             
-            // 2. Extraemos la cabecera y el cuerpo de datos
+            const headers = dataRows[0];
+            const indicesToRemove: number[] = [];
+            // Aquí ya no hace falta quitar 3 series, solo las flags y el dropdown
+            for(let i=0; i<headers.length; i++) {
+                if(headers[i] === 'Decisiones IA' || headers[i] === 'Pico de Caída (Max Drawdown)' || headers[i] === 'Media Bollinger') {
+                    indicesToRemove.push(i);
+                }
+            }
+
+            for (let r = 0; r < dataRows.length; r++) {
+                dataRows[r] = dataRows[r].filter((_: any, idx: number) => !indicesToRemove.includes(idx));
+            }
+
             const header = dataRows[0];
             const body = dataRows.slice(1);
             
-            // 3. Ordenamos el cuerpo de más reciente a más antiguo (descendente)
-            body.sort((a: any, b: any) => {
-              return new Date(b[0]).getTime() - new Date(a[0]).getTime();
-            });
+            body.sort((a: any, b: any) => new Date(b[0]).getTime() - new Date(a[0]).getTime());
             
-            // 4. Reconstruimos el array original inyectando la cabecera y los datos ordenados
             dataRows.length = 0; 
             dataRows.push(header, ...body);
           }
         }
       },
-      title: { 
-        text: 'Autopsia Operativa - ' + resp.ticker,
-        style: { color: '#334155', fontSize: '15px', fontWeight: '700' }
-      },
+      title: { text: 'Autopsia Operativa - ' + resp.ticker, style: { color: '#334155', fontSize: '15px', fontWeight: '700' } },
       credits: { enabled: false },
-      
-      exporting: {
-        csv: {
-          dateFormat: '%Y-%m-%d', // Fecha limpia sin horas
-        },
-        showTable: false // Controla que no se abra automáticamente
-      },
-
+      exporting: { csv: { dateFormat: '%Y-%m-%d' }, showTable: false },
       rangeSelector: {
-        selected: 2,
-        inputEnabled: height >= 500,
-        enabled: height >= 500,
-        buttons: height >= 500 ? [
-          { type: 'month', count: 1, text: '1M' },
-          { type: 'month', count: 3, text: '3M' },
-          { type: 'month', count: 6, text: '6M' },
-          { type: 'all', text: 'Todo' },
-        ] : [],
+        selected: 2, inputEnabled: true, enabled: true,
+        buttons: [{ type: 'month', count: 1, text: '1M' }, { type: 'month', count: 3, text: '3M' }, { type: 'month', count: 6, text: '6M' }, { type: 'all', text: 'Todo' }]
       },
-      navigator: { enabled: height >= 500 },
-      scrollbar: { enabled: height >= 500 },
+      navigator: { enabled: true },
+      scrollbar: { enabled: true },
       legend: { enabled: true },
-      xAxis: {
-        type: 'datetime',
-        min: Math.max(points.length ? toTs(points[0].date) : visibleStart, visibleStart),
-        max: targetTs,
-        plotBands: stageBands as any,
-      },
-      yAxis: [{
-        title: { text: 'Precio del Activo' },
-        height: '45%',
-        resize: { enabled: true },
-        gridLineColor: 'rgba(148,163,184,.18)',
-      }, {
-        title: { text: 'Rentabilidad Acum. (%)' },
-        top: '50%',
-        height: '25%',
-        offset: 0,
-        resize: { enabled: true },
-        gridLineColor: 'rgba(148,163,184,.18)',
-        plotLines: [{ value: 0, color: '#94a3b8', width: 1 }],
-        labels: {
-          formatter: function () {
-            return `${Highcharts.numberFormat(Number(this.value), 0)}%`;
-          }
-        }
-      }, {
-        title: { text: 'Exposición IA (%)' },
-        top: '80%',
-        height: '20%',
-        offset: 0,
-        min: 0,
-        max: 100,
-        gridLineColor: 'rgba(148,163,184,.18)',
-        plotLines: [{ value: 50, color: '#94a3b8', width: 1, dashStyle: 'Dash' }],
-      }],
-      
-      // AL ACTIVAR split:true SIN FORMATTER PERSONALIZADO, HIGHCHARTS SEPARA LOS DESTELLOS DE TEXTO POR GRÁFICO AUTOMÁTICAMENTE
-      tooltip: { 
-        split: true,
-        valueDecimals: 2
-      },
-
+      xAxis: { type: 'datetime', min: startTs },
+      yAxis: [
+        { title: { text: 'Precio' }, height: '45%', resize: { enabled: true }, gridLineColor: 'rgba(148,163,184,.18)' },
+        { title: { text: 'Rentabilidad Acum. (%)' }, top: '50%', height: '25%', offset: 0, resize: { enabled: true }, gridLineColor: 'rgba(148,163,184,.18)', plotLines: [{ value: 0, color: '#94a3b8', width: 1 }] },
+        { title: { text: 'Exposición IA (%)' }, top: '80%', height: '20%', offset: 0, min: 0, max: 100, gridLineColor: 'rgba(148,163,184,.18)', plotLines: [{ value: 50, color: '#94a3b8', width: 1, dashStyle: 'Dash' }] }
+      ],
+      tooltip: { split: true, valueDecimals: 2 },
       plotOptions: {
         series: { dataGrouping: { enabled: false } } as any,
         candlestick: { color: '#ef4444', upColor: '#22c55e', lineColor: '#dc2626', upLineColor: '#16a34a' } as any,
       },
       series: [
-        (chartType === 'candlestick'
-          ? { type: 'candlestick', id: 'ohlc', name: `${resp.ticker} Precio`, data: ohlc, yAxis: 0 }
-          : chartType === 'line'
-          ? { type: 'line', id: 'ohlc', name: `${resp.ticker} Precio`, data: ohlc.map(p => [p[0], p[4]]), yAxis: 0, color: '#2563eb', lineWidth: 2 }
-          : { type: 'area', id: 'ohlc', name: `${resp.ticker} Precio`, data: ohlc.map(p => [p[0], p[4]]), yAxis: 0, color: '#2563eb', lineWidth: 2, fillColor: { linearGradient: { x1:0, y1:0, x2:0, y2:1 }, stops: [[0,'rgba(37,99,235,0.25)'],[1,'rgba(37,99,235,0.02)']] } }
-        ) as any,
+        (chartType === 'candlestick' ? { type: 'candlestick', id: 'ohlc', name: `${resp.ticker} Precio`, data: ohlc, yAxis: 0 } : chartType === 'line' ? { type: 'line', id: 'ohlc', name: `${resp.ticker} Precio`, data: ohlc.map(p => [p[0], p[4]]), yAxis: 0, color: '#2563eb', lineWidth: 2 } : { type: 'area', id: 'ohlc', name: `${resp.ticker} Precio`, data: ohlc.map(p => [p[0], p[4]]), yAxis: 0, color: '#2563eb', lineWidth: 2, fillColor: { linearGradient: { x1:0, y1:0, x2:0, y2:1 }, stops: [[0,'rgba(37,99,235,0.25)'],[1,'rgba(37,99,235,0.02)']] } }) as any,
         { type: 'line', name: 'Media Bollinger', data: bbMiddle, yAxis: 0, color: '#64748b', dashStyle: 'ShortDot', lineWidth: 1 },
-        { type: 'line', name: 'Rendimiento IA', data: strategy, yAxis: 1, color: '#2563eb', lineWidth: 2.2, valueSuffix: '%' }, // Nombre simplificado
-        { type: 'line', name: 'Buy & Hold', data: buyHold, yAxis: 1, color: '#94a3b8', lineWidth: 1.6, valueSuffix: '%' },
-        {
-          type: 'scatter',
-          name: 'Pico de Caída (Max Drawdown)',
-          data: drawdownPoint ? [[toTs(drawdownPoint.date), drawdownPoint.strategy_return]] : [],
-          yAxis: 1,
-          color: '#ef4444',
-          marker: { enabled: true, symbol: 'triangle-down', radius: 7 },
-          includeInCSVExport: false, // EXCLUIR DE TABLA DE DATOS
-          tooltip: {
-            // Añadimos 'this: any' como primer parámetro (es un truco de TypeScript)
-            pointFormatter: function (this: any): string { 
-              return `<span style="color:#ef4444">●</span> Max drawdown: <b>${Highcharts.numberFormat(Number(this.y), 2)}%</b><br/>`;
-            },
-          },
-        },
+        { type: 'line', name: 'Rendimiento Estrategia IA (%)', data: strategy, yAxis: 1, color: '#2563eb', lineWidth: 2.2, valueSuffix: '%' },
+        { type: 'line', name: 'Rendimiento Buy & Hold (%)', data: buyHold, yAxis: 1, color: '#94a3b8', lineWidth: 1.6, valueSuffix: '%' },
+        { type: 'scatter', name: 'Pico de Caída (Max Drawdown)', data: drawdownPoint && toTs(drawdownPoint.date) >= startTs && toTs(drawdownPoint.date) <= endTs ? [[toTs(drawdownPoint.date), drawdownPoint.strategy_return]] : [], yAxis: 1, color: '#ef4444', marker: { enabled: true, symbol: 'triangle-down', radius: 7 }, tooltip: { pointFormatter: function (this: any): string { return `<span style="color:#ef4444">●</span> Max drawdown: <b>${Highcharts.numberFormat(Number(this.y), 2)}%</b><br/>`; } } },
+        
+        // --- SERIE ÚNICA DE EXPOSICIÓN CON ZONAS ---
         {
           type: 'area',
           name: 'Nivel de Exposición',
-          data: exposure,
+          data: exposureSeriesData,
           yAxis: 2,
-          color: '#10b981',
-          fillColor: {
-            linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
-            stops: [[0, 'rgba(16, 185, 129, 0.3)'], [1, 'rgba(16, 185, 129, 0.05)']]
-          },
+          zoneAxis: 'x',
+          zones: exposureZones,
           lineWidth: 2,
           valueSuffix: '%'
         },
-        {
-          type: 'flags',
-          name: 'Decisiones IA',
-          data: signalFlags,
-          onSeries: 'ohlc',
-          shape: 'squarepin',
-          width: 18,
-          includeInCSVExport: false, // EXPULSA POR COMPLETO ESTA COLUMNA DE LA DATA TABLE DESPLEGABLE
-          style: { color: '#fff', fontSize: '9px', fontWeight: '700' },
-        } as any,
+
+        { type: 'flags', name: 'Decisiones IA', data: signalFlags, onSeries: 'ohlc', shape: 'squarepin', width: 18, showInLegend: false, style: { color: '#fff', fontSize: '9px', fontWeight: '700' } } as any,
       ] as any,
     };
   }
