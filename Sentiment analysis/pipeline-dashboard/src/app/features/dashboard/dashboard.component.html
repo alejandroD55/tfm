@@ -156,6 +156,19 @@
                 </div>
               </div>
 
+              <div class="asset-capital">
+                <div class="cap-row">
+                  <span class="cap-label">Capital simulado</span>
+                  <span class="cap-value">€ {{ tv.exp_final_equity | number:'1.0-0' }}</span>
+                </div>
+                <div class="cap-row">
+                  <span class="cap-label">Rentabilidad acumulada</span>
+                  <span class="cap-value" [class.pos]="tv.exp_cumulative_return > 0" [class.neg]="tv.exp_cumulative_return < 0">
+                    {{ tv.exp_cumulative_return > 0 ? '+' : '' }}{{ (tv.exp_cumulative_return * 100) | number:'1.2-2' }}%
+                  </span>
+                </div>
+              </div>
+
               <div class="asset-indicators">
                 <div class="ind-item" matTooltip="Sentimiento General (FinBERT)">
                   <span class="ind-lbl">Sentimiento</span>

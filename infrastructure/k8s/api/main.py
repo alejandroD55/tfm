@@ -99,6 +99,27 @@ def _date_in_range(d: str, start: Optional[str], end: Optional[str]) -> bool:
     return True
 
 
+def _normalize_exposure_recommendation(rec: Optional[str], signal: Optional[str]) -> str:
+    rec_u = str(rec or "").strip().upper()
+    if rec_u in {"INCREASE_STRONG", "INCREASE_MILD", "MAINTAIN", "REDUCE_MILD", "REDUCE_STRONG"}:
+        return rec_u
+    if rec_u == "BUY":
+        return "INCREASE_MILD"
+    if rec_u == "SELL":
+        return "REDUCE_MILD"
+    if rec_u == "HOLD":
+        return "MAINTAIN"
+
+    sig_u = str(signal or "").strip().upper()
+    if sig_u == "BUY":
+        return "INCREASE_MILD"
+    if sig_u == "SELL":
+        return "REDUCE_MILD"
+    if sig_u == "HOLD":
+        return "MAINTAIN"
+    return "MAINTAIN"
+
+
 def _segment_dates_into_pipelines(
     sorted_dates: list[str], gap_days: int = PIPELINE_GAP_DAYS
 ) -> list[dict]:
@@ -1696,7 +1717,7 @@ def get_ohlcv_week(
 def get_ticker_performance_history(
     ticker: str,
     date: str,
-    limit: int = Query(default=365, ge=30, le=365, description="Max sesiones a devolver"),
+    limit: int = Query(default=365, ge=30, le=5000, description="Max sesiones a devolver"),
     x_api_key: str = Header(default=""),
 ):
     """
@@ -1758,13 +1779,24 @@ def get_ticker_performance_history(
             db["bayesian_reports"]
             .find(
                 {"ticker": ticker_u, "batch_date": {"$gte": first_date, "$lte": end_s}},
-                {"_id": 0, "batch_date": 1, "inference.exposure_recommendation": 1, "prob_up": 1},
+                {
+                    "_id": 0,
+                    "batch_date": 1,
+                    "inference.exposure_recommendation": 1,
+                    "inference.signal": 1,
+                    "exposure_recommendation": 1,
+                    "signal": 1,
+                    "prob_up": 1,
+                },
             )
             .sort("batch_date", 1)
         )
         signals = {
             str(doc.get("batch_date"))[:10]: {
-                "exposure_recommendation": ((doc.get("inference") or {}).get("exposure_recommendation") or "MAINTAIN"),
+                "exposure_recommendation": _normalize_exposure_recommendation(
+                    ((doc.get("inference") or {}).get("exposure_recommendation") or doc.get("exposure_recommendation")),
+                    ((doc.get("inference") or {}).get("signal") or doc.get("signal")),
+                ),
                 "prob_up": float(doc.get("prob_up") or 0),
             }
             for doc in signal_docs

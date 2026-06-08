@@ -237,6 +237,40 @@
   }
 }
 
+.asset-capital {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cap-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cap-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--slate-500);
+  text-transform: uppercase;
+}
+
+.cap-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--slate-800);
+  font-variant-numeric: tabular-nums;
+
+  &.pos { color: var(--success-700); }
+  &.neg { color: var(--danger-700); }
+}
+
 /* Indicadores inferiores */
 .asset-indicators {
   display: flex;

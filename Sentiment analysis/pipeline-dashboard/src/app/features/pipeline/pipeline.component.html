@@ -14,7 +14,7 @@
     <div class="head-controls">
       <div class="range-selector">
         <mat-icon>date_range</mat-icon>
-        <select class="aurora-select" [(ngModel)]="pageSize" (ngModelChange)="onPageSizeChange()">
+        <select class="aurora-select range-select" [(ngModel)]="pageSize" (ngModelChange)="onPageSizeChange()">
           @for (opt of pageSizeOptions; track opt.value) {
             <option [value]="opt.value">{{ opt.label }}</option>
           }
@@ -224,12 +224,13 @@
           <span class="card-sub">Titulares analizados por FinBERT</span>
         </div>
         <div class="chart-container-medium">
-          <ngx-charts-bar-vertical
+          <ngx-charts-line-chart
             [results]="headlinesChart"
             [xAxis]="true" [yAxis]="true" [showGridLines]="true"
             [scheme]="headlinesScheme"
-            [showDataLabel]="true" [barPadding]="16" [roundEdges]="true">
-          </ngx-charts-bar-vertical>
+            [legend]="false"
+            [autoScale]="true">
+          </ngx-charts-line-chart>
         </div>
       </div>
 
@@ -285,14 +286,14 @@
                   </span>
                 </div>
 
-                <div class="cov-bar" [matTooltip]="'Cobertura: ' + (batch.coverage_ratio*100|number:'1.0-0') + '%'">
+                <div class="cov-bar" [matTooltip]="'Cobertura: ' + (coveragePct(batch)|number:'1.0-0') + '%'">
                   <div class="cov-fill"
-                       [style.width.%]="batch.coverage_ratio*100"
+                       [style.width.%]="coveragePct(batch)"
                        [class.full]="batch.coverage_ratio >= 0.95"
                        [class.partial]="batch.coverage_ratio < 0.95 && batch.coverage_ratio >= 0.5"
                        [class.poor]="batch.coverage_ratio < 0.5"></div>
                 </div>
-                <span class="cov-pct">{{ (batch.coverage_ratio*100)|number:'1.0-0' }}%</span>
+                <span class="cov-pct">{{ coveragePct(batch)|number:'1.0-0' }}%</span>
               </div>
             </mat-expansion-panel-header>
 

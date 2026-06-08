@@ -655,7 +655,8 @@ export interface TickerPerformancePoint extends OhlcvPoint {
 
 export interface TickerPerformanceRecommendation {
   date:    string;
-  exposure_recommendation: 'INCREASE_STRONG' | 'INCREASE_MILD' | 'MAINTAIN' | 'REDUCE_MILD' | 'REDUCE_STRONG';
+  exposure_recommendation: 'INCREASE_STRONG' | 'INCREASE_MILD' | 'MAINTAIN' | 'REDUCE_MILD' | 'REDUCE_STRONG' | 'BUY' | 'SELL' | 'HOLD' | null;
+  signal?: 'BUY' | 'SELL' | 'HOLD' | null;
   prob_up: number | null;
 }
 

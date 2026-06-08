@@ -24,6 +24,7 @@ interface BacktestHistoryPoint {
   ticker: string;
   final_equity: number;
   avg_exposure: number;
+  buy_hold: number;
 }
 
 @Component({
@@ -216,6 +217,7 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
             ticker: view.ticker,
             final_equity: view.exp_final_equity,
             avg_exposure: view.avg_exposure,
+            buy_hold: +(view.buy_hold_return * 100).toFixed(2),
           });
         }
       });
@@ -250,8 +252,8 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
     this.performanceLoading = true;
     this.performanceError = '';
     
-    // 1. REVERTIMOS AL LÍMITE SEGURO DE 365 DÍAS PARA EVITAR CRASHES DEL BACKEND
-    this.apiSvc.getTickerPerformance(ticker, this.selectedDate, 365).pipe( 
+    const perfLimit = this.performanceLimitDays();
+    this.apiSvc.getTickerPerformance(ticker, this.selectedDate, perfLimit).pipe(
       catchError((err) => {
         console.error("Error API Performance:", err);
         this.performanceError = `No se pudo cargar el histórico de ${ticker}.`;
@@ -273,6 +275,16 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
     return { start: p.startDate, end: p.endDate };
   }
 
+  private performanceLimitDays(): number {
+    const pBounds = this.pipelineBounds();
+    if (!pBounds) return 365;
+    const startMs = new Date(`${pBounds.start}T00:00:00Z`).getTime();
+    const endMs = new Date(`${this.selectedDate || pBounds.end}T00:00:00Z`).getTime();
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return 365;
+    const calendarDays = Math.floor((endMs - startMs) / 86400000) + 1;
+    return Math.max(30, Math.min(5000, calendarDays + 20));
+  }
+
   private buildPerformanceChartOptions(resp: TickerPerformanceResponse, height = 540, chartType: 'candlestick' | 'line' | 'area' = 'candlestick'): Highcharts.Options {
     // 1. FORMATO BLINDADO: Cogemos siempre solo los 10 primeros caracteres (YYYY-MM-DD)
     const toTs = (dateStr: string) => {
@@ -285,7 +297,10 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
     const startTs = pBounds ? toTs(pBounds.start) : 0;
     const endTs = toTs(this.selectedDate);
     
-    const validPoints = resp.points.filter(p => toTs(p.date) >= startTs);
+    const validPoints = resp.points.filter(p => {
+      const ts = toTs(p.date);
+      return ts >= startTs && ts <= endTs;
+    });
     
     if (validPoints.length === 0) {
         console.warn("No hay puntos para el rango solicitado en buildPerformanceChartOptions");
@@ -297,21 +312,13 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
     ]);
     const bbMiddle = validPoints.map(p => [toTs(p.date), p.bb_middle]);
 
-    const initialPrice = validPoints[0].close;
-
-    const buyHold = validPoints.map(p => {
-      const ret = initialPrice > 0 ? (p.close - initialPrice) / initialPrice : 0;
-      return [toTs(p.date), +(ret * 100).toFixed(2)];
-    });
-
-    const strategy = this.historyRows
-      .filter(r => r.ticker === resp.ticker && toTs(r.date) >= startTs && toTs(r.date) <= endTs)
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .map(r => [toTs(r.date), +(100 * (r.final_equity - 10000) / 10000).toFixed(2)]);
-
-    const exposurePoints = this.historyRows
+    const historyPoints = this.historyRows
       .filter(r => r.ticker === resp.ticker && toTs(r.date) >= startTs && toTs(r.date) <= endTs)
       .sort((a, b) => a.date.localeCompare(b.date));
+
+    const strategy = historyPoints.map(r => [toTs(r.date), +(100 * (r.final_equity - 10000) / 10000).toFixed(2)]);
+    const buyHold = historyPoints.map(r => [toTs(r.date), +Number(r.buy_hold).toFixed(2)]);
+    const exposurePoints = historyPoints;
 
     const exposureSeriesData = exposurePoints.map(r => [toTs(r.date), +Number(r.avg_exposure).toFixed(2)]);
 
@@ -332,9 +339,30 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
       'REDUCE_STRONG': '185, 28, 28'
     };
 
+    const normalizeRecommendation = (
+      rec?: string | null,
+      legacySignal?: string | null,
+      fallback: string = 'MAINTAIN',
+    ): string => {
+      const raw = String(rec ?? '').toUpperCase();
+      if (raw === 'BUY') return 'INCREASE_MILD';
+      if (raw === 'SELL') return 'REDUCE_MILD';
+      if (raw === 'HOLD') return 'MAINTAIN';
+      if (raw && colorMap[raw]) return raw;
+
+      const legacy = String(legacySignal ?? '').toUpperCase();
+      if (legacy === 'BUY') return 'INCREASE_MILD';
+      if (legacy === 'SELL') return 'REDUCE_MILD';
+      if (legacy === 'HOLD') return 'MAINTAIN';
+      return fallback;
+    };
+
     // Mapeamos las recomendaciones limpiando la fecha
     const recMap = new Map<number, string>();
-    resp.recommendations.forEach(r => recMap.set(toTs(r.date), r.exposure_recommendation));
+    resp.recommendations.forEach(r => {
+      const rec = normalizeRecommendation((r as any).exposure_recommendation, (r as any).signal);
+      recMap.set(toTs(r.date), rec);
+    });
 
     // 3. CONSTRUIMOS LAS ZONAS DINÁMICAS
     let lastRec = 'MAINTAIN'; // Memoria por si algún día no hay dato en la API
@@ -342,7 +370,7 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
       const ts = toTs(pt.date);
       
       // Si hoy no hay recomendación, heredamos la de ayer
-      const rec = recMap.get(ts) || lastRec;
+      const rec = normalizeRecommendation(recMap.get(ts), undefined, lastRec);
       lastRec = rec;
 
       const baseColor = colorMap[rec] || colorMap['MAINTAIN'];
@@ -368,6 +396,10 @@ export class BacktestingComponent implements OnInit, OnDestroy, AfterViewInit {
     const flagTitle = (rec: string) => rec === 'INCREASE_STRONG' ? '↑↑' : rec === 'INCREASE_MILD' ? '↑' : rec === 'REDUCE_STRONG' ? '↓↓' : rec === 'REDUCE_MILD' ? '↓' : '→';
     
     const signalFlags = resp.recommendations
+      .map(s => ({
+        ...s,
+        exposure_recommendation: normalizeRecommendation((s as any).exposure_recommendation, (s as any).signal),
+      }))
       .filter(s => s.exposure_recommendation !== 'MAINTAIN' && toTs(s.date) >= startTs && toTs(s.date) <= endTs)
       .map(s => ({
         x: toTs(s.date),

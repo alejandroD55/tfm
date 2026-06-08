@@ -2675,9 +2675,13 @@ def get_pipeline_health(connection, report_date, run_id):
         "tickers_expected": tickers_expected,
         "tickers_with_indicators": int(indicator_tickers or 0),
         "tickers_with_signals": int(signal_tickers or 0),
+        "tickers_with_recommendations": int(signal_tickers or 0),
         "headlines_scored": int(headlines or 0),
         "coverage_ratio": (
-            round(float((signal_tickers or 0) / tickers_expected), 4)
+            round(
+                min(1.0, float((signal_tickers or 0) / tickers_expected)),
+                4,
+            )
             if tickers_expected
             else 0.0
         ),
@@ -3849,6 +3853,7 @@ def run_pipeline(
         # max_workers = número de tickers activos (≤5); todos son independientes entre sí.
         tickers_trace: Dict = {}
         daily_signals_for_outcomes: List = []
+        tickers_with_sentiment = 0
 
         ticker_futures = {
             ticker_executor.submit(
@@ -3885,10 +3890,45 @@ def run_pipeline(
             exposure_history_per_ticker[t] = result["smoothed_exposure"]  # Fase 1
             global_kpis["total_headlines"] += result["kpis"]["total_headlines"]
             global_kpis["processed_headlines"] += result["kpis"]["processed_headlines"]
+            if result["kpis"]["processed_headlines"] > 0:
+                tickers_with_sentiment += 1
 
         upsert_bayesian_trace(
             date_str, {"tickers": tickers_trace, "model_config": MODEL_CONFIG}
         )
+        if conn:
+            tickers_with_indicators = len(daily_signals_for_outcomes)
+            pg_upsert_pipeline_kpi(
+                conn,
+                date_str,
+                run_id,
+                "scheduled",
+                "sentiment",
+                {
+                    "tickers_with_sentiment": int(tickers_with_sentiment),
+                    "headlines_processed": int(global_kpis["processed_headlines"]),
+                    "headlines_total": int(global_kpis["total_headlines"]),
+                },
+            )
+            pg_upsert_pipeline_kpi(
+                conn,
+                date_str,
+                run_id,
+                "scheduled",
+                "indicators",
+                {"tickers_with_indicators": int(tickers_with_indicators)},
+            )
+            pg_upsert_pipeline_kpi(
+                conn,
+                date_str,
+                run_id,
+                "scheduled",
+                "bayesian",
+                {
+                    "signals_generated": int(len(daily_signals_for_outcomes)),
+                    "tickers_processed": int(tickers_with_indicators),
+                },
+            )
 
         # --- C) REPORTE DIARIO E IDÉNTICO A AWS (Clon lambda_report) ---
         if conn:
@@ -4029,6 +4069,21 @@ def run_pipeline(
                 "quant_audit_artifact": f"mongo:quant_audit_reports/{date_str}",
             }
             upsert_report(report_data)
+            pg_upsert_pipeline_kpi(
+                conn,
+                date_str,
+                run_id,
+                "scheduled",
+                "report",
+                {
+                    "tickers_reported": int(len(exp_metrics)),
+                    "exposure_metrics_count": int(len(exp_metrics)),
+                    "diagnostics_count": int(len(diagnostics)),
+                    "closed_trades_count": int(
+                        report_data["summary"]["total_closed_trades"]
+                    ),
+                },
+            )
 
         pg_upsert_pipeline_kpi(
             conn, date_str, run_id, "scheduled", "ingestion", global_kpis

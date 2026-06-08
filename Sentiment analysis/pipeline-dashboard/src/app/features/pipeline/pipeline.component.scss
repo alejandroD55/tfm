@@ -7,6 +7,18 @@
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: var(--r-sm); border: 1px solid var(--border); font-family: var(--font-sans); font-size: 13px; font-weight: 600; cursor: pointer; transition: all .15s; background: var(--bg-elevated); color: var(--slate-700); mat-icon { font-size: 18px; height: 18px; width: 18px; } }
 .btn:hover { border-color: var(--brand-300); color: var(--brand-600); background: var(--slate-50); }
 
+.range-select {
+  min-width: 190px;
+  border-color: var(--brand-200);
+  background-color: #fff;
+}
+
+.range-select:focus {
+  outline: none;
+  border-color: var(--brand-500);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
 .loader { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 80px 16px; color: var(--slate-500); }
 
 /* Glosario Integrado con Flujo */

@@ -10,8 +10,8 @@ import { LegendPosition, NgxChartsModule } from '@swimlane/ngx-charts';
 import { forkJoin, switchMap, of, Subject, takeUntil } from 'rxjs';
 import { ReportService } from '../../core/services/report.service';
 import { PipelineContextService } from '../../core/services/pipeline-context.service';
-import { DailyReport, PipelineHealth, BatchStatus } from '../../core/models/report.model';
-import { ChartDataPoint } from '../../core/models/pipeline.model';
+import { DailyReport, PipelineHealth } from '../../core/models/report.model';
+import { ChartDataPoint, ChartSeries } from '../../core/models/pipeline.model';
 
 interface BatchSummary {
   date: string;
@@ -57,7 +57,7 @@ export class PipelineComponent implements OnInit, OnDestroy {
   // Gráficos
   statusPieChart: ChartDataPoint[] = [];
   coverageChart: ChartDataPoint[] = [];
-  headlinesChart: ChartDataPoint[] = [];
+  headlinesChart: ChartSeries[] = [];
   signalsChart: ChartDataPoint[] = [];
 
   // Paletas de color
@@ -75,7 +75,7 @@ export class PipelineComponent implements OnInit, OnDestroy {
   get failedCount()    { return this.batches.filter(b => b.status === 'FAILED').length; }
   get avgCoverage()    {
     if (!this.batches.length) return 0;
-    return (this.batches.reduce((s, b) => s + b.coverage_ratio, 0) / this.batches.length) * 100;
+    return Math.min(100, (this.batches.reduce((s, b) => s + b.coverage_ratio, 0) / this.batches.length) * 100);
   }
 
   ngOnInit() {
@@ -111,14 +111,15 @@ export class PipelineComponent implements OnInit, OnDestroy {
           const stage_kpis = { ...r.pipeline_health.stage_kpis };
           stage_kpis['report'] = {
             tickers_reported: r.summary?.total_tickers || r.pipeline_health.tickers_expected,
-            total_closed_trades: r.summary?.total_closed_trades || 0
           };
+
+          const tickersWithSignals = (r.pipeline_health as any).tickers_with_signals ?? 0;
 
           return {
             date: r.report_date,
             status: r.pipeline_health.batch_status,
             tickers_expected: r.pipeline_health.tickers_expected,
-            tickers_with_recommendations: r.pipeline_health.tickers_with_recommendations,
+            tickers_with_recommendations: r.pipeline_health.tickers_with_recommendations ?? tickersWithSignals ?? 0,
             headlines_scored: r.pipeline_health.headlines_scored,
             coverage_ratio: r.pipeline_health.coverage_ratio,
             stage_kpis: stage_kpis, // Ahora incluye la Lambda 5
@@ -150,14 +151,17 @@ export class PipelineComponent implements OnInit, OnDestroy {
 
     this.coverageChart = sortedBatches.map(b => ({
       name: b.date.slice(5),
-      value: +(b.coverage_ratio * 100).toFixed(1),
+      value: +Math.min(100, b.coverage_ratio * 100).toFixed(1),
     }));
 
     // 3. Gráfico de Volumen de Noticias
-    this.headlinesChart = sortedBatches.map(b => ({
-      name: b.date.slice(5),
-      value: b.headlines_scored,
-    }));
+    this.headlinesChart = [{
+      name: 'Noticias procesadas',
+      series: sortedBatches.map(b => ({
+        name: b.date.slice(5),
+        value: b.headlines_scored,
+      })),
+    }];
 
   // 4. Gráfico de Recomendaciones Emitidas
     this.signalsChart = sortedBatches.map(b => ({
@@ -213,9 +217,13 @@ export class PipelineComponent implements OnInit, OnDestroy {
       'signals_generated': 'Recomendaciones Generadas',
       'tickers_with_sentiment': 'Cruces NLP Exitósos',
       'tickers_reported': 'Activos Reportados',      // Nueva Key
-      'total_closed_trades': 'Operaciones Cerradas'  // Nueva Key
+      'total_closed_trades': 'Operaciones Cerradas (diag.)'
     };
     return dict[key] || key.replace(/_/g, ' ');
+  }
+
+  coveragePct(batch: BatchSummary): number {
+    return Math.min(100, Math.max(0, batch.coverage_ratio * 100));
   }
 
   // Fuerza el orden estricto: λ1, λ2, λ3, λ4, λ5
@@ -241,6 +249,6 @@ export class PipelineComponent implements OnInit, OnDestroy {
   }
 
   objectEntries(obj: Record<string, any>): [string, any][] {
-    return Object.entries(obj);
+    return Object.entries(obj).filter(([key]) => key !== 'total_closed_trades');
   }
 }

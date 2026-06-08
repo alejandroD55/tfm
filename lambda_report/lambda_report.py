@@ -365,10 +365,14 @@ def get_pipeline_health(connection, report_date, run_id):
         "batch_status": batch_row[1] if batch_row else "UNKNOWN",
         "tickers_expected": tickers_expected,
         "tickers_with_indicators": int(indicator_tickers or 0),
+        "tickers_with_signals": int(recommendation_tickers or 0),
         "tickers_with_recommendations": int(recommendation_tickers or 0),
         "headlines_scored": int(headlines or 0),
         "coverage_ratio": (
-            round(float((recommendation_tickers or 0) / tickers_expected), 4)
+            round(
+                min(1.0, float((recommendation_tickers or 0) / tickers_expected)),
+                4,
+            )
             if tickers_expected
             else 0.0
         ),
